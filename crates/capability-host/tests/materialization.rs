@@ -102,11 +102,27 @@ fn context(
     let mut descriptor: serde_json::Value = serde_json::from_slice(include_bytes!(
         "../../capability/tests/fixtures/descriptor-v1.json"
     ))?;
-    descriptor["descriptor"]["identity"] = json!(request.capability());
-    descriptor["descriptor"]["provider_profile"] = json!(request.provider_profile());
-    descriptor["descriptor"]["category"] = json!({"type":"process"});
-    let operation = descriptor["descriptor"]["operations"]["model.generate"].take();
-    descriptor["descriptor"]["operations"] = json!({request.operation().as_str(): operation});
+    let body = descriptor
+        .get_mut("descriptor")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("descriptor fixture body missing")?;
+    for (field, value) in [
+        ("identity", json!(request.capability())),
+        ("provider_profile", json!(request.provider_profile())),
+        ("category", json!({"type":"process"})),
+    ] {
+        *body
+            .get_mut(field)
+            .ok_or("descriptor fixture field missing")? = value;
+    }
+    let operations = body
+        .get_mut("operations")
+        .ok_or("descriptor fixture operations missing")?;
+    let operation = operations
+        .get_mut("model.generate")
+        .ok_or("descriptor fixture model operation missing")?
+        .take();
+    *operations = json!({request.operation().as_str(): operation});
     let descriptor = CapabilityDescriptorDocument::from_json(&serde_json::to_vec(&descriptor)?)?;
     let resolution =
         ResolvedCapabilitySnapshot::from_descriptor(descriptor.body(), request.operation())?;

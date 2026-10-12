@@ -214,7 +214,8 @@ mod tests {
 
     #[test]
     fn upload_fields_and_operation_have_unambiguous_boundaries() -> TestResult {
-        for operation in [UploadOperation::Invocation] {
+        let operation = UploadOperation::Invocation;
+        {
             let first = operation.identity("x", 0, "z:1:y")?;
             assert_ne!(first, operation.identity("x:0:z", 1, "y")?);
             assert_eq!(first, operation.identity("x", 0, "z:1:y")?);
@@ -233,12 +234,10 @@ mod tests {
         // Challenge field boundaries over a finite punctuation-bearing set;
         // this establishes the encoding examples, not a collision-proof hash.
         let mut ids = BTreeSet::new();
-        for operation in [UploadOperation::Invocation] {
-            for command in ["x", "x:0:z", "x:", "x::", "x/1", "x.1"] {
-                for position in [0, 1, 11, 255] {
-                    for name in ["y", "z:1:y", ":", "z::", "z.y", "z-y"] {
-                        assert!(ids.insert(operation.identity(command, position, name)?));
-                    }
+        for command in ["x", "x:0:z", "x:", "x::", "x/1", "x.1"] {
+            for position in [0, 1, 11, 255] {
+                for name in ["y", "z:1:y", ":", "z::", "z.y", "z-y"] {
+                    assert!(ids.insert(operation.identity(command, position, name)?));
                 }
             }
         }
@@ -249,7 +248,8 @@ mod tests {
     fn maximum_valid_fields_keep_a_bounded_upload_identity() -> TestResult {
         // Peer request identities permit 192 bytes; invocation inputs permit 128.
         // Both contracts reject empty names.
-        for (operation, name_limit) in [(UploadOperation::Invocation, 128)] {
+        let (operation, name_limit) = (UploadOperation::Invocation, 128);
+        {
             let command = format!("x{}", ":".repeat(191));
             let name = format!("n{}", ":".repeat(name_limit - 1));
             milkdrift_peer_protocol::PeerRequestId::new(&command)?;

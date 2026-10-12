@@ -5,7 +5,6 @@ use super::{
 };
 impl StoreInvocationDataAccess {
     pub(super) fn resolve_selected_artifact(
-        &self,
         context: &AdapterExecutionContext,
         input: &InputReference,
     ) -> Result<CapabilityArtifactReference, InvocationDataError> {

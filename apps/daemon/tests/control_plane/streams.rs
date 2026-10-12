@@ -110,8 +110,15 @@ fn catalogue(observation: ObservationEnvelope) -> TestResult<Vec<CapabilityRead>
 fn configuration_with_scoped_observer(directory: &TempDir) -> TestResult<DaemonConfig> {
     let profile = configured_process_profile(directory)?;
     let mut second: serde_json::Value = serde_json::from_slice(&fs::read(&profile)?)?;
-    second["profile"]["capability"] = serde_json::json!("second-local-process");
-    second["profile"]["profile_id"] = serde_json::json!("second-profile");
+    let body = second
+        .get_mut("profile")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("profile missing")?;
+    body.insert(
+        "capability".into(),
+        serde_json::json!("second-local-process"),
+    );
+    body.insert("profile_id".into(), serde_json::json!("second-profile"));
     let second_path = directory.path().join("second-process.json");
     fs::write(&second_path, serde_json::to_vec(&second)?)?;
     let mut config =

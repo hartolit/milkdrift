@@ -486,7 +486,7 @@ impl Owner {
             capabilities::register_configured(
                 &adapters,
                 &capability_host,
-                data.clone(),
+                data,
                 auth.resolver(),
                 startup_now,
             )?;

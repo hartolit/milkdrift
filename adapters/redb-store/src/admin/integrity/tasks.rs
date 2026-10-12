@@ -1,5 +1,11 @@
 use super::ScanContext;
-use crate::{error, json, schema::*};
+use crate::{
+    error, json,
+    schema::{
+        NATIVE_PATH_CLAIMS, PEER_EXECUTION_TOMBSTONES, PEER_EXECUTIONS, TASK_ACCOUNTING,
+        TASK_ACTION_OWNERS, TASK_OUTPUT_USAGE, TASK_RECEIPTS, WORKSPACE_BUDGETS, WORKSPACE_USAGE,
+    },
+};
 use milkdrift_persistence::PersistenceError;
 
 pub(super) fn scan(context: &mut ScanContext<'_, '_>) -> Result<(), PersistenceError> {

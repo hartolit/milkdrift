@@ -18,8 +18,11 @@ async fn raw(
     let status = response.status();
     let envelope: Value = response.json().await?;
     assert!(status.is_success(), "{status}: {envelope}");
-    assert_eq!(envelope["protocol"], json!({"major":3,"minor":0}));
-    Ok(envelope["value"].clone())
+    assert_eq!(
+        envelope.get("protocol").ok_or("protocol absent")?,
+        &json!({"major":3,"minor":0})
+    );
+    Ok(envelope.get("value").ok_or("value absent")?.clone())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -30,7 +33,8 @@ async fn independent_json_client_submits_edits_discovers_and_downloads_captured_
     let plan = configuration_with_process_profiles(&directory, 32, vec![profile])?;
     let daemon = start(plan.clone(), CONTROLLER_TOKEN).await?;
     let upload = raw(&daemon, reqwest::Method::POST, "v1/task-inputs", Some(json!({"request_id":"raw-upload","name":"notes.txt","media_type":"text/plain","text":"Independent captured content\n"}))).await?;
-    let mut body = json!({"request_id":"raw-create","title":"Independent project notes","description":"No native client types construct this request","tasks":[{"alias":"notes","definition":{"title":"Copy the captured evidence","description":"Ordinary temporary-file work","instructions":"Preserve the captured file bytes","capability":{"id":"golden-local-process","operation":"process.execute"},"inputs":{"file":{"kind":"supplied","name":"file","optional":false},"brief":{"kind":"supplied","name":"brief","optional":false}},"dependencies":[],"required":true,"corrective_of":null,"paths":[]}}],"inputs":{"file":{"kind":"uploaded","input_id":upload["input_id"]}},"finish_when_settled":true,"limits":null});
+    let input_id = upload.get("input_id").ok_or("input id absent")?;
+    let mut body = json!({"request_id":"raw-create","title":"Independent project notes","description":"No native client types construct this request","tasks":[{"alias":"notes","definition":{"title":"Copy the captured evidence","description":"Ordinary temporary-file work","instructions":"Preserve the captured file bytes","capability":{"id":"golden-local-process","operation":"process.execute"},"inputs":{"file":{"kind":"supplied","name":"file","optional":false},"brief":{"kind":"supplied","name":"brief","optional":false}},"dependencies":[],"required":true,"corrective_of":null,"paths":[]}}],"inputs":{"file":{"kind":"uploaded","input_id":input_id}},"finish_when_settled":true,"limits":null});
     let accepted = raw(
         &daemon,
         reqwest::Method::POST,
@@ -48,11 +52,14 @@ async fn independent_json_client_submits_edits_discovers_and_downloads_captured_
         .await?,
         accepted
     );
-    let workflow = accepted["workflow_id"]
-        .as_str()
+    let workflow = accepted
+        .get("workflow_id")
+        .and_then(Value::as_str)
         .ok_or("workflow id absent")?;
-    let task = accepted["aliases"]["notes"]
-        .as_str()
+    let task = accepted
+        .get("aliases")
+        .and_then(|aliases| aliases.get("notes"))
+        .and_then(Value::as_str)
         .ok_or("task id absent")?;
     let shown = raw(
         &daemon,
@@ -61,8 +68,12 @@ async fn independent_json_client_submits_edits_discovers_and_downloads_captured_
         None,
     )
     .await?;
-    let changed = raw(&daemon, reqwest::Method::POST, &format!("v1/workflows/{workflow}/changes"), Some(json!({"request_id":"raw-edit","expected_generation":shown["generation"],"changes":[{"kind":"bind_input","name":"brief","value":{"kind":"text","text":"Start the captured file work"}}]}))).await?;
-    assert_eq!(changed["workflow_id"], workflow);
+    let generation = shown.get("generation").ok_or("generation absent")?;
+    let changed = raw(&daemon, reqwest::Method::POST, &format!("v1/workflows/{workflow}/changes"), Some(json!({"request_id":"raw-edit","expected_generation":generation,"changes":[{"kind":"bind_input","name":"brief","value":{"kind":"text","text":"Start the captured file work"}}]}))).await?;
+    assert_eq!(
+        changed.get("workflow_id").and_then(Value::as_str),
+        Some(workflow)
+    );
     wait_task(&daemon.client, workflow, task, TaskStateDto::Completed).await?;
     let result = raw(
         &daemon,
@@ -71,11 +82,11 @@ async fn independent_json_client_submits_edits_discovers_and_downloads_captured_
         None,
     )
     .await?;
-    assert!(
-        result["text"]
-            .as_str()
-            .is_some_and(|text| text.contains("Independent captured content"))
-    );
+    let result_text = result
+        .get("text")
+        .and_then(Value::as_str)
+        .ok_or("result text absent")?;
+    assert!(result_text.contains("Independent captured content"));
     let download = reqwest::Client::new()
         .get(daemon.endpoint.join(&format!(
             "v1/workflows/{workflow}/tasks/{task}/result/content"
@@ -84,7 +95,7 @@ async fn independent_json_client_submits_edits_discovers_and_downloads_captured_
         .send()
         .await?;
     assert_eq!(download.status(), reqwest::StatusCode::OK);
-    assert_eq!(download.text().await?, result["text"]);
+    assert_eq!(download.text().await?, result_text);
     // After dropping all prior client state, search and receipt discovery need no local ID file.
     daemon.stop().await?;
     let restarted = start(plan, CONTROLLER_TOKEN).await?;
@@ -96,9 +107,12 @@ async fn independent_json_client_submits_edits_discovers_and_downloads_captured_
     )
     .await?;
     assert!(
-        discovered["items"]
-            .as_array()
-            .is_some_and(|items| items.iter().any(|item| item["id"] == workflow))
+        discovered
+            .get("items")
+            .and_then(Value::as_array)
+            .is_some_and(|items| items
+                .iter()
+                .any(|item| item.get("id").and_then(Value::as_str) == Some(workflow)))
     );
     assert_eq!(
         raw(
@@ -110,7 +124,7 @@ async fn independent_json_client_submits_edits_discovers_and_downloads_captured_
         .await?,
         accepted
     );
-    body["title"] = json!("Conflicting changed reuse");
+    *body.get_mut("title").ok_or("request title absent")? = json!("Conflicting changed reuse");
     let refused = reqwest::Client::new()
         .post(restarted.endpoint.join("v1/workflows")?)
         .bearer_auth(CONTROLLER_TOKEN)
@@ -139,17 +153,27 @@ async fn executable_cli_upload_create_discovery_edit_and_stop_need_no_recovery_f
         &["workflow", "upload", "notes.txt", "--request", "cli-file"],
     )?;
     let mut request = create_request("cli-task", false);
-    request.tasks[0].definition.inputs.insert(
-        "file".into(),
-        InputBinding::Supplied {
-            name: "file".into(),
-            optional: false,
-        },
-    );
+    request
+        .tasks
+        .first_mut()
+        .ok_or("request task absent")?
+        .definition
+        .inputs
+        .insert(
+            "file".into(),
+            InputBinding::Supplied {
+                name: "file".into(),
+                optional: false,
+            },
+        );
     request.inputs.insert(
         "file".into(),
         InputValue::Uploaded {
-            input_id: upload["input_id"].as_str().ok_or("input absent")?.into(),
+            input_id: upload
+                .get("input_id")
+                .and_then(Value::as_str)
+                .ok_or("input absent")?
+                .into(),
         },
     );
     fs::write(
@@ -162,9 +186,14 @@ async fn executable_cli_upload_create_discovery_edit_and_stop_need_no_recovery_f
         "cli-create",
         &["workflow", "create", "task.json"],
     )?;
-    let workflow = accepted["workflow_id"].as_str().ok_or("workflow absent")?;
-    let task = accepted["aliases"]["inspect"]
-        .as_str()
+    let workflow = accepted
+        .get("workflow_id")
+        .and_then(Value::as_str)
+        .ok_or("workflow absent")?;
+    let task = accepted
+        .get("aliases")
+        .and_then(|aliases| aliases.get("inspect"))
+        .and_then(Value::as_str)
         .ok_or("task absent")?;
     let discovery = cli_ok(
         &daemon,
@@ -173,9 +202,12 @@ async fn executable_cli_upload_create_discovery_edit_and_stop_need_no_recovery_f
         &["workflow", "list", "--search", "cli-task"],
     )?;
     assert!(
-        discovery["items"]
-            .as_array()
-            .is_some_and(|items| items.iter().any(|item| item["id"] == workflow))
+        discovery
+            .get("items")
+            .and_then(Value::as_array)
+            .is_some_and(|items| items
+                .iter()
+                .any(|item| item.get("id").and_then(Value::as_str) == Some(workflow)))
     );
     assert_eq!(
         cli_ok(
@@ -192,7 +224,8 @@ async fn executable_cli_upload_create_discovery_edit_and_stop_need_no_recovery_f
         "cli-show",
         &["workflow", "show", workflow],
     )?;
-    let edit = json!({"request_id":"cli-edit","expected_generation":snapshot["generation"],"changes":[{"kind":"wait","question":"Waiting for the person to provide the brief"}]});
+    let generation = snapshot.get("generation").ok_or("generation absent")?;
+    let edit = json!({"request_id":"cli-edit","expected_generation":generation,"changes":[{"kind":"wait","question":"Waiting for the person to provide the brief"}]});
     fs::write(
         directory.path().join("edit.json"),
         serde_json::to_vec(&edit)?,
@@ -215,7 +248,10 @@ async fn executable_cli_upload_create_discovery_edit_and_stop_need_no_recovery_f
         "cli-task-read",
         &["workflow", "task", workflow, task],
     )?;
-    assert_eq!(stopped["state"], "stopped");
-    assert!(stopped["started_at"].is_null());
+    assert_eq!(
+        stopped.get("state").and_then(Value::as_str),
+        Some("stopped")
+    );
+    assert!(stopped.get("started_at").is_some_and(Value::is_null));
     daemon.stop().await
 }

@@ -89,7 +89,11 @@ fn runtime_with_limit(
     let mut fixture: serde_json::Value = serde_json::from_slice(include_bytes!(
         "../../../capability/tests/fixtures/descriptor-v1.json"
     ))?;
-    fixture["descriptor"]["category"] = serde_json::json!({"type":"process"});
+    fixture
+        .get_mut("descriptor")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("fixture descriptor absent")?
+        .insert("category".into(), serde_json::json!({"type":"process"}));
     let descriptor = CapabilityDescriptorDocument::from_json(&serde_json::to_vec(&fixture)?)?;
     let executor = Arc::new(DeterministicExecutor::new(descriptor.body().clone()));
     let store = Arc::new(RedbStore::open_with_config(
@@ -768,7 +772,11 @@ fn preparation_unknown_ownership_never_fabricates_non_entry_or_releases_claims()
         let mut fixture: serde_json::Value = serde_json::from_slice(include_bytes!(
             "../../../capability/tests/fixtures/descriptor-v1.json"
         ))?;
-        fixture["descriptor"]["category"] = serde_json::json!({"type":"process"});
+        fixture
+            .get_mut("descriptor")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or("fixture descriptor absent")?
+            .insert("category".into(), serde_json::json!({"type":"process"}));
         let descriptor = CapabilityDescriptorDocument::from_json(&serde_json::to_vec(&fixture)?)?;
         let executor = Arc::new(PreparationExecutor {
             inner: DeterministicExecutor::new(descriptor.body().clone()),
@@ -1359,8 +1367,9 @@ fn oversized_dynamic_settled_outcomes_fail_before_external_entry() -> TestResult
         Arc::new(ManualClock::new(1000)),
     )?;
     let mut create = request()?;
-    create.tasks[0].definition.inputs.clear();
-    let mut consumer = create.tasks[0].definition.clone();
+    let producer = create.tasks.first_mut().ok_or("producer absent")?;
+    producer.definition.inputs.clear();
+    let mut consumer = producer.definition.clone();
     consumer.title = "Inspect settled outcome".into();
     consumer.dependencies.insert(TaskId::new("inspect")?);
     consumer.inputs = (0..8)
@@ -1443,7 +1452,11 @@ fn discovery_fields_cannot_contradict_the_authoritative_workflow_document() -> T
             .generation
             .checked_add(1)
             .ok_or("generation overflow")?;
-        snapshot.document["generation"] = serde_json::json!(snapshot.generation);
+        snapshot
+            .document
+            .as_object_mut()
+            .ok_or("workflow document is not an object")?
+            .insert("generation".into(), serde_json::json!(snapshot.generation));
         match field {
             "title" => snapshot.title = "Different discovery title".into(),
             "description" => snapshot.description = "Different discovery description".into(),

@@ -11,7 +11,7 @@ use std::{
 
 use milkdrift_evidence::{
     EvidenceResult,
-    application::{CliRunner, OwnedChild, ensure, wait_for_run},
+    application::{CliRunner, OwnedChild, ensure, wait_for_workflow},
 };
 
 fn runner(executable: PathBuf, endpoint: String) -> CliRunner {
@@ -30,18 +30,28 @@ fn fixture_output_failure_exits_without_bypassing_child_cleanup() -> EvidenceRes
         os::{fd::OwnedFd, unix::net::UnixStream},
         process::{Command, Stdio},
     };
-    for (executable, argument) in [
-        (env!("CARGO_BIN_EXE_evidence-process-helper"), "emit"),
+    let directory = tempfile::tempdir()?;
+    std::fs::write(
+        directory.path().join("calculator.rs"),
+        "pub fn add(a:i32,b:i32)->i32 { a-b }",
+    )?;
+    std::fs::write(
+        directory.path().join("test_calculator.rs"),
+        "mod calculator; #[test] fn addition() { assert_eq!(calculator::add(2,3),5); }",
+    )?;
+    for (executable, arguments) in [
+        (env!("CARGO_BIN_EXE_evidence-process-helper"), vec!["emit"]),
         (
-            env!("CARGO_BIN_EXE_headless-cli-evidence"),
-            "--fixture-artifact",
+            env!("CARGO_BIN_EXE_milkdrift-external-evidence"),
+            vec!["--fixture-helper", "agent", "rustc"],
         ),
     ] {
         let (writer, reader) = UnixStream::pair()?;
         drop(reader);
         let mut child = OwnedChild::spawn(
             Command::new(executable)
-                .arg(argument)
+                .args(arguments)
+                .current_dir(directory.path())
                 .stdin(Stdio::null())
                 .stdout(Stdio::from(OwnedFd::from(writer)))
                 .stderr(Stdio::null()),
@@ -98,7 +108,7 @@ fn enclosing_deadline_kills_and_reaps_stalled_cli_without_restarting_budget() ->
                 &[
                     "--timeout-secs",
                     "30",
-                    "run",
+                    "workflow",
                     "show",
                     "private-input-must-not-appear",
                 ],
@@ -116,7 +126,7 @@ fn enclosing_deadline_kills_and_reaps_stalled_cli_without_restarting_budget() ->
             .ok_or("stalled child succeeded")?
             .to_string();
         assert!(
-            failure.contains("CLI run show: child command exceeded its deadline"),
+            failure.contains("CLI workflow show: child command exceeded its deadline"),
             "{failure}"
         );
         assert!(failure.contains("cleanup=reaped"), "{failure}");
@@ -147,7 +157,7 @@ fn diagnostic_failures_preserve_primary_error_and_have_one_finite_budget() -> Ev
     thread::scope(|scope| -> EvidenceResult {
         let (finished, completion) = mpsc::sync_channel(1);
         let worker = scope.spawn(move || {
-            let result = wait_for_run(
+            let result = wait_for_workflow(
                 &runner,
                 "private-input-must-not-appear",
                 Duration::from_secs(2),
@@ -157,9 +167,9 @@ fn diagnostic_failures_preserve_primary_error_and_have_one_finite_budget() -> Ev
                 .send(result)
                 .map_err(|_| "diagnostic completion receiver disappeared")
         });
-        // The primary child and three diagnostic children all stall. Every one must be
+        // The primary child and two diagnostic children all stall. Every one must be
         // reaped before the next is started, even though no diagnostic succeeds.
-        for _ in 0..4 {
+        for _ in 0..3 {
             let mut control = accept(&listener)?;
             control.read_exact(&mut [0; 4])?;
             assert_eq!(
@@ -171,13 +181,13 @@ fn diagnostic_failures_preserve_primary_error_and_have_one_finite_budget() -> Ev
         let failure = completion
             .recv_timeout(Duration::from_secs(3))?
             .err()
-            .ok_or("stalled run succeeded")?
+            .ok_or("stalled workflow succeeded")?
             .to_string();
         assert!(
-            failure.starts_with("CLI run show: child command exceeded its deadline"),
+            failure.starts_with("CLI workflow show: child command exceeded its deadline"),
             "{failure}"
         );
-        for identity in ["run show", "run timeline", "daemon health"] {
+        for identity in ["workflow show", "daemon health"] {
             assert!(
                 failure.contains(&format!("{identity}: unavailable")),
                 "{failure}"
@@ -205,14 +215,14 @@ fn successful_capture_reaps_child_after_explicit_release() -> EvidenceResult {
         listener.local_addr()?.to_string(),
     );
     thread::scope(|scope| -> EvidenceResult {
-        let command = scope.spawn(|| runner.success(&["run", "show", "case"]));
+        let command = scope.spawn(|| runner.success(&["workflow", "show", "case"]));
         let mut control = accept(&listener)?;
         control.read_exact(&mut [0; 4])?;
         control.write_all(&[1])?;
         let result = command.join().map_err(|_| "harness thread panicked")??;
         assert_eq!(
             result.get("type").and_then(serde_json::Value::as_str),
-            Some("run.show")
+            Some("workflow.show")
         );
         assert_eq!(control.read(&mut [0])?, 0);
         Ok(())

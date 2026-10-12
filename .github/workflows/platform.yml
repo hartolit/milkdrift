@@ -60,7 +60,6 @@ jobs:
             -p milkdrift-local-process \
             -p milkdrift-model \
             -p milkdrift-peer-protocol \
-            -p milkdrift-prompt-sequence \
             -p milkdrift-workspace \
             2>&1 | tee "target/platform-evidence/tests-${RUNNER_OS}.log"
       - name: Test inherited pipes through daemon shutdown and restart

@@ -311,10 +311,19 @@ pub(super) fn task_definition(capability: &str, operation: &str) -> TaskDefiniti
 pub(super) fn captured_file_profile(directory: &TempDir) -> TestResult<std::path::PathBuf> {
     let path = configured_process_profile(directory)?;
     let mut profile: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
-    profile["profile"]["arguments"] = serde_json::json!(["copy", "source.txt", "result.txt"]);
-    profile["profile"]["inputs"] =
-        serde_json::json!([{"input":"file","relative_path":"source.txt"}]);
-    profile["profile"]["outputs"] = serde_json::json!([{"name":"report","relative_path":"result.txt","media_type":"text/plain","required":true}]);
+    let body = profile
+        .get_mut("profile")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("profile missing")?;
+    body.insert(
+        "arguments".into(),
+        serde_json::json!(["copy", "source.txt", "result.txt"]),
+    );
+    body.insert(
+        "inputs".into(),
+        serde_json::json!([{"input":"file","relative_path":"source.txt"}]),
+    );
+    body.insert("outputs".into(), serde_json::json!([{"name":"report","relative_path":"result.txt","media_type":"text/plain","required":true}]));
     fs::write(&path, serde_json::to_vec(&profile)?)?;
     Ok(path)
 }

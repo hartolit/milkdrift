@@ -552,7 +552,7 @@ impl InvocationDataAccess for StoreInvocationDataAccess {
         context: &AdapterExecutionContext,
         input: &InputReference,
     ) -> Result<CapabilityArtifactReference, InvocationDataError> {
-        self.resolve_selected_artifact(context, input)
+        Self::resolve_selected_artifact(context, input)
     }
 
     fn read_input_bytes(
@@ -567,18 +567,16 @@ impl InvocationDataAccess for StoreInvocationDataAccess {
         if matches!(
             context.selection(),
             crate::AdapterInputSelection::Task { .. }
-        ) {
-            if let InvocationValueReference::Inline { value } = input.value() {
-                if let Some(text) = value.value().as_str() {
-                    let limits = limits.validate()?;
-                    if u64::try_from(text.len()).map_or(true, |size| size > limits.max_file_bytes) {
-                        return Err(InvocationDataError::Rejected(
-                            "captured task text exceeds its materialization bound".to_owned(),
-                        ));
-                    }
-                    return Ok(text.as_bytes().to_vec());
-                }
+        ) && let InvocationValueReference::Inline { value } = input.value()
+            && let Some(text) = value.value().as_str()
+        {
+            let limits = limits.validate()?;
+            if u64::try_from(text.len()).map_or(true, |size| size > limits.max_file_bytes) {
+                return Err(InvocationDataError::Rejected(
+                    "captured task text exceeds its materialization bound".to_owned(),
+                ));
             }
+            return Ok(text.as_bytes().to_vec());
         }
         self.input_bytes(input, limits.validate()?)
             .map(|(bytes, _cause)| bytes)

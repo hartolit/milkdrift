@@ -544,8 +544,9 @@ fn workflow_result_preserves_retained_evidence() -> TestResult {
     assert_eq!(exit, 0);
     assert!(stderr.is_empty());
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0]["value"], value);
-    assert_eq!(records[0]["final"], true);
+    let record = records.first().ok_or("final result record missing")?;
+    assert_eq!(record.get("value"), Some(&value));
+    assert_eq!(record.get("final"), Some(&Value::Bool(true)));
     Ok(())
 }
 

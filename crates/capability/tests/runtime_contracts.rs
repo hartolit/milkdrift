@@ -180,7 +180,11 @@ fn executor_documents_round_trip_with_golden_bytes() -> Result<(), Box<dyn std::
         assert!(InvocationRequestDocument::from_json(obsolete).is_err());
     }
     let mut unsupported = serde_json::to_value(&request)?;
-    unsupported["request"]["context_manifest"] = serde_json::Value::Null;
+    unsupported
+        .get_mut("request")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("request object absent")?
+        .insert("context_manifest".to_owned(), serde_json::Value::Null);
     assert!(InvocationRequestDocument::from_json(&serde_json::to_vec(&unsupported)?).is_err());
 
     let event = InvocationEventDocument::new(invocation_event()?);

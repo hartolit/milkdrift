@@ -76,12 +76,49 @@ lanes below exercise application use, mutation sensitivity, sustained load, and 
 The [evidence package guide](../../tools/evidence/README.md) compares the tools and their entry points.
 [Status](../product/status.md#current-validationevidence-snapshot) owns the latest executed state.
 
+## Current task application commands
+
+The current [quality workflow](../../.github/workflows/quality.yml) builds maintained production
+binaries before workspace tests, then executes two finite task application lanes:
+
+```sh
+cargo build --all-features -p milkdrift-daemon --bin milkdrift-daemon \
+  -p milkdrift-cli --bin milkdrift -p milkdrift-evidence \
+  --bin connected-tasks --bin milkdrift-external-evidence --bin evidence-process-helper \
+  -p milkdrift-local-process --bin milkdrift-process-test-helper
+target/debug/connected-tasks check --root target/task-client-evidence \
+  --daemon target/debug/milkdrift-daemon --cli target/debug/milkdrift
+target/debug/milkdrift-external-evidence --daemon target/debug/milkdrift-daemon \
+  --fixture --allow-fixture --output target/task-external-evidence
+```
+
+Choose new output roots for each run. The connected lane uses the same Rust setup as the browser
+fixture and checks CLI capture/submission, exact replay, a fresh public client's discovery after
+daemon restart, retained result identity, conflict privacy, model input selection and two-daemon
+isolation. The owner applies a 90-second scenario deadline, two-second public queries without
+retries, and bounded CLI waits; startup and cleanup have separate finite allowances. The outer
+integration-test watchdog leaves time for the owner to shut down both daemons and its model
+listener on success or failure. A successful `check.json` is published only after cleanup succeeds.
+The external lane adds controlled verification failure, explicit corrective adoption, retained
+original history and model-finish refusal. Neither fixture qualifies real model quality.
+
+CI retains only `target/task-client-evidence/check.json` and
+`target/task-external-evidence/report.json`. Private credentials, model requests, raw child logs
+and stores remain outside shared artifacts. The five application lifecycle tests and six peer
+conformance tests still exercise bounded cleanup, privacy, authority, replay and uncertainty through
+their maintained owners. Two connected-task tests exercise the actual binaries and verify that
+both daemon endpoints have stopped after a successful or failed scenario. Configuration and source
+coverage are not claims that a hosted run has passed.
+
 ## Pre-cutover evidence
 
 The following evidence describes the preserved pre-task implementation and its historical checks.
 Retired workflow binaries and graph/publication procedures are not current commands or task-path
 qualification. Their source is retained in the pre-cutover Git checkpoint; current prompt-01 checks
 are recorded above when executed. Independent host/managed evidence retains only its stated scope.
+Historical command blocks below reproduce their named Git checkpoints, not the current checkout.
+The explicitly current mutation, benchmark and CI sections describe maintained tools; historical
+result paragraphs within them remain qualified by their original source identities.
 
 ## Live client streams
 
@@ -651,6 +688,12 @@ are under `target/public-api/`. No test-owned daemon or process helper remained 
 
 ## Independent host execution
 
+The headless runner and its installed-host/controller assertions in this historical section are
+retired. Their commands require the preserved pre-cutover source. Current direct invocation,
+execution-host and task-peer protections are exercised by the daemon, peer adapter and shared peer
+conformance suites; the current task application commands above do not claim the old installed-host
+qualification procedure ran.
+
 Build the daemon, CLI and `headless-cli-evidence`, then run:
 
 ```sh
@@ -979,6 +1022,11 @@ The [status owner](../product/status.md#current-validationevidence-snapshot) rec
 configuration, source identities, current results and supported limits.
 
 ## Actual-binary scenarios
+
+The graph-oriented headless/local-model and installed-controller scenarios below are historical
+procedures and results. Those executable names and controller-specific assertions were retired
+under ADR 0051. Use the current task application commands above for the maintained CLI, process,
+model, restart and replay path; they do not reproduce retired controller or graph semantics.
 
 Finish compilation before starting self-pinning scenarios. If later builds are needed, retain
 copies of every scenario executable and its daemon, CLI and helpers outside Cargo's output paths,
@@ -1310,8 +1358,8 @@ cargo mutation-evidence authority
 cargo mutation-evidence retention
 cargo mutation-evidence runtime
 cargo mutation-evidence uncertainty
-cargo mutation-evidence controller
-cargo mutation-evidence context
+cargo mutation-evidence tasks
+cargo mutation-evidence inputs
 cargo mutation-evidence peer
 ```
 
@@ -1337,18 +1385,17 @@ tests and enforces each mutation's separate deadlines.
 Hosted builds allow 600 seconds and use two Cargo compiler jobs. The single mutation worker
 keeps application tests from competing with another mutation's compilation. The peer shard's test
 selection includes the redb owner's contracts as well as peer, daemon, process, and evidence tests.
-The peer group excludes the three process/model-only external fixture scenarios, which configure
-no peers and previously produced unrelated HTTP timeouts before peer assertions ran. They remain
-in the full workspace gate and the authority/receipt groups. Peer service, daemon-peer, storage
-corruption, and operational peer tests remain selected.
+The peer group retains peer service, daemon-peer, storage corruption and operational peer tests,
+as well as the evidence package's process/model and connected-client scenarios. An unrelated fixture
+timeout still invalidates the campaign; it must not be counted as a caught mutant.
 The runner passes each shard's complete package selection to Cargo for both the baseline and every
 mutation. The pinned tool's `--test-package` option alone changes only mutation scenarios, leaving
 the baseline dependent on which source packages happen to occur in a partition. A baseline must
 exercise the same suite to detect missing prerequisites before they can make a mutation look caught.
-Shards that run the retained-context binary tests include the daemon and shared process-helper
+Shards that run task input and lifecycle tests include the daemon and shared process-helper
 packages. Cargo builds their executables inside each isolated checkout, including any mutation;
 prebuilt binaries from the caller's workspace cannot supply that evidence.
-Shards selecting the application evidence package also build the CLI, which its source-authoring
+Shards selecting the application evidence package also build the CLI, which its connected-task
 checks invoke. Daemon composition fixtures allow ten seconds for ordinary processes and declare
 matching invocation budgets; adapter-specific timeout tests retain their own exact bounds.
 The runner prints each completed mutation, including caught and unbuildable cases, so CI logs
@@ -1359,13 +1406,14 @@ Hosted shards allow at least 600 seconds for that suite.
 Mutation checkouts retain Git metadata because application-evidence tests require exact source
 provenance; a missing repository must never make a mutation look caught.
 
-Scope covers authority conjunctions, application/peer idempotency and retention, runtime optimistic
-replay/recovery/reconciliation, controller accounting, context budgets, peer lifecycle, and exact
-catalog renewal with bounded registration retirement. It
+Current scope covers authority conjunctions, task/peer idempotency and retained capacity, task
+admission/replay/recovery, cumulative task allowances, explicit input selection, peer lifecycle,
+and exact catalog renewal with bounded registration retirement. It
 excludes generated fixtures and unrelated constructors. A failing unmutated baseline cannot
 qualify a campaign.
-Controller transaction revalidation is included. Independent contract tests cover originating-run
-binding, action bounds, exact revision guards, and canonical fingerprints. Cargo-mutants 27.1 skips
+The old controller and causal-graph shards were retired with their source owners; their exact-mutant
+exceptions do not apply to task code. Independent task contracts cover required inputs, current
+authority, version guards and canonical request receipts. Cargo-mutants 27.1 skips
 constructors named `new`; constructor fault injection must be recorded separately from its campaigns.
 
 Retain each `mutants.out` directory with exact source identity, logs, and `outcomes.json`.
@@ -1467,13 +1515,13 @@ cargo test --release -p milkdrift-capability-host --test effect_worker \
   -- --exact --nocapture
 ```
 
-Benchmarks cover journal transactions/batches, projection rebuild/checkpoint tail, receipt turnover,
-peer hot/compact replay, context discovery/selection/materialization, artifact publication/ranges,
+Benchmarks cover atomic task snapshot transactions, paged reads/reopen, exact receipt replay,
+peer hot/compact replay, explicit input selection/materialization, artifact publication/ranges,
 process/model streams, and authenticated daemon round trips. Their fixtures and dimensions live in
 [core_paths.rs](../../tools/evidence/benches/core_paths.rs); this guide is not a generated inventory.
 
-The operational runner asserts a bounded frontier over 10,000 events, cold-receipt replay after
-reopen, and sustained receipt/peer turnover. It distinguishes logical document bytes from physical
+The operational runner checks retained task snapshots and exact receipt replay/conflict after
+reopen, plus independent peer turnover. It distinguishes logical document bytes from physical
 redb-directory allocation. Daemon phases measure sequential/concurrent load, bounded-queue overload,
 slow SSE consumption, authenticated reconnect, post-overload recovery, and public Ctrl-C shutdown.
 Recovery and reconnect use separate bounded phases; reconnect requires a fresh health observation
@@ -1483,19 +1531,19 @@ blocking-adapter regression checks fixed worker backpressure and unresolved forc
 
 Reports are `operational-evidence.json` and `scenario-summary.csv`, with scenario identity,
 operation/byte counts, checksums, storage/reopen facts, latency, overload, stream/shutdown outcomes,
-platform, Git commit/tree/dirty state, and `rustc -vV`. Synthetic selection and in-memory projection
-serialization are distinguished from durable discovery and snapshot recovery. Credentials,
+platform, Git commit/tree/dirty state, and `rustc -vV`. Explicit input selection is distinguished
+from durable task discovery and snapshot recovery. Credentials,
 prompts, provider payloads, artifact bytes, and environment values are excluded.
 
 ## CI and qualification
 
 | Workflow | Trigger and configured job allowance | Configured evidence |
 | --- | --- | --- |
-| [quality](../../.github/workflows/quality.yml) | PRs and pushes to `main`; one Linux job, 45 minutes. | Full Rust gate, actual CLI/daemon independent-host and operator scenarios, deterministic local model, and installed controller qualification/refusal scenario. |
+| [quality](../../.github/workflows/quality.yml) | PRs and pushes to `main`; one Linux job, 45 minutes. | Full Rust gate, actual CLI/public-client task submission, restart/replay, isolated daemons, controlled process/model tasks and explicit correction. |
 | [platform](../../.github/workflows/platform.yml) | Manual; select one Ubuntu, Windows or macOS runner, 60 minutes. | Workspace checks and selected domain/protocol/client/process tests. |
 | [mutation](../../.github/workflows/mutation.yml) | Manual; select one shard/partition, one Linux job, 60 minutes. | Selected mutation outcomes and logs; complete coverage requires every partition. |
 | [benchmarks](../../.github/workflows/benchmarks.yml) | Manual; one Linux job, 60 minutes. | Smoke/full distributions, operational reports, worker saturation. |
-| [stress](../../.github/workflows/stress.yml) | Manual; one Linux job, 60 minutes. | Receipt, peer, controller lifecycle/admission, and runtime frontier longevity. |
+| [stress](../../.github/workflows/stress.yml) | Manual; one Linux job, 60 minutes. | Current durable task limits, storage capacity/reserved settlement, scoped admission, restart and retained peer turnover longevity. Graph/controller compaction assertions are retired. |
 
 Actions use immutable SHAs, jobs have timeouts/read permissions/concurrency limits, and platform
 logs remain available on failure. Workflow definitions establish configured lanes, not successful

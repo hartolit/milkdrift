@@ -37,7 +37,10 @@ fn tasks_are_required_unless_the_request_explicitly_waives_the_obligation()
     let definition: milkdrift_control_protocol::tasks::TaskDefinitionDto =
         decode_json(&serde_json::to_vec(&value)?)?;
     assert!(definition.required);
-    value["required"] = serde_json::Value::Bool(false);
+    value
+        .as_object_mut()
+        .ok_or("task definition object missing")?
+        .insert("required".to_owned(), serde_json::Value::Bool(false));
     let optional: milkdrift_control_protocol::tasks::TaskDefinitionDto =
         decode_json(&serde_json::to_vec(&value)?)?;
     assert!(!optional.required);

@@ -384,7 +384,7 @@ fn duplicate_effect_delivery_never_enters_twice_or_leaks_the_prepared_generation
         )?),
     )?;
     let runtime = Arc::new(TaskRuntime::new(
-        store.clone(),
+        store,
         Arc::new(host.clone()),
         Arc::new(AllowAuthority),
         Arc::new(ManualClock::new(1_000)),
@@ -475,7 +475,7 @@ fn admission_panic_is_contained_before_entry_and_releases_the_generation_permit(
         )?),
     )?;
     let runtime = TaskRuntime::new(
-        store.clone(),
+        store,
         Arc::new(host.clone()),
         Arc::new(AllowAuthority),
         Arc::new(ManualClock::new(1_000)),
@@ -600,7 +600,7 @@ fn bounded_queues_backpressure_and_forced_shutdown_preserves_unresolved_truth() 
         )?),
     )?;
     let runtime = Arc::new(TaskRuntime::new(
-        store.clone(),
+        store,
         Arc::new(host.clone()),
         Arc::new(AllowAuthority),
         Arc::new(ManualClock::new(1_000)),

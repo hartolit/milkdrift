@@ -1,4 +1,4 @@
-name: bounded operational frontier stress
+name: bounded task and peer stress
 
 on:
   workflow_dispatch:
@@ -7,11 +7,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: bounded-operational-frontier-stress-${{ github.ref }}
+  group: bounded-task-peer-stress-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  runtime-bounded-operational-frontier:
+  bounded-task-and-peer-state:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -21,24 +21,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # pinned commit
         with:
           toolchain: 1.95.0
-      - name: Run bounded execution frontier regression
-        run: >-
-          cargo test --release
-          -p milkdrift-runtime
-          --all-features
-          --test structured_runtime
-          lifecycle::historical_execution_frontier_stays_bounded_across_index_limit
-          -- --ignored --exact --nocapture
-      - name: Run application receipt turnover and restart
-        run: >-
-          cargo test --release
-          -p milkdrift-redb-store
-          --test application_state
-          --all-features
-          release_receipt_longevity_crosses_many_hot_bounds_and_replays_after_restart
-          -- --ignored --exact --nocapture
-      - name: Build the peer process fixture
-        run: cargo build --release -p milkdrift-local-process --bin milkdrift-process-test-helper
+      - name: Build real daemon and peer process fixture
+        run: cargo build --release -p milkdrift-daemon --bin milkdrift-daemon -p milkdrift-local-process --bin milkdrift-process-test-helper
+      - name: Exercise current durable task limits, entry and recovery
+        run: cargo test --release -p milkdrift-runtime --all-features --test durable_runtime -- --nocapture
+      - name: Exercise task receipt capacity, reserved settlement and restart
+        run: cargo test --release -p milkdrift-redb-store --all-features --test task_workflows --test application_state -- --nocapture
       - name: Verify peer retention turnover and restart
         run: >-
           cargo test --release
@@ -46,47 +34,8 @@ jobs:
           --test two_daemon_peer
           peer_execution_retention_longevity_survives_turnover_and_restart
           -- --ignored --exact --nocapture
-      - name: Run controller checkpoint and restart
-        run: >-
-          cargo test --release
-          -p milkdrift-control
-          --test control_service
-          revision_and_lifecycle::release_controller_longevity_stops_once_across_checkpoints_and_restart
-          -- --ignored --exact --nocapture
-      - name: Run controller admission turnover and restart
-        run: >-
-          cargo test --release
-          -p milkdrift-control
-          --test control_service
-          admission::release_controller_admission_longevity_turns_over_reservations_artifacts_and_restart
-          -- --ignored --exact --nocapture
-      - name: Run 10,000 ordinary occurrence compaction
-        run: >-
-          cargo test --release -p milkdrift-runtime --lib
-          projection::tests::bounded::ten_thousand_closed_task_occurrences_keep_one_terminal_frontier
-          -- --exact --nocapture
-      - name: Run 10,000 fork/join ownership cycles
-        run: >-
-          cargo test --release -p milkdrift-runtime --lib
-          projection::tests::bounded::ten_thousand_closed_fork_join_cycles_retire_structured_ownership
-          -- --exact --nocapture
-      - name: Run 10,000 completed subworkflow/repeat children
-        run: >-
-          cargo test --release -p milkdrift-runtime --lib
-          projection::tests::bounded::ten_thousand_completed_repeat_children_keep_only_import_frontier
-          -- --exact --nocapture
-      - name: Run 10,000 revision node-id churn cycles
-        run: >-
-          cargo test --release -p milkdrift-runtime --lib
-          projection::tests::bounded::ten_thousand_revision_node_churn_drops_removed_root_summaries
-          -- --exact --nocapture
-      - name: Run 10,000 unmatched-signal budget attempts
-        run: >-
-          cargo test --release -p milkdrift-runtime --lib
-          projection::tests::bounded::ten_thousand_unmatched_signals_cannot_exceed_the_pending_budget
-          -- --exact --nocapture
-      - name: Run 10,000 pre-start worker lease releases
-        run: >-
-          cargo test --release -p milkdrift-runtime --lib
-          projection::tests::bounded::ten_thousand_pre_start_releases_retain_no_worker_history
-          -- --exact --nocapture
+      - name: Exercise scoped task admission
+        run: cargo test --release -p milkdrift-control --all-features --test task_authority -- --nocapture
+      # Graph occurrence compaction, structured children and controller longevity were retired
+      # with their owners in ADR 0051. These task suites prove finite admission and retained
+      # recovery; they do not claim the retired 10,000-occurrence compaction semantics.

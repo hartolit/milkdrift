@@ -2,8 +2,10 @@
 
 The product account and technical choices are finished for the
 [daemon-workflows implementation sprint](../development/virtual-office/daemon-workflows-implementation/README.md).
-**Prompt 01 is complete at its focused handoff**, with production daemon, CLI and Svelte integration
-and tested local checkpoints `37aa8c4` and `95a4dc5`. The next step is the user's actual review in 02.
+**Prompt 01 is reopened for assigned review corrections F01–F03** against `e720bb9`: complete
+retired-consumer and CI adoption, required-input absence handling, and cumulative execution time.
+The connected checkpoints `37aa8c4` and `95a4dc5` remain preserved. Actual user review in 02 follows
+the corrected handoff.
 Prompts 02–07 remain unassigned; 07 owns the named final full-system
 test-and-repair gate. The superseded remedial P00–P09 is historical evidence only.
 

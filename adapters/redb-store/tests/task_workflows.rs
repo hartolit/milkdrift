@@ -201,7 +201,7 @@ fn receipt_exhaustion_still_allows_reserved_stop_and_settlement()
         Err(PersistenceError::Bounds { .. })
     ));
     let ordinary = commit("workflow-a", 2, Some("another-ordinary"))?;
-    assert!(store.commit_workflow(ordinary.clone()).is_err());
+    assert!(store.commit_workflow(ordinary).is_err());
     let mut stop = commit("workflow-a", 2, Some("stop:workflow-a:task-a"))?;
     stop.command
         .as_mut()
@@ -578,14 +578,37 @@ fn workflow_discovery_bounds_page_bytes_without_losing_large_records()
     }
     let first = store.workflows(None, 200)?;
     assert_eq!(first.items.len(), 1);
-    assert_eq!(first.items[0].workflow.as_str(), "page-a");
+    assert_eq!(
+        first
+            .items
+            .first()
+            .ok_or("first row missing")?
+            .workflow
+            .as_str(),
+        "page-a"
+    );
     assert_eq!(first.next.as_deref(), Some("page-a"));
     let second = store.workflows(first.next.as_deref(), 200)?;
     assert_eq!(second.items.len(), 1);
-    assert_eq!(second.items[0].workflow.as_str(), "page-b");
+    assert_eq!(
+        second
+            .items
+            .first()
+            .ok_or("second row missing")?
+            .workflow
+            .as_str(),
+        "page-b"
+    );
     let last = store.workflows(second.next.as_deref(), 200)?;
     assert_eq!(last.items.len(), 1);
-    assert_eq!(last.items[0].workflow.as_str(), "page-c");
+    assert_eq!(
+        last.items
+            .first()
+            .ok_or("last row missing")?
+            .workflow
+            .as_str(),
+        "page-c"
+    );
     assert!(last.next.is_none());
     Ok(())
 }

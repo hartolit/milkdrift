@@ -10,41 +10,5 @@
     ],
     "unclassified_survivors_fail_the_lane": true
   },
-  "classifications": [
-    {
-      "mutant": "crates/persistence/src/controller_account/transition.rs:354:66: replace || with && in ControllerAccountState::settle_terminal",
-      "classification": "unreachable_by_valid_contract",
-      "explanation": "Nested process and model dimensions are admitted together as Outstanding (including zero counts) and settle together from one optional NestedWorkUsage. Missing nested usage leaves both outstanding; present usage settles both, including over-envelope observations. No supported transition leaves exactly one dimension outstanding, so changing this disjunction cannot remove a reachable reservation. The process-only/model-only unknown-usage test exercises zero and nonzero dimensions, serialized reopen and later measured settlement. The defensive check remains for independently malformed retained state."
-    },
-    {
-      "mutant": "adapters/redb-store/src/controller_account.rs:277:39: replace match guard existing.declaration() == declaration with true in apply_controller_transaction",
-      "classification": "unreachable_by_valid_contract",
-      "explanation": "An establishment transaction must bind its declared originating run, and canonical account identity fixes that run. Re-establishing an existing account therefore encounters its existing run binding; pre-application event validation rejects a declaration differing from that immutable account before this defensive match guard is reached."
-    },
-    {
-      "mutant": "crates/runtime/src/engine/effects/entry.rs:210:13: replace || with && in RuntimeService::prepare_final_entry",
-      "classification": "unreachable_by_valid_contract",
-      "explanation": "The mutation joins only the authority and attempt-revision comparisons. ExecutionAuthorityEstablished is one-shot before start, so the authority basis cannot change here. revision_for_attempt is derived from the current node-execution projection; a changed or retired revision therefore also changes the independently compared execution (or attempt), and that earlier disjunction still rejects the ticket."
-    },
-    {
-      "mutant": "crates/runtime/src/engine/effects/entry.rs:209:13: replace || with && in RuntimeService::prepare_final_entry",
-      "classification": "unreachable_by_valid_contract",
-      "explanation": "The mutation joins only the lease and authority comparisons. Authority is immutable after start. Under the supported worker protocol, a heartbeat is reported only after the adapter-entry decision, so a concurrent renewal also changes the independently compared attempt. Recovery expires a lease together with recovery classification of its attempt, and replacement changes attempt admission facts. A lease-only change during pre-entry preparation has no supported reporting path; the defensive original guard is retained."
-    },
-    {
-      "mutant": "crates/runtime/src/engine/effects/entry.rs:208:13: replace || with && in RuntimeService::prepare_final_entry",
-      "classification": "unreachable_by_valid_contract",
-      "explanation": "The mutation joins only the execution and lease comparisons. A cancellation-only execution change is also refused by cancellation_reason_for_execution on the refreshed head. Revision changes are independently checked through revision_for_attempt; output/terminal/recovery transitions also change the independently compared attempt. An otherwise isolated execution change that could authorize a new entry cannot be produced by a valid active-attempt history."
-    },
-    {
-      "mutant": "crates/runtime/src/engine/effects/entry.rs:206:13: replace || with && in RuntimeService::prepare_final_entry",
-      "classification": "unreachable_by_valid_contract",
-      "explanation": "The mutation joins only the attempt and execution comparisons. An execution-only cancellation still meets the following refreshed cancellation check. An attempt-only observation requires an already recorded adapter-entry decision, or terminal/recovery state; folding the final CapabilityAdapterEntryDecisionRecorded rejects a duplicate, terminal, or retired candidate before the prepared handle can enter. Immutable request coordinates cannot change independently under a valid history; lease, authority, and revision comparisons remain disjunctions."
-    },
-    {
-      "mutant": "crates/runtime/src/engine/structured/subworkflow.rs:142:17: replace || with && in RuntimeService::ensure_child_created",
-      "classification": "unreachable_by_valid_contract",
-      "explanation": "The loaded projection's run identity is fixed by its keyed journal. A valid RunCreated binds its workflow to its exact stored revision, and no later event can change that workflow. The separate immutable creation-revision comparison therefore already rejects a foreign workflow. An existing child with the expected creation revision but a different workflow cannot arise through valid creation or prospective reconciliation. The independent same-workflow/different-creation-pin refusal test catches weakening the adjacent creation check."
-    }
-  ]
+  "classifications": []
 }

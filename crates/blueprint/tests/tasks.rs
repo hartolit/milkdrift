@@ -82,7 +82,7 @@ fn captured_bytes_have_verified_identity_and_output_contracts_have_finite_bounds
         "[package]\nname = 'actual-input'".into(),
     )?;
     let mut wire = serde_json::to_value(&captured)?;
-    wire["text"] = json!("changed bytes");
+    *wire.get_mut("text").ok_or("captured text absent")? = json!("changed bytes");
     assert!(
         serde_json::from_value::<TaskInputValue>(wire)?
             .validate()
@@ -90,7 +90,9 @@ fn captured_bytes_have_verified_identity_and_output_contracts_have_finite_bounds
     );
     assert!(TaskInputValue::text_file("../Cargo.toml".into(), "x".into()).is_err());
     let mut value = serde_json::to_value(task()?)?;
-    value["outputs"] = json!({"report":{"max_bytes":2097153}});
+    *value
+        .get_mut("outputs")
+        .ok_or("output declarations absent")? = json!({"report":{"max_bytes":2097153}});
     assert!(
         serde_json::from_value::<TaskDefinition>(value)?
             .validate()

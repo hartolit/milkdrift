@@ -103,6 +103,9 @@ test('a queued missing-input task can be edited and repaired through the same in
   await submit(page, title, config.input_b, true);
   await expect(page.getByLabel('Task dependency timeline').getByText('Queued', { exact: true })).toBeVisible();
   await expect(page.getByText('Not started', { exact: true }).first()).toBeVisible();
+  // The queued reason is a durable generation change. Edit the observed waiting
+  // snapshot after it arrives, rather than racing that first scheduler decision.
+  await expect(page.getByLabel('Task dependency timeline')).toContainText('missing supplied input brief');
   await page.getByRole('button', { name: 'List', exact: true }).click();
   await page.getByRole('button', { name: 'Edit unstarted task', exact: true }).click();
   await page.getByLabel('Instructions', { exact: true }).fill('Inspect only the captured runtime Cargo manifest and report its actual dependency names.');

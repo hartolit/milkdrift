@@ -52,7 +52,7 @@ pub(super) async fn allow_origin(
         let valid_headers = request
             .headers()
             .get(header::ACCESS_CONTROL_REQUEST_HEADERS)
-            .map_or(true, |value| {
+            .is_none_or(|value| {
                 value.to_str().is_ok_and(|value| {
                     value.len() <= 256
                         && value.split(',').all(|name| {

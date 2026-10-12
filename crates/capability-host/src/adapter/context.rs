@@ -125,8 +125,8 @@ impl AdapterExecutionContext {
     #[must_use]
     pub const fn direct_selection(&self) -> Option<&DirectInputSelection> {
         Some(match &self.selection {
-            AdapterInputSelection::Task { selection, .. } => selection,
-            AdapterInputSelection::Direct(selection) => selection,
+            AdapterInputSelection::Task { selection, .. }
+            | AdapterInputSelection::Direct(selection) => selection,
         })
     }
     /// Materialization facts from the runtime's immutable task dispatch.
@@ -242,10 +242,11 @@ impl AdapterExecutionContext {
         if let Some((owner, _)) = &self.peer_artifacts {
             return Ok(owner.clone());
         }
-        if self.task_artifact_budget.is_some() && self.task_output_bytes.is_some() {
-            if let Some(workflow) = self.workflow() {
-                return Ok((&workflow.run).into());
-            }
+        if self.task_artifact_budget.is_some()
+            && self.task_output_bytes.is_some()
+            && let Some(workflow) = self.workflow()
+        {
+            return Ok((&workflow.run).into());
         }
         Err(crate::InvocationDataError::Rejected(
             "output publication requires a durably entered task or serving execution".to_owned(),

@@ -237,7 +237,6 @@ fn admission_expiry_boundaries_and_retention_reclamation_are_exact() -> Evidence
     fixture.store.admit_peer_execution(&first)?;
     let (worker, generation) = claim(&fixture, 111, BASE_TIME + 1, BASE_TIME + 100)?;
     fixture.store.mark_peer_entered(&PeerEntryRequest {
-        published_invocation: None,
         owner: &fixture.caller,
         execution: &first_execution,
         worker: &worker,
@@ -321,7 +320,6 @@ fn claim_entry_release_and_uncertainty_boundaries_are_independent() -> EvidenceR
     let (worker, second_generation) = claim(&fixture, 121, BASE_TIME + 3, BASE_TIME + 201)?;
     if !matches!(
         fixture.store.mark_peer_entered(&PeerEntryRequest {
-            published_invocation: None,
             owner: &fixture.caller,
             execution: &execution,
             worker: &worker,
@@ -418,7 +416,6 @@ fn entry_relationship_checks_are_not_conflated() -> EvidenceResult {
             })?;
         assert!(matches!(
             fixture.store.mark_peer_entered(&PeerEntryRequest {
-                published_invocation: None,
                 owner: &fixture.caller,
                 execution: &execution,
                 worker: &worker,
@@ -444,7 +441,6 @@ fn observation_quota_cancellation_replay_and_recovery_are_exact() -> EvidenceRes
     ))?;
     let (worker, generation) = claim(&fixture, 140, BASE_TIME + 1, BASE_TIME + 100)?;
     fixture.store.mark_peer_entered(&PeerEntryRequest {
-        published_invocation: None,
         owner: &fixture.caller,
         execution: &execution,
         worker: &worker,
@@ -606,7 +602,6 @@ fn entered_claim_recovery_is_uncertain_and_then_empty() -> EvidenceResult {
     ))?;
     let (worker, generation) = claim(&fixture, 150, BASE_TIME + 1, BASE_TIME + 100)?;
     fixture.store.mark_peer_entered(&PeerEntryRequest {
-        published_invocation: None,
         owner: &fixture.caller,
         execution: &execution,
         worker: &worker,

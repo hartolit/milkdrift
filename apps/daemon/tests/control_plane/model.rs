@@ -53,8 +53,9 @@ async fn controlled_model_receives_selected_text_and_uploaded_file_and_retains_i
         })
         .await?;
     let mut request = create_request("controlled-model", true);
-    request.tasks[0].definition = task_definition("writing-model", "model.generate");
-    request.tasks[0].definition.inputs.insert(
+    let task = request.tasks.first_mut().ok_or("model task missing")?;
+    task.definition = task_definition("writing-model", "model.generate");
+    task.definition.inputs.insert(
         "file".into(),
         InputBinding::Supplied {
             name: "file".into(),
@@ -97,7 +98,7 @@ async fn controlled_model_receives_selected_text_and_uploaded_file_and_retains_i
         .map_err(|_| "fixture request lock poisoned")?
         .clone();
     assert_eq!(captured.len(), 1);
-    let body = captured[0].to_string();
+    let body = captured.first().ok_or("model request missing")?.to_string();
     assert!(body.contains("Harbor Host 1.4") && body.contains("captured Cargo evidence"));
     assert!(!result.artifacts.is_empty());
     daemon.stop().await?;

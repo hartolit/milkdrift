@@ -29,13 +29,19 @@ async fn exact_requests_missing_inputs_and_frozen_file_bytes_survive_restart() -
     );
     fs::write(source, "bytes edited after upload")?;
     let mut request = create_request("captured-work", false);
-    request.tasks[0].definition.inputs.insert(
-        "file".into(),
-        InputBinding::Supplied {
-            name: "file".into(),
-            optional: false,
-        },
-    );
+    request
+        .tasks
+        .first_mut()
+        .ok_or("fixture task absent")?
+        .definition
+        .inputs
+        .insert(
+            "file".into(),
+            InputBinding::Supplied {
+                name: "file".into(),
+                optional: false,
+            },
+        );
     request.inputs.insert(
         "file".into(),
         InputValue::Uploaded {
@@ -179,7 +185,10 @@ async fn exact_requests_missing_inputs_and_frozen_file_bytes_survive_restart() -
         .workflows("captured-work", None, 10)
         .await?;
     assert_eq!(page.items.len(), 1);
-    assert_eq!(page.items[0].id, accepted.workflow_id);
+    assert_eq!(
+        page.items.first().ok_or("workflow page item absent")?.id,
+        accepted.workflow_id
+    );
     assert_eq!(
         restarted.client.task(&accepted.workflow_id, task).await?,
         complete
@@ -494,7 +503,9 @@ async fn selected_text_is_a_bounded_preview_while_download_and_digest_cover_exac
     let output = serde_json::to_string(
         &serde_json::json!({"literal":literal,"stdin":"","selected_environment":null,"ambient_home":null,"ambient_path":null}),
     )?;
-    document["profile"]["arguments"] =
+    *document
+        .pointer_mut("/profile/arguments")
+        .ok_or("profile arguments absent")? =
         serde_json::json!(["inspect", "result.txt", "ABSENT_TEST_ENVIRONMENT", literal]);
     for field in [
         "max_argv_bytes",
@@ -502,7 +513,9 @@ async fn selected_text_is_a_bounded_preview_while_download_and_digest_cover_exac
         "max_total_materialized_bytes",
         "max_total_output_bytes",
     ] {
-        document["profile"]["limits"][field] = serde_json::json!(131_072);
+        *document
+            .pointer_mut(&format!("/profile/limits/{field}"))
+            .ok_or("profile limit absent")? = serde_json::json!(131_072);
     }
     fs::write(&profile, serde_json::to_vec(&document)?)?;
     let mut config = configuration_document_with_process_profiles(&directory, 32, vec![profile])?;
@@ -528,13 +541,19 @@ async fn selected_text_is_a_bounded_preview_while_download_and_digest_cover_exac
             text: "b".repeat(6_000),
         },
     );
-    request.tasks[0].definition.inputs.insert(
-        "file".into(),
-        InputBinding::Supplied {
-            name: "file".into(),
-            optional: false,
-        },
-    );
+    request
+        .tasks
+        .first_mut()
+        .ok_or("fixture task absent")?
+        .definition
+        .inputs
+        .insert(
+            "file".into(),
+            InputBinding::Supplied {
+                name: "file".into(),
+                optional: false,
+            },
+        );
     request.inputs.insert(
         "file".into(),
         InputValue::Uploaded {
@@ -662,20 +681,40 @@ async fn maximum_text_outputs_allow_bounded_separators_and_non_utf8_keeps_lifecy
         if non_utf8 {
             let source = directory.path().join("non-utf8.txt");
             fs::write(&source, invalid_bytes)?;
-            document["profile"]["arguments"] = serde_json::json!(["copy", source, "result.txt"]);
-            document["profile"]["outputs"] = serde_json::json!([{"name":"report","relative_path":"result.txt","media_type":"text/plain","required":true}]);
+            *document
+                .pointer_mut("/profile/arguments")
+                .ok_or("profile arguments absent")? =
+                serde_json::json!(["copy", source, "result.txt"]);
+            *document
+                .pointer_mut("/profile/outputs")
+                .ok_or("profile outputs absent")? = serde_json::json!([{"name":"report","relative_path":"result.txt","media_type":"text/plain","required":true}]);
         } else {
-            document["profile"]["arguments"] = serde_json::json!(["text-output-pair", "1048576"]);
-            document["profile"]["outputs"] = serde_json::json!([
+            *document
+                .pointer_mut("/profile/arguments")
+                .ok_or("profile arguments absent")? =
+                serde_json::json!(["text-output-pair", "1048576"]);
+            *document
+                .pointer_mut("/profile/outputs")
+                .ok_or("profile outputs absent")? = serde_json::json!([
                 {"name":"stdout","relative_path":"stdout.txt","media_type":"text/plain","required":true},
                 {"name":"stderr","relative_path":"stderr.txt","media_type":"text/plain","required":true}
             ]);
-            document["profile"]["limits"]["max_file_bytes"] = serde_json::json!(1_048_576);
-            document["profile"]["limits"]["max_total_materialized_bytes"] =
+            *document
+                .pointer_mut("/profile/limits/max_file_bytes")
+                .ok_or("profile max_file_bytes absent")? = serde_json::json!(1_048_576);
+            *document
+                .pointer_mut("/profile/limits/max_total_materialized_bytes")
+                .ok_or("profile max_total_materialized_bytes absent")? =
                 serde_json::json!(2_097_152);
-            document["profile"]["limits"]["max_total_output_bytes"] = serde_json::json!(2_097_152);
-            document["profile"]["limits"]["max_output_files"] = serde_json::json!(2);
-            document["profile"]["limits"]["artifact_chunk_bytes"] = serde_json::json!(65_536);
+            *document
+                .pointer_mut("/profile/limits/max_total_output_bytes")
+                .ok_or("profile max_total_output_bytes absent")? = serde_json::json!(2_097_152);
+            *document
+                .pointer_mut("/profile/limits/max_output_files")
+                .ok_or("profile max_output_files absent")? = serde_json::json!(2);
+            *document
+                .pointer_mut("/profile/limits/artifact_chunk_bytes")
+                .ok_or("profile artifact_chunk_bytes absent")? = serde_json::json!(65_536);
         }
         fs::write(&profile, serde_json::to_vec(&document)?)?;
         let daemon = start(
@@ -692,7 +731,10 @@ async fn maximum_text_outputs_allow_bounded_separators_and_non_utf8_keeps_lifecy
             true,
         );
         if non_utf8 {
-            request.tasks[0]
+            request
+                .tasks
+                .first_mut()
+                .ok_or("fixture task absent")?
                 .definition
                 .paths
                 .push(milkdrift_control_protocol::tasks::PathAccess {

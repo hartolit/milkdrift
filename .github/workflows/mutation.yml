@@ -8,7 +8,7 @@ on:
         type: choice
         required: true
         default: authority
-        options: [authority, retention, runtime, uncertainty, controller, context, peer]
+        options: [authority, retention, runtime, uncertainty, tasks, inputs, peer]
       partition:
         description: "Zero-based partition, e.g. 0/4; all partitions are needed for full coverage"
         type: string

@@ -57,8 +57,8 @@ enum MutationShard {
     Retention,
     Runtime,
     Uncertainty,
-    Controller,
-    Context,
+    Tasks,
+    Inputs,
     Peer,
 }
 
@@ -68,8 +68,8 @@ const ALL_SHARDS: [MutationShard; 7] = [
     MutationShard::Retention,
     MutationShard::Runtime,
     MutationShard::Uncertainty,
-    MutationShard::Controller,
-    MutationShard::Context,
+    MutationShard::Tasks,
+    MutationShard::Inputs,
     MutationShard::Peer,
 ];
 
@@ -80,8 +80,8 @@ impl MutationShard {
             Self::Retention => "retention",
             Self::Runtime => "runtime",
             Self::Uncertainty => "uncertainty",
-            Self::Controller => "controller",
-            Self::Context => "context",
+            Self::Tasks => "tasks",
+            Self::Inputs => "inputs",
             Self::Peer => "peer",
         }
     }
@@ -110,8 +110,11 @@ impl MutationShard {
                 cargo_test_arguments: &[],
             },
             Self::Retention => ShardSpecification {
-                files: &["adapters/redb-store/src/application.rs"],
-                pattern: "(commit_application_command|archive_application_command_receipts|archive_oldest_hot_receipts|receipt_accounting_values|ReceiptLocation::status)",
+                files: &[
+                    "adapters/redb-store/src/task.rs",
+                    "adapters/redb-store/src/task/capacity.rs",
+                ],
+                pattern: "(commit_workflow|workflow_receipt|require_history_capacity|reserve_task_output|release_task_output|commit_artifact|validate_output_usage)",
                 test_packages: &[
                     "milkdrift-redb-store",
                     "milkdrift-evidence",
@@ -123,33 +126,20 @@ impl MutationShard {
             },
             Self::Runtime => ShardSpecification {
                 files: &[
-                    "crates/runtime/src/engine/reconciliation.rs",
-                    "crates/runtime/src/engine.rs",
+                    "crates/runtime/src/tasks/admission.rs",
+                    "crates/runtime/src/tasks/scheduling.rs",
                 ],
-                pattern: "(handle_new_command|replay_if_present|projection_checkpoint_due|plan_revision_adoption|plan_reconciliation_decision|plan_reconciliation_application)",
+                pattern: "(create_request|edit_request|replay|adopt_correction|tick|prepare_dispatch)",
                 test_packages: &[
                     "milkdrift-runtime",
                     "milkdrift-daemon",
                     "milkdrift-local-process",
                 ],
-                cargo_test_arguments: &[
-                    "--lib",
-                    "--test",
-                    "durable_runtime",
-                    "--test",
-                    "structured_runtime",
-                ],
+                cargo_test_arguments: &[],
             },
             Self::Uncertainty => ShardSpecification {
-                files: &[
-                    "crates/runtime/src/engine/effects.rs",
-                    "crates/runtime/src/engine/support.rs",
-                ],
-                pattern: "(recovery_classification|record_effect_uncertainty|observation_text|bounded_observation_reason)",
-                // cargo-mutants 27.1 also emits struct-field deletion mutants from the selected
-                // effects file even when their enclosing function does not match `--re`.
-                // Controller integration tests therefore remain in this lane so those incidental
-                // final-entry plan mutations cannot survive a runtime-only test selection.
+                files: &["crates/runtime/src/tasks/effects.rs"],
+                pattern: "(execute|claim_execution|defer_before_entry|finish_without_entry|mark_uncertain|recover|execute_cancellation|cancellation_actions|record|heartbeat)",
                 test_packages: &[
                     "milkdrift-runtime",
                     "milkdrift-control",
@@ -158,24 +148,17 @@ impl MutationShard {
                 ],
                 cargo_test_arguments: &[],
             },
-            Self::Controller => ShardSpecification {
+            Self::Tasks => ShardSpecification {
                 files: &[
-                    "crates/control/src/controller/lifecycle.rs",
-                    "crates/control/src/controller/policy.rs",
-                    "crates/persistence/src/controller_account.rs",
-                    "crates/persistence/src/controller_account/transition.rs",
-                    "crates/persistence/src/controller_account/transaction.rs",
-                    "adapters/redb-store/src/controller_account.rs",
-                    "adapters/redb-store/src/controller_account/validation.rs",
-                    "adapters/redb-store/src/clock.rs",
-                    "adapters/redb-store/src/artifact.rs",
-                    "adapters/redb-store/src/artifact/publication.rs",
-                    "crates/runtime/src/engine/effects.rs",
-                    "crates/runtime/src/engine/effects/entry.rs",
-                    "crates/capability-host/src/lib.rs",
+                    "crates/blueprint/src/task.rs",
+                    "crates/control/src/tasks.rs",
+                    "crates/runtime/src/tasks/account.rs",
+                    "crates/runtime/src/tasks/capacity.rs",
+                    "crates/runtime/src/tasks/duration.rs",
                 ],
-                pattern: "(ControllerPolicy::assess|ControllerLifecycleOwner.*(progress|assess)|bound_outcome|ControllerAccountState::(admit|settle_terminal|charge_artifact)|ControllerAccountTransaction::validate|apply_controller_transaction|charge_artifact_publication|validate_(account_key|event_link|event_transaction_contract|lineage_transaction_contract|publication_controller_charge)|terminal_(settlement|usage)|commit_artifact|execute_invocation_effect|prepare_exact_entry|RedbStore::(sample_clock|observe_clock_with))",
+                pattern: "(validate|create_request|edit_request|authorize|reserve|bounded|remaining|accrue|observe_duration|request_limit_stop)",
                 test_packages: &[
+                    "milkdrift-blueprint",
                     "milkdrift-control",
                     "milkdrift-persistence",
                     "milkdrift-redb-store",
@@ -186,11 +169,19 @@ impl MutationShard {
                 ],
                 cargo_test_arguments: &[],
             },
-            Self::Context => ShardSpecification {
-                files: &["crates/runtime/src/context.rs"],
-                pattern: "(CausalContextBuilder::build|budget_overflow)",
-                test_packages: &["milkdrift-runtime"],
-                cargo_test_arguments: &["--test", "causal_context"],
+            Self::Inputs => ShardSpecification {
+                files: &[
+                    "crates/runtime/src/tasks/inputs.rs",
+                    "crates/runtime/src/tasks/scheduling.rs",
+                ],
+                pattern: "(resolve_inputs|supplied_input|prepare_dispatch|inline)",
+                test_packages: &[
+                    "milkdrift-runtime",
+                    "milkdrift-daemon",
+                    "milkdrift-local-process",
+                    "milkdrift-model-provider",
+                ],
+                cargo_test_arguments: &[],
             },
             Self::Peer => ShardSpecification {
                 files: &[
@@ -210,19 +201,7 @@ impl MutationShard {
                     "milkdrift-daemon",
                     "milkdrift-local-process",
                 ],
-                // These process/model-only harness scenarios configure no peers. Their short
-                // HTTP deadlines caused unrelated failures to hide peer survivors under load.
-                // The full workspace gate and relevant authority/receipt campaigns retain them;
-                // all peer, storage, daemon-peer, and operational contracts stay in this shard.
-                cargo_test_arguments: &[
-                    "--",
-                    "--skip",
-                    "fixture_proves_the_harness_without_claiming_external_qualification",
-                    "--skip",
-                    "fixture_process_and_model_scenario_failures_exit_nonzero",
-                    "--skip",
-                    "fixture_requires_acknowledgement_and_tracked_outputs_are_refused",
-                ],
+                cargo_test_arguments: &[],
             },
         }
     }
@@ -643,6 +622,8 @@ mod tests {
         assert_eq!(partition.partition.as_deref(), Some("0/4"));
         assert!(Arguments::try_parse_from(["mutation-evidence"]).is_err());
         assert!(Arguments::try_parse_from(["mutation-evidence", "unknown"]).is_err());
+        assert!(Arguments::try_parse_from(["mutation-evidence", "controller"]).is_err());
+        assert!(Arguments::try_parse_from(["mutation-evidence", "context"]).is_err());
         assert!(Arguments::try_parse_from(["mutation-evidence", "peer", "--run"]).is_err());
         Ok(())
     }
@@ -653,27 +634,15 @@ mod tests {
         for shard in ALL_SHARDS {
             validate_specification(&repository, shard.specification())?;
         }
-        let controller = MutationShard::Controller.specification();
+        let tasks = MutationShard::Tasks.specification();
+        assert!(tasks.files.contains(&"crates/control/src/tasks.rs"));
         assert!(
-            controller
+            tasks
                 .files
-                .contains(&"crates/control/src/controller/lifecycle.rs")
+                .contains(&"crates/runtime/src/tasks/duration.rs")
         );
-        assert!(
-            controller
-                .files
-                .contains(&"crates/control/src/controller/policy.rs")
-        );
-        assert!(
-            controller
-                .files
-                .contains(&"crates/persistence/src/controller_account.rs")
-        );
-        assert!(
-            controller
-                .files
-                .contains(&"adapters/redb-store/src/controller_account.rs")
-        );
+        let inputs = MutationShard::Inputs.specification();
+        assert!(inputs.files.contains(&"crates/runtime/src/tasks/inputs.rs"));
         let authority = MutationShard::Authority.specification();
         assert!(
             authority
@@ -694,7 +663,7 @@ mod tests {
         for shard in ALL_SHARDS {
             let specification = shard.specification();
             if specification.test_packages.contains(&"milkdrift-evidence") {
-                // The Slotbook authoring contract executes the CLI from this checkout.
+                // Connected-task application contracts execute the CLI from this checkout.
                 assert!(specification.test_packages.contains(&"milkdrift-cli"));
             }
             let command = mutation_command(&repository, Path::new("target/unused"), specification)?;
@@ -727,7 +696,10 @@ mod tests {
             }
             if matches!(
                 shard,
-                MutationShard::Runtime | MutationShard::Uncertainty | MutationShard::Controller
+                MutationShard::Runtime
+                    | MutationShard::Uncertainty
+                    | MutationShard::Tasks
+                    | MutationShard::Inputs
             ) {
                 // Retained-context tests execute the daemon; daemon suites execute the helper.
                 for package in ["milkdrift-daemon", "milkdrift-local-process"] {

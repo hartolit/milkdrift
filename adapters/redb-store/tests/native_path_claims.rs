@@ -47,7 +47,7 @@ fn physical_aliases_and_partial_overlap_cannot_create_another_owner()
     let store = RedbStore::open(directory.path())?;
     store.claim_native_paths(&first)?;
     let mut changed = first.clone();
-    changed.roots[0].write = false;
+    changed.roots.first_mut().ok_or("claim root missing")?.write = false;
     assert!(store.claim_native_paths(&changed).is_err());
     assert!(store.claim_native_paths(&alias).is_err());
     store.release_native_paths("first")?;

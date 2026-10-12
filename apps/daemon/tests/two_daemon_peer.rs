@@ -134,8 +134,14 @@ async fn exercise_peer_execution_turnover(turnovers: usize) -> TestResult {
     let receipt = submit_remote(&daemon_b.client, "peer-process-start", &["peer-a"]).await?;
     let first = completed_tasks(&daemon_b.client, &receipt.workflow_id).await?;
     assert_eq!(first.len(), 1);
-    assert!(first[0].definition.capability.id.starts_with("peer:"));
-    assert!(first[0].frozen.as_ref().is_some_and(|start| start.entered));
+    let first_task = first.first().ok_or("completed peer task absent")?;
+    assert!(first_task.definition.capability.id.starts_with("peer:"));
+    assert!(
+        first_task
+            .frozen
+            .as_ref()
+            .is_some_and(|start| start.entered)
+    );
     // Cross the tiny serving hot-history bound repeatedly before the restart half.
     for index in 0..turnovers {
         // Keep the entire bounded operation inside a live catalog. The serving peer caches

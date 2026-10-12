@@ -1,6 +1,11 @@
 # Prompt 01 handoff
 
-Prompt 01 is complete through its focused acceptance. The production daemon, CLI, independent JSON
+Prompt 01 is reopened for the user's assigned review of `e720bb9`. Corrections F01–F03 cover stale
+workspace/CI consumers, explicit absence on required inputs and cumulative execution-time
+enforcement. The earlier focused evidence remains valid only for the checks actually run; hosted
+quality run 227 failed and acceptance remains open until these repairs and their strict gate pass.
+
+The prior handoff below describes the preserved checkpoint. The production daemon, CLI, independent JSON
 consumer and standalone Svelte client use the same durable task owner. Stop here: prompt 02 is the
 user's actual review and remains unperformed; no later sprint prompt has been executed or assigned.
 The named full-system gate remains in 07.

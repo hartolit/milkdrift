@@ -114,12 +114,11 @@ fn acquire(
         .filter(|r| r.mutation)
         .map(|r| r.resource.clone())
         .collect();
-    let blockers: Vec<_> = record
+    if record
         .uses
         .iter()
-        .filter(|u| u.editing.iter().any(|r| editing.contains(r)))
-        .collect();
-    if !blockers.is_empty() {
+        .any(|u| u.editing.iter().any(|r| editing.contains(r)))
+    {
         return Err(busy("working area already has an exclusive editor"));
     }
     use_record.editing = editing;

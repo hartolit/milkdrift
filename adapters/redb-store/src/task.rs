@@ -141,21 +141,21 @@ impl WorkflowStore for RedbStore {
             .map(|command| receipt_key(&command.actor, &command.key))
             .transpose()?;
         let mut receipts = write.open_table(TASK_RECEIPTS).map_err(error::redb)?;
-        if let Some(key) = &receipt_key {
-            if let Some(bytes) = receipts.get(key.as_str()).map_err(error::redb)? {
-                let receipt: WorkflowCommandReceipt = json::decode(bytes.value(), "task receipt")?;
-                let request = commit
-                    .command
-                    .as_ref()
-                    .ok_or_else(|| error::corruption("receipt key has no command"))?;
-                if receipt.acceptance.canonical_request != request.canonical_request {
-                    return Err(PersistenceError::WorkflowIdempotencyConflict {
-                        actor: request.actor.clone(),
-                        key: request.key.clone(),
-                    });
-                }
-                return Ok(WorkflowCommitOutcome::Replay(receipt));
+        if let Some(key) = &receipt_key
+            && let Some(bytes) = receipts.get(key.as_str()).map_err(error::redb)?
+        {
+            let receipt: WorkflowCommandReceipt = json::decode(bytes.value(), "task receipt")?;
+            let request = commit
+                .command
+                .as_ref()
+                .ok_or_else(|| error::corruption("receipt key has no command"))?;
+            if receipt.acceptance.canonical_request != request.canonical_request {
+                return Err(PersistenceError::WorkflowIdempotencyConflict {
+                    actor: request.actor.clone(),
+                    key: request.key.clone(),
+                });
             }
+            return Ok(WorkflowCommitOutcome::Replay(receipt));
         }
         validate(&commit)?;
         crate::clock::require_clock_in_transaction(&write, self.clock.now()?)?;

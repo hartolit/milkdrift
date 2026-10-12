@@ -33,7 +33,7 @@ fn security_audit_prefix_is_bounded_paged_and_restart_durable() -> TestResult {
         after: None,
         limit: PageSize::new(1)?,
     })?;
-    assert_eq!(first.items[0].sequence, 3);
+    assert_eq!(first.items.first().ok_or("audit row missing")?.sequence, 3);
     let next = store.security_audit(&ApplicationPageQuery {
         after: first.next,
         limit: PageSize::new(10)?,

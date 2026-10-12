@@ -1,4 +1,5 @@
-//! Owned actual-daemon browser fixture and an input-dependent trusted Cargo report tool.
+//! Shared production-daemon fixture for finite task evidence and browser journeys.
+mod check;
 mod model;
 mod report;
 mod setup;
@@ -33,6 +34,15 @@ enum Action {
         #[arg(long, default_value_t = 3600)]
         lifetime_secs: u64,
     },
+    /// Exercise the actual CLI and public client against isolated production task daemons.
+    Check {
+        #[arg(long)]
+        root: PathBuf,
+        #[arg(long)]
+        daemon: PathBuf,
+        #[arg(long)]
+        cli: PathBuf,
+    },
     /// Analyze the exact task-supplied Cargo manifest. Used by the configured process adapter.
     CargoReport {
         #[arg(long, default_value = "Cargo.toml")]
@@ -65,7 +75,8 @@ async fn main() -> EvidenceResult {
             root,
             daemon,
             lifetime_secs,
-        } => serve(&root, &daemon, lifetime_secs).await,
+        } => run_fixture(&root, &daemon, lifetime_secs, None).await,
+        Action::Check { root, daemon, cli } => run_fixture(&root, &daemon, 300, Some(&cli)).await,
         Action::CargoReport { file, delay_ms } => report::run(&file, delay_ms),
         Action::Control { root, operation } => {
             let operation = match operation {
@@ -116,10 +127,9 @@ async fn ready(daemon: &mut Daemon) -> EvidenceResult {
             .bearer_auth(&daemon.token)
             .send()
             .await
+            && reply.status().is_success()
         {
-            if reply.status().is_success() {
-                return Ok(());
-            }
+            return Ok(());
         }
         ensure(
             Instant::now() < deadline,
@@ -129,7 +139,12 @@ async fn ready(daemon: &mut Daemon) -> EvidenceResult {
     }
 }
 
-async fn serve(root: &Path, daemon: &Path, lifetime_secs: u64) -> EvidenceResult {
+async fn run_fixture(
+    root: &Path,
+    daemon: &Path,
+    lifetime_secs: u64,
+    cli: Option<&Path>,
+) -> EvidenceResult {
     ensure(
         (30..=14_400).contains(&lifetime_secs),
         "fixture lifetime must be 30..=14400 seconds",
@@ -231,6 +246,59 @@ async fn serve(root: &Path, daemon: &Path, lifetime_secs: u64) -> EvidenceResult
             root.join("browser.json").display()
         );
     }
+    let outcome = if let Some(cli) = cli {
+        match tokio::time::timeout(
+            Duration::from_secs(90),
+            check::run(&root, cli, &daemon, &mut instances),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err("connected task scenario exceeded its 90-second deadline".into()),
+        }
+    } else {
+        serve_loop(&root, &daemon, lifetime_secs, &mut instances)
+            .await
+            .map(|()| json!({"browser_fixture":"closed"}))
+    };
+    let mut cleanup = Vec::new();
+    for instance in &mut instances {
+        if let Err(error) = instance.child.shutdown() {
+            cleanup.push(error.to_string());
+        }
+    }
+    if let Err(error) = model.finish() {
+        cleanup.push(error.to_string());
+    }
+    let report = match (outcome, cleanup.is_empty()) {
+        (Ok(report), true) => report,
+        (Err(error), true) => return Err(error),
+        (Ok(_), false) => {
+            return Err(format!("fixture cleanup unconfirmed: {}", cleanup.join("; ")).into());
+        }
+        (Err(error), false) => {
+            return Err(format!(
+                "{error}; fixture cleanup unconfirmed: {}",
+                cleanup.join("; ")
+            )
+            .into());
+        }
+    };
+    if cli.is_some() {
+        write_private(
+            &root.join("check.json"),
+            &serde_json::to_vec_pretty(&report)?,
+        )?;
+    }
+    Ok(())
+}
+
+async fn serve_loop(
+    root: &Path,
+    daemon: &Path,
+    lifetime_secs: u64,
+    instances: &mut [Daemon],
+) -> EvidenceResult {
     let deadline = Instant::now() + Duration::from_secs(lifetime_secs);
     let control = root.join("control-request");
     while Instant::now() < deadline {
@@ -255,10 +323,10 @@ async fn serve(root: &Path, daemon: &Path, lifetime_secs: u64) -> EvidenceResult
             } else {
                 instance.child.shutdown()?;
             }
-            instance.child = start(&daemon, &instance.config, &instance.log)?;
+            instance.child = start(daemon, &instance.config, &instance.log)?;
             ready(instance).await?;
         }
-        for instance in &mut instances {
+        for instance in instances.iter_mut() {
             ensure(
                 instance.child.try_wait()?.is_none(),
                 "owned production daemon exited during browser fixture",
@@ -266,9 +334,5 @@ async fn serve(root: &Path, daemon: &Path, lifetime_secs: u64) -> EvidenceResult
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    for instance in &mut instances {
-        instance.child.shutdown()?;
-    }
-    model.finish()?;
     Ok(())
 }

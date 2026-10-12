@@ -448,7 +448,8 @@ fn syntax_checks_explicit_exports_private_values_and_canonical_owners() -> TestR
             "retired owner remains: {retired}"
         );
     }
-    for (path, removed) in [("crates/runtime/src/executor.rs", &["execute_streaming"][..])] {
+    {
+        let (path, removed) = ("crates/runtime/src/executor.rs", &["execute_streaming"][..]);
         let found = structure(&read(repository.join(path))?)?;
         assert!(
             !found
@@ -482,7 +483,8 @@ fn syntax_checks_explicit_exports_private_values_and_canonical_owners() -> TestR
                 .any(|found| found == name)
         );
     }
-    for consumer in ["crates/capability/src/descriptor.rs"] {
+    {
+        let consumer = "crates/capability/src/descriptor.rs";
         assert!(
             structure(&read(repository.join(consumer))?)?
                 .macros

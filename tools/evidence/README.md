@@ -6,7 +6,7 @@ observations support the claim being made. Product crates never depend on the ev
 | Tool | Purpose |
 | --- | --- |
 | `strict-checks` | Compiler, Clippy, feature, dependency, repository and redacted secret checks with retained command status. It runs no product scenarios. |
-| `connected-tasks` | Two isolated production daemons, a trusted input-dependent Cargo report process and controlled model endpoint for the standalone browser journey. Backend setup and lifecycle control remain Rust-owned. |
+| `connected-tasks` | Two isolated production daemons, a trusted input-dependent Cargo report process and controlled model endpoint. `serve` supports the browser journey; `check` runs a finite CLI/public-client/restart scenario and verifies cleanup. |
 | `milkdrift-external-evidence` | Real coding-process/model interoperability through ordinary daemon tasks, corrective work and strict redacted schema-2 reports. Explicit fixture mode never qualifies. |
 | `operational-evidence` | Bounded storage, queue, observation and shutdown measurements through maintained owners. Platform-specific observations identify their platform. |
 | `core_paths` | Timing selected maintained storage, capability and daemon paths; measurements are not correctness budgets. |
@@ -25,6 +25,29 @@ The owner writes a private `browser.json` only after both daemons are ready. Sup
 as `MILKDRIFT_BROWSER_CONFIG` to the [web browser suite](../../apps/web/README.md). The fixture's
 `control --root DIRECTORY` subcommand requests bounded restart/crash/stop actions from its live Rust
 owner. Tokens and private request bodies must not be printed or retained in browser traces.
+
+The finite application lane uses those same daemons and capabilities:
+
+```sh
+cargo build -p milkdrift-daemon --bin milkdrift-daemon -p milkdrift-cli --bin milkdrift -p milkdrift-evidence --bin connected-tasks --bin milkdrift-external-evidence
+target/debug/connected-tasks check --root target/task-client-evidence --daemon target/debug/milkdrift-daemon --cli target/debug/milkdrift
+target/debug/milkdrift-external-evidence --daemon target/debug/milkdrift-daemon --fixture --allow-fixture --output target/task-external-evidence
+```
+
+`check` uploads a Cargo manifest through the real CLI, edits the local source after capture,
+submits and replays a task, restarts its daemon, and uses a fresh public client to discover the
+same result and receipt. It checks changed-request refusal, daemon isolation and the controlled
+model's selected input bytes. A redacted `check.json` appears only after both daemon children and
+the model fixture have shut down successfully. The private root also contains credentials and
+model request captures: retain only the explicitly redacted report in shared CI artifacts.
+
+The old headless graph, local-model graph and installed-controller qualification executables
+were retired under [ADR 0051](../../docs/decisions/0051-daemon-task-workflows.md). Current quality
+CI builds and executes the task lanes above. The manual stress lane retains peer turnover and
+tests current task capacity, replay and recovery; it does not claim the former graph compaction
+or controller longevity behavior. Mutation shards now target `authority`, `retention`, `runtime`,
+`uncertainty`, `tasks`, `inputs` and `peer`. Old exact-mutant exceptions were removed with their
+source owners; new survivors require their own reviewed classification.
 
 The [external guide](../../docs/guides/external-evidence.md) owns real profile prerequisites,
 qualification and report handling. Passing a local fixture says that the harness worked, not that

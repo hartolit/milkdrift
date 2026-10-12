@@ -235,10 +235,11 @@ impl TaskExecutor for CapabilityHost {
             dispatch,
             prepared.envelope().clone(),
             move |dispatch, reporter| {
-                if dispatch.is_task() && !dispatch.native_path_claims().is_empty() {
-                    if let Some(claims) = claims {
-                        claims.revalidate(dispatch.attempt().as_str())?;
-                    }
+                if dispatch.is_task()
+                    && !dispatch.native_path_claims().is_empty()
+                    && let Some(claims) = claims
+                {
+                    claims.revalidate(dispatch.attempt().as_str())?;
                 }
                 let bridge = ReporterBridge { reporter };
                 let context = AdapterExecutionContext::from_dispatch(dispatch)
@@ -256,10 +257,10 @@ impl TaskExecutor for CapabilityHost {
     }
 
     fn settle(&self, dispatch: &ExecutionDispatch) -> Result<(), ExecutorError> {
-        if dispatch.is_task() {
-            if let Some(claims) = self.core.native_paths.get() {
-                claims.release_settled(dispatch.attempt().as_str())?;
-            }
+        if dispatch.is_task()
+            && let Some(claims) = self.core.native_paths.get()
+        {
+            claims.release_settled(dispatch.attempt().as_str())?;
         }
         Ok(())
     }

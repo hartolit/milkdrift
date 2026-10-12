@@ -148,7 +148,15 @@ async fn metadata_only_projection_preserves_actual_sensitivities_and_refuses_byt
             session.grant = AuthorityGrant::from_json(&serde_json::to_vec(&wire)?)?;
             narrow(owner, &mut session, true)?;
             let public = owner
-                .artifact_metadata(&session, metadata[0].reference().artifact().as_str())
+                .artifact_metadata(
+                    &session,
+                    metadata
+                        .first()
+                        .ok_or("public artifact missing")?
+                        .reference()
+                        .artifact()
+                        .as_str(),
+                )
                 .map_err(|error| error.message)?;
             assert_eq!(public.sensitivity, "public");
             for restricted in metadata.iter().skip(1) {

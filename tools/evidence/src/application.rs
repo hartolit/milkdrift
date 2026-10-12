@@ -577,23 +577,6 @@ impl CliRunner {
             .checked_add(watchdog)
             .ok_or("CLI deadline overflow")?;
         command.args(arguments);
-        if arguments.windows(2).any(|pair| pair == ["run", "start"])
-            && !arguments.contains(&"--request-file")
-        {
-            // Finite scenarios own these explicit recovery files with their credential directory.
-            // Each submission gets a destination, including deliberate canonical replay/conflict
-            // probes. Recovery scenarios pass their own retained path instead.
-            static REQUEST_FILE: std::sync::atomic::AtomicU64 =
-                std::sync::atomic::AtomicU64::new(0);
-            let index = REQUEST_FILE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let directory = self
-                .token_file
-                .parent()
-                .ok_or("credential directory is absent")?;
-            command
-                .arg("--request-file")
-                .arg(directory.join(format!("run-request-{}-{index}.json", std::process::id())));
-        }
         run_command_until(
             &mut command,
             stdin,
@@ -798,7 +781,7 @@ pub fn write_config(
         actors: vec![ActorBindingConfig {
             credential_ref: "credential:headless-cli".to_owned(),
             actor: actor.to_owned(),
-            grant_id: "grant:headless-cli-evidence".to_owned(),
+            grant_id: "grant:application-evidence".to_owned(),
             grant_revision: 1,
             revocation_generation: 0,
             preset: AuthorityPresetConfig::Controller,
@@ -865,8 +848,8 @@ pub fn write_process_profile(
             "implementation": {
                 "content_digest": content_digest,
                 "size_bytes": executable_size,
-                "package_revision": "headless-cli-evidence-v1",
-                "documentation_reference": "urn:milkdrift:headless-cli-evidence"
+                "package_revision": "application-evidence-v1",
+                "documentation_reference": "urn:milkdrift:application-evidence"
             },
             "arguments": [fixture_argument],
             "substitutions": {},
@@ -1037,9 +1020,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn proposal_preview_precedes_one_final_cli_result() -> EvidenceResult {
-        let preview = json!({"schema_version":2,"type":"proposal.impact","final":false});
-        let result = json!({"schema_version":2,"type":"proposal.apply","final":true});
+    fn input_upload_preview_precedes_one_final_cli_result() -> EvidenceResult {
+        let preview = json!({"schema_version":2,"type":"input.uploading","final":false});
+        let result = json!({"schema_version":2,"type":"invocation.execute","final":true});
         assert_eq!(final_json(&format!("{preview}\n{result}\n"))?, result);
         assert_eq!(final_json(&format!("{result}\n"))?, result);
         assert_eq!(
@@ -1089,7 +1072,7 @@ mod tests {
             token_file: PathBuf::from("unused-credential"),
             forbidden_storage_path: PathBuf::from("unused-store"),
         };
-        let error = wait_for_workflow(&runner, "unused-run", Duration::MAX, |_| true)
+        let error = wait_for_workflow(&runner, "unused-workflow", Duration::MAX, |_| true)
             .err()
             .ok_or("unrepresentable observation deadline accepted")?;
         assert_eq!(error.to_string(), "workflow observation deadline overflow");

@@ -253,7 +253,10 @@ async fn drained_models_can_be_replaced_individually_through_http_and_cli() -> T
                 for task in &read.tasks {
                     diagnostics.push(client.task(&workflow, &task.id).await?);
                 }
-                panic!("repaired model task failed before completion: {diagnostics:?}");
+                return Err(format!(
+                    "repaired model task failed before completion: {diagnostics:?}"
+                )
+                .into());
             }
             if read
                 .tasks
@@ -266,7 +269,7 @@ async fn drained_models_can_be_replaced_individually_through_http_and_cli() -> T
                         .all(|task| task.state == TaskStateDto::Completed),
                     "{read:?}"
                 );
-                return Ok::<_, milkdrift_control_client::ClientError>(());
+                return Ok::<_, Box<dyn std::error::Error>>(());
             }
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }

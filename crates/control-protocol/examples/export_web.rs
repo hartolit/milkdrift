@@ -1,5 +1,11 @@
 //! Regenerate the standalone client's transport types from their Rust owner.
-use milkdrift_control_protocol::tasks::*;
+use milkdrift_control_protocol::tasks::{
+    ChangeWorkflowRequest, CreateWorkflowRequest, FrozenInputDto, FrozenTaskDto, InputBinding,
+    InputValue, NewTaskDto, PathAccess, TaskBindingRedirectDto, TaskCapability, TaskChangeDto,
+    TaskDefinitionDto, TaskOutputDeclarationDto, TaskReadDto, TaskResultDto, TaskSessionDto,
+    TaskStateDto, TaskSummaryDto, TaskUploadReceipt, TaskUploadRequest, WorkflowLimitsDto,
+    WorkflowPageDto, WorkflowReadDto, WorkflowReceipt, WorkflowSummaryDto,
+};
 use ts_rs::TS;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

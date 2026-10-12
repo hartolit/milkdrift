@@ -3,8 +3,10 @@
 Milkdrift's current ordinary workflow path is a durable daemon-owned task collection exposed through
 the CLI, independent JSON requests and a standalone Svelte client. Prompt 01 of the
 [implementation sprint](../development/virtual-office/daemon-workflows-implementation/README.md)
-is complete through its focused handoff at `95a4dc5`. Actual user review in prompt 02 is pending;
-completing this slice does not authorize the remaining sprint.
+is reopened for the review corrections against `e720bb9`: retired-consumer/CI adoption, explicit
+absence of required inputs, and cumulative execution-time enforcement. The earlier focused passes
+did not establish workspace acceptance; hosted quality run 227 failed. Actual user review in prompt
+02 remains pending, and these corrections do not authorize the remaining sprint.
 
 ## Implemented now
 

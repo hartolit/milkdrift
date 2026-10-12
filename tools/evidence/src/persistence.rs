@@ -146,7 +146,12 @@ pub fn workflow_read_page() -> EvidenceResult<ScenarioMeasurement> {
             break;
         }
     }
-    if identities.len() != 64 || identities.windows(2).any(|pair| pair[0] >= pair[1]) {
+    if identities.len() != 64
+        || identities
+            .iter()
+            .zip(identities.iter().skip(1))
+            .any(|(prior, next)| prior >= next)
+    {
         return Err("workflow page coverage/order differs".into());
     }
     let bytes = serde_json::to_vec(&identities)?;
@@ -171,7 +176,10 @@ pub fn workflow_snapshot_reopen() -> EvidenceResult<ScenarioMeasurement> {
     })?;
     for generation in 2..=128 {
         snapshot.generation = generation;
-        snapshot.document["generation"] = serde_json::json!(generation);
+        *snapshot
+            .document
+            .get_mut("generation")
+            .ok_or("workflow snapshot generation absent")? = serde_json::json!(generation);
         store.commit_workflow(WorkflowCommit {
             expected_generation: Some(generation.saturating_sub(1)),
             snapshot: snapshot.clone(),

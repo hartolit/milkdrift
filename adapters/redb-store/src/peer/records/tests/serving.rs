@@ -110,7 +110,7 @@ pub(super) fn record() -> TestResult<PeerExecutionRecord> {
             issuer_peer: PeerId::new("caller")?,
             actor,
             target_peer: PeerId::new("serving")?,
-            capability: capability.clone(),
+            capability,
             operation: operation.clone(),
             request: request_id,
             limits,
@@ -124,7 +124,7 @@ pub(super) fn record() -> TestResult<PeerExecutionRecord> {
         caller: request.authorization.caller(),
         relationship_generation: 1,
         request,
-        authority: authority.clone(),
+        authority,
         execution: PeerExecutionId::new("execution:record-test")?,
         acceptance_sequence: 1,
         accepted_at_unix_ms: 100,
@@ -211,8 +211,6 @@ fn serving_record_corruption_refuses_both_transaction_readers() -> TestResult {
                     "outputs" | "output-overflow" | "observations" | "artifact-overflow"
                 ) {
                     "primary facts are invalid"
-                } else if matches!(case, "caller" | "actor") {
-                    "caller contradicts accepted authority"
                 } else {
                     "caller contradicts accepted authority"
                 };

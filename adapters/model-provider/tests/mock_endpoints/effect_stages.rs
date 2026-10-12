@@ -301,12 +301,12 @@ struct DenyReadAfterIntent {
 impl FaultInjector for DenyReadAfterIntent {
     fn check(&self, point: FaultPoint) -> Result<(), milkdrift_persistence::PersistenceError> {
         if point == FaultPoint::AfterCommandCommit {
-            if let Some(target) = self
+            let target = self
                 .target
                 .lock()
                 .map_err(|_| milkdrift_redb_store::injected_failure(point))?
-                .take()
-            {
+                .take();
+            if let Some(target) = target {
                 target.store(true, Ordering::SeqCst);
             }
         }
