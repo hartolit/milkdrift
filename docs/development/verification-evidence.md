@@ -1,5 +1,69 @@
 # Verification and operational evidence
 
+## Prompt 01 review corrections
+
+The assigned review of `e720bb9` was reproduced on Linux x86-64 with Rust 1.95.0. GitHub
+[quality run 227](https://github.com/hartolit/milkdrift/actions/runs/38280025321) failed workspace
+compilation and strict Clippy; its retained artifact SHA-256 was independently verified as
+`402aa34881ada71cd9c8eab1dd3f2d1fb7c17e4343ffe3c6e1f389dc8bf06452`. The earlier focused report below
+did not establish workspace acceptance. Retained hosted diagnostics are under
+`target/prompt01-review/hosted-strict-run227/`.
+
+Local corrections are `c01a19f` (required absence), `45d3bb6` (cumulative duration) and `c9e9809`
+(current CI/evidence consumers and strict integration). The complete strict static gate passed
+on clean `c9e9809`: all 33 checks passed and `findings.json` is empty. This includes product defaults,
+workspace default/all-feature targets, warning-denying Clippy/documentation, default helper-feature
+boundaries, all 30 repository contracts, dependency auditing and workflow/security/secret scanners.
+Scanner probes accepted valid fixtures and rejected the deliberate invalid fixtures. The executed
+commands used the existing pinned scanners on `PATH`:
+
+```sh
+cargo strict-checks --probe-tools --output target/prompt01-review/strict-tools-proof
+cargo strict-checks --secret-base e720bb9103d5a2ba0cfe3affdc14fd1978c26bfe --output target/prompt01-review/strict-final
+```
+
+The output directories contain source identity, command status and diagnostics. Choose new output
+directories for a repeat. No corrected hosted run has occurred; publication remains pending.
+
+Focused verification also passed, with logs below relative to `target/prompt01-review/`:
+
+| Boundary | Observed evidence | Retained log/report |
+| --- | --- | --- |
+| Required absence | Three public daemon tests prove zero process entries while required input is absent, normal edit starts once, exact replay/restart cannot repeat entry, and optional consumers can start independently. A unit test distinguishes empty text and JSON null. | `required-absent-fixed.log`, `absence-values.log` |
+| Cumulative duration | 26 durable runtime tests, including eight controlled-clock cases for serial/concurrent reservation, exact boundaries, missing bounds, restart and uncertain or stop-pending work without refunds. | `durable-runtime-final.log` |
+| Production adapters and storage | Capability, process, model-provider, peer-protocol, peer-http and redb owner suites; old internal format 20 refuses without byte or modification-time changes. Managed mechanisms/unit/recipe checks passed. | `adapter-owner-tests-1.log` |
+| Managed lifecycle | All 19 lifecycle cases pass after retaining generic conformance and separately proving that an unknown duration refuses real bounded serving entry with zero platform effects. Independent administrative apply/replay still works. | `managed-lifecycle-final-3.log` |
+| Model effects | All 30 controlled endpoint/preparation/effect tests pass after the lint-only fixture adjustment. | `model-endpoints-final.log` |
+| Host and clients | All-feature capability-host, blueprint, control-protocol, control-client, control and CLI suites pass. | `client-host-owner-tests.log` |
+| Daemon | 40 library, 31 public control-plane and two real two-daemon tests pass. The existing manual peer longevity test remains outside this focused run. | `daemon-owner-tests.log` |
+| Evidence consumers | Evidence library/binary suites, five child-boundary tests, two real CLI/client fixture tests and five external-evidence tests pass. Success and deliberate failure both confirm child cleanup. | `evidence-consumers-final.log` |
+| Maintained CI commands | `connected-tasks check` and fixture-mode `milkdrift-external-evidence` both pass through the real daemon; reports explicitly remain non-qualifying. | `connected-cli-check/check.json`, `external-task-check/report.json` |
+| Svelte | Check/lint and 26 unit tests pass; all eight Chromium cases pass against the unchanged production build with fresh format-21 daemons. Desktop 1280-pixel and phone-sized 390-pixel renders were inspected. | `frontend/browser.log`, `frontend/desktop-result.png`, `frontend/phone-result.png` |
+
+The first adapter-owner run contains one managed lifecycle conformance failure; the dedicated final
+19-case rerun above closes it. Earlier failed diagnostics remain retained. The browser's first
+correction run exposed a test racing the daemon's first missing-input generation update. Waiting
+for the visible queued reason fixed that test; its explicit later stale-edit refusal/retry remains.
+The original seven-of-eight run is retained under `frontend/attempt-1/`.
+
+The regression tests discriminate the repairs: temporarily restoring the former absence resolver
+makes the public task run instead of remain queued (`required-absent-prefixed-regression.log`).
+Temporarily bypassing duration admission causes excess external entries in the serial, concurrent
+and uncertain-restart tests (`duration-without-reservation.log`). Both mutations were removed before
+the final passing runs and commits; no suppression or skip was added.
+
+Default/all-feature public API inventories for capability and runtime are retained under
+`target/public-api/prompt01-review/`. Review traced the enforceable envelope bound through process,
+model, managed and peer producers to the existing task account, and durable timing records through
+the schema-2 reader. Peer JSON shape remains unchanged; its existing duration limit now checks the
+prepared bound. Redb internal format 21 refuses earlier documents rather than infer timing evidence.
+
+This completes the assigned local review corrections, not prompt-07 full-system acceptance or
+prompt-02 user approval. No manual longevity, real Podman qualification, paid/real model, physical
+phone, deployed HTTPS or other-platform qualification was run. Earlier stores, services and Git
+preservation refs remain intact. The [handoff](virtual-office/daemon-workflows-implementation/handoff.md)
+identifies the fresh review fixture and private credential-file locations.
+
 ## Prompt 01 focused task acceptance
 
 The task cutover at `95a4dc5` was exercised on Linux x86-64 with Rust 1.95.0, Node 25.2.1 and Chromium.

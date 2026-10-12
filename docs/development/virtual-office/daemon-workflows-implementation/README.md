@@ -1,8 +1,9 @@
 # Daemon workflows — implementation sprint
 
-**Prompt 01 reopened for assigned review corrections F01–F03; 02–07 unassigned.** The review of
-`e720bb9` identified incomplete consumer/CI retirement, required-input absence and cumulative-time
-defects. Tested local checkpoints `37aa8c4` and `95a4dc5` remain preserved. The
+**Prompt 01 review corrections complete locally; 02–07 unassigned.** The consumer/CI retirement,
+required-input absence and cumulative-time defects pass focused regressions and the complete strict
+static gate at `c9e9809`. Publication and a corrected hosted run remain pending. Tested local
+checkpoints `37aa8c4` and `95a4dc5` remain preserved. The
 [handoff](handoff.md) gives exact local review instructions. Stop here for the actual user review
 in 02 after the corrected handoff; these repairs do not authorize a successor.
 The former remedial P00–P09 is superseded and must not be resumed.

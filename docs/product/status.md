@@ -3,16 +3,17 @@
 Milkdrift's current ordinary workflow path is a durable daemon-owned task collection exposed through
 the CLI, independent JSON requests and a standalone Svelte client. Prompt 01 of the
 [implementation sprint](../development/virtual-office/daemon-workflows-implementation/README.md)
-is reopened for the review corrections against `e720bb9`: retired-consumer/CI adoption, explicit
-absence of required inputs, and cumulative execution-time enforcement. The earlier focused passes
-did not establish workspace acceptance; hosted quality run 227 failed. Actual user review in prompt
-02 remains pending, and these corrections do not authorize the remaining sprint.
+has completed its assigned review corrections locally: current CI consumers, required-input absence,
+and cumulative execution time. The corrected source passes the complete strict static gate and
+focused daemon, CLI and browser checks. Hosted quality run 227 failed on the earlier `e720bb9`;
+a hosted rerun awaits publication of the local corrections. Actual user review in prompt 02 remains
+pending, and these corrections do not authorize the remaining sprint.
 
 ## Implemented now
 
 The public path creates tasks with client-local aliases, supplies text and captured text files,
 starts configured external process/model capabilities, and retains results for later discovery.
-Missing required inputs remain queued. Dependencies and named producer outputs are explicit;
+Missing or explicitly absent required inputs remain queued. Dependencies and named producer outputs are explicit;
 queued definitions can change under generation/version guards, while starts freeze their content,
 selection and authority. Stop-requested and uncertain are distinct from proven stopped.
 
@@ -31,7 +32,9 @@ The task scheduler uses existing external preparation, final-entry and effect-li
 Durable native path claims coordinate declared project reads/writes, including aliases and
 uncertain writers. Task storage reserves settlement/control headroom before accepting work.
 Independent direct invocation, authenticated execution hosts, managed-resource generation checks,
-platform verification and process lifetime protections remain their own boundaries.
+platform verification and process lifetime protections remain their own boundaries. Cumulative
+execution time includes simultaneous open attempts. Entry reserves enforceable adapter durations;
+stop requests, uncertainty and restart cannot refund unresolved work.
 
 ## Limitations now
 
@@ -45,7 +48,10 @@ inspection surface scheduled later in the sprint.
 The current store format is a development cutover. Earlier graph, revision, proposal, controller,
 structured-child, prompt-sequence, workflow-publication and evaluated-learning product paths are
 retired. There is no migration or compatibility reader for those stores in the new executable.
-Existing stores/services and Git preservation checkpoints must remain intact.
+Internal document format 21 also refuses earlier task records lacking duration reservations and
+watermarks. Existing stores/services and Git preservation checkpoints remain intact. Generic managed
+lifecycle operations lack an enforced total deadline and therefore refuse bounded task/peer entry;
+their independent administrative owner remains available and tested.
 
 Models remain external capabilities. No inference engine or model weights run in the core. A
 controlled model test proves plumbing within its stated bounds; it does not establish real-model
@@ -62,14 +68,17 @@ Changing from the root manifest to the runtime manifest changed the reported pac
 dependencies. CLI submission and exact replay used the same daemon owner. This establishes useful
 input-dependent work, separately from the controlled model fixture.
 
-After retirement, the final eight-case Chromium run also passed missing-input repair, queued
-editing/stopping, deliberately dropped acceptance responses, controlled-model input handling,
-two-daemon isolation and origin/identity refusals. Desktop and phone-sized rendered layouts were
-inspected. Frontend check/lint, 26 unit tests and the static production build passed. Focused owner
-suites include 18 durable runtime tests, 40 daemon library tests, 28 control-plane tests, two real
-peer-daemon tests, independent host/managed protections and all 30 repository contracts. The ported
-external-evidence consumer passed five fixture/refusal tests without claiming live qualification.
-Default/all-feature public API inventories and production feature boundaries were reviewed.
+The review correction passes all eight Chromium cases, frontend check/lint and 26 unit tests against
+the unchanged production Svelte build. Desktop and phone-sized renders were inspected. Focused
+checks include 26 durable runtime tests, 40 daemon library tests, 31 control-plane tests, two real
+peer-daemon tests, independent host/managed protections and all 30 repository contracts. Required
+absence and time-reservation regressions fail when their respective fixes are removed. The current
+CLI/public-client evidence and five external-evidence fixture tests pass; controlled fixtures remain
+non-qualifying. Default/all-feature capability and runtime API inventories were reviewed.
+
+Clean commit `c9e9809` passes all 33 strict static checks with zero findings, including workspace
+default/all-feature compilation, warning-denying Clippy/documentation and workflow/security scans.
+This is local evidence; no corrected hosted run is claimed.
 
 [Current contract versions](../reference/versions.md) are checked against their owning constants.
 
