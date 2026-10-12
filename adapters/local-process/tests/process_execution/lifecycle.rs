@@ -15,7 +15,7 @@ fn normal_exit_preserves_all_final_stdout_and_stderr_bytes() -> TestResult {
         Arc::new(InMemorySecretResolver::new()),
     )?;
     let reporter = TestReporter::default();
-    host.execute_exact_with_context(&snapshot, &request, &context()?, &reporter)?;
+    host.execute_exact_with_context(&snapshot, &request, &context(&request)?, &reporter)?;
     assert_eq!(
         terminal_status(&reporter.events()?),
         Some(TerminalStatus::Success)
@@ -48,7 +48,7 @@ fn nonzero_exit_signal_and_timeout_are_typed_failures() -> TestResult {
         let request = request(&profile, &format!("invocation-{suffix}"), Vec::new())?;
         let (host, snapshot) = setup(profile, data, Arc::new(InMemorySecretResolver::new()))?;
         let reporter = TestReporter::default();
-        host.execute_exact_with_context(&snapshot, &request, &context()?, &reporter)?;
+        host.execute_exact_with_context(&snapshot, &request, &context(&request)?, &reporter)?;
         assert_eq!(
             terminal_status(&reporter.events()?),
             Some(TerminalStatus::Failure)
@@ -70,7 +70,7 @@ fn explicit_cancellation_observes_terminal_group_cleanup() -> TestResult {
     let thread_host = host.clone();
     let thread_reporter = reporter.clone();
     let thread_request = request.clone();
-    let context = context()?;
+    let context = context(&request)?;
     let handle = thread::spawn(move || {
         thread_host.execute_exact_with_context(
             &snapshot,
@@ -110,7 +110,7 @@ fn cancellation_terminates_child_and_grandchild_in_owned_group() -> TestResult {
     let thread_host = host.clone();
     let thread_reporter = reporter.clone();
     let thread_request = request.clone();
-    let context = context()?;
+    let context = context(&request)?;
     let handle = thread::spawn(move || {
         thread_host.execute_exact_with_context(
             &snapshot,
@@ -169,7 +169,7 @@ fn child_exit_tears_down_a_descendant_that_keeps_inherited_pipes_open() -> TestR
     let request = request(&profile, "invocation-pipe-holder", Vec::new())?;
     let (host, snapshot) = setup(profile, data, Arc::new(InMemorySecretResolver::new()))?;
     let reporter = TestReporter::default();
-    host.execute_exact_with_context(&snapshot, &request, &context()?, &reporter)?;
+    host.execute_exact_with_context(&snapshot, &request, &context(&request)?, &reporter)?;
     let events = reporter.events()?;
     assert_eq!(terminal_status(&events), Some(TerminalStatus::Failure));
     assert_eq!(

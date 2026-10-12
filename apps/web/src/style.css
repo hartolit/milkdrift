@@ -61,6 +61,7 @@ code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size
 .connection-list button.active { background: #fff; border-color: #dce4dc; box-shadow: 0 2px 8px #173e2510; }
 .connection-list button span { min-width: 0; }
 .connection-list small { display: block; font-size: .69rem; }
+.connection-list button.forget-connection { width: auto; margin: -4px 0 4px 27px; padding: 4px 8px; font-size: .7rem; color: var(--muted); }
 .status-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #9ca7a0; flex-shrink: 0; }
 .status-dot.connected { background: #378571; box-shadow: 0 0 0 4px #37857115; }
 .connection-detail { margin: 22px 10px; padding-top: 18px; border-top: 1px solid #d2dcd1; }

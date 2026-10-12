@@ -3,9 +3,9 @@ use super::{
     ARTIFACT_MANIFEST, ARTIFACT_METADATA, ARTIFACT_OWNERSHIP, ARTIFACT_PUBLICATIONS,
     ARTIFACT_REFERENCES, ARTIFACT_RESERVATIONS, ARTIFACT_TEMP_OWNERS, ARTIFACTS_BY_DIGEST,
     ArtifactAccountingRecord, ArtifactMetadata, ArtifactReference, BTreeSet, CausalReference,
-    GLOBAL_ARTIFACT_BYTES_KEY, PersistenceError, PublicationRecord, PublicationState, ROOT_SCOPES,
-    RUN_EVENTS, ReadableTable, ReadableTableMetadata, RedbStore, SCOPES, StorageFailureClass,
-    VALUES, WORKSPACE_USAGE, WorkspaceUsage, WorkspaceValueEntry, codec, error, json, verify_blob,
+    GLOBAL_ARTIFACT_BYTES_KEY, PersistenceError, PublicationRecord, PublicationState,
+    ReadableTable, ReadableTableMetadata, RedbStore, StorageFailureClass, WORKSPACE_USAGE,
+    WorkspaceUsage, codec, error, json, verify_blob,
 };
 use super::{
     cleanup::{remove_publication_age_index, remove_temporary_manifest},
@@ -47,7 +47,7 @@ pub(crate) fn validated_owner_artifact_reference_in_transaction(
     let owner = owner.into();
     let owner_key = super::owner::domain_key(&owner)?;
     validate_artifact_state(write)?;
-    let usage = crate::journal::workspace_domain_in_transaction(write, &owner)?
+    let usage = crate::artifact::domain::workspace_domain_in_transaction(write, &owner)?
         .map_or(WorkspaceUsage::EMPTY, |(_budget, usage)| usage);
     let ownership = write.open_table(ARTIFACT_OWNERSHIP).map_err(error::redb)?;
     validate_artifact_ownership(&ownership, &owner, usage)?;
@@ -254,7 +254,7 @@ pub(crate) fn commit_artifact_metadata(
         });
     }
 
-    crate::journal::advance_workspace_global_usage_in_transaction(
+    crate::artifact::domain::advance_workspace_global_usage_in_transaction(
         write,
         &record.owner,
         record.expected_usage,
@@ -343,6 +343,7 @@ pub(crate) fn commit_artifact_metadata(
         });
     }
     artifact_accounting.committed_content_bytes = resulting_content_bytes;
+    crate::task::commit_artifact(write, record.metadata.reference().size_bytes())?;
     let accounting_bytes = json::encode(&artifact_accounting, "artifact accounting")?;
     write
         .open_table(ARTIFACT_ACCOUNTING)
@@ -359,7 +360,7 @@ pub(crate) fn commit_artifact_metadata(
             usage_bytes.as_slice(),
         )
         .map_err(error::redb)?;
-    crate::journal::persist_workspace_value_usage_accounting_in_transaction(
+    crate::artifact::domain::persist_workspace_value_usage_accounting_in_transaction(
         write,
         &record.owner,
         record.resulting_usage,
@@ -443,78 +444,10 @@ fn validate_artifact_provenance(
                     store.max_artifact_bytes,
                 )?;
             }
-            CausalReference::WorkspaceValue { reference } => {
-                let values = write.open_table(VALUES).map_err(error::redb)?;
-                let scopes = write.open_table(SCOPES).map_err(error::redb)?;
-                let roots = write.open_table(ROOT_SCOPES).map_err(error::redb)?;
-                crate::journal::validate_scope_lineage_in_transaction(
-                    &scopes,
-                    &roots,
-                    reference.scope(),
-                )?;
-                let key = crate::journal::workspace_value_key(reference)?;
-                let bytes = values
-                    .get(key.as_slice())
-                    .map_err(error::redb)?
-                    .ok_or_else(|| PersistenceError::NotFound {
-                        entity: "artifact_provenance_workspace_value",
-                        identity: format!(
-                            "{}/{}/{}/{}",
-                            reference.scope().run(),
-                            reference.scope().scope(),
-                            reference.key(),
-                            reference.version()
-                        ),
-                    })?;
-                let entry: WorkspaceValueEntry = json::decode(bytes.value(), "workspace value")?;
-                if entry.reference() != reference {
-                    return Err(error::corruption(
-                        "artifact provenance workspace-value key disagrees with its document",
-                    ));
-                }
-                crate::journal::validate_workspace_value_provenance(
-                    &values, &scopes, &roots, &entry, false,
-                )?;
-                crate::journal::validate_workspace_value_storage_provenance_in_transaction(
-                    write, &values, &scopes, &roots, &entry, false,
-                )?;
-            }
-            CausalReference::RunInput { run, key } => {
-                if record.owner.run() != Some(run) {
-                    return Err(PersistenceError::InvalidDocument(
-                        "artifact provenance run input belongs to another run".to_owned(),
-                    ));
-                }
-                let head = crate::journal::validated_run_head_in_transaction(write, run)?;
-                if crate::journal::validate_run_history_membership_in_transaction(write, run, head)?
-                    .is_none()
-                {
-                    return Err(PersistenceError::NotFound {
-                        entity: "artifact_provenance_run",
-                        identity: run.to_string(),
-                    });
-                }
-                let event_key =
-                    codec::run_sequence(run.as_str(), milkdrift_persistence::RunSequence::FIRST)?;
-                let events = write.open_table(RUN_EVENTS).map_err(error::redb)?;
-                let bytes = events
-                    .get(event_key.as_slice())
-                    .map_err(error::redb)?
-                    .ok_or_else(|| {
-                        error::corruption("run input provenance has no run-created event")
-                    })?;
-                let event = milkdrift_persistence::RunEventEnvelope::from_json(bytes.value())?;
-                let known = matches!(
-                    event.kind(),
-                    milkdrift_persistence::RunEventKind::RunCreated { inputs, .. }
-                        if inputs.iter().any(|input| input.key() == key)
-                );
-                if !known {
-                    return Err(PersistenceError::NotFound {
-                        entity: "artifact_provenance_run_input",
-                        identity: format!("{run}/{key}"),
-                    });
-                }
+            CausalReference::WorkspaceValue { .. } | CausalReference::RunInput { .. } => {
+                return Err(PersistenceError::InvalidDocument(
+                    "retired graph provenance cannot authorize a new artifact".to_owned(),
+                ));
             }
             CausalReference::Invocation { invocation } => {
                 let run = record.owner.run().ok_or_else(|| {
@@ -523,9 +456,10 @@ fn validate_artifact_provenance(
                     )
                 })?;
                 if !crate::task::validate_task_invocation_in_transaction(write, run, invocation)? {
-                    crate::journal::validate_invocation_fact_in_transaction(
-                        write, run, invocation,
-                    )?;
+                    return Err(PersistenceError::NotFound {
+                        entity: "task_artifact_provenance_workflow",
+                        identity: run.to_string(),
+                    });
                 }
             }
             CausalReference::HostInvocation { host, invocation } => {

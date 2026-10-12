@@ -21,21 +21,6 @@ pub(crate) fn staging_directory(parent: &std::path::Path) -> std::io::Result<tem
     builder.tempdir_in(parent)
 }
 
-pub(crate) fn finish_staging<T>(
-    staging: tempfile::TempDir,
-    outcome: Result<T, CliError>,
-) -> Result<T, CliError> {
-    match (outcome, staging.close()) {
-        (outcome, Ok(())) => outcome,
-        (outcome, Err(error)) => Err(CliError::OutputCleanup {
-            operation: Box::new(outcome.err().unwrap_or_else(|| {
-                CliError::Internal("output published; staging cleanup failed".into())
-            })),
-            cleanup: error.kind(),
-        }),
-    }
-}
-
 /// Verifies in private staging, then publishes a complete create-only output.
 ///
 /// Artifact callers verify size and digest before committing; export callers finish encoding.
@@ -133,17 +118,6 @@ impl PendingFile {
         )?;
         self.committed = true;
         Ok(())
-    }
-
-    pub(crate) fn write_complete(mut self, bytes: &[u8]) -> Result<(), CliError> {
-        use std::io::Write as _;
-        let outcome = self
-            .write_all(bytes)
-            .and_then(|()| self.commit())
-            .map_err(|error| {
-                CliError::Internal(format!("output write failed: {:?}", error.kind()))
-            });
-        self.finish(outcome)
     }
 
     pub(crate) fn finish<T>(mut self, outcome: Result<T, CliError>) -> Result<T, CliError> {
@@ -474,7 +448,10 @@ mod tests {
             Err(CliError::Deadline)
         ));
         assert!(!output.exists());
-        PendingFile::create(&output)?.write_complete(b"complete")?;
+        let mut replacement = PendingFile::create(&output)?;
+        replacement.write_all(b"complete")?;
+        replacement.commit()?;
+        replacement.finish(Ok(()))?;
         assert_eq!(std::fs::read(&output)?, b"complete");
         Ok(())
     }

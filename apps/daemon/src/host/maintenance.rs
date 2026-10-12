@@ -3,8 +3,7 @@
 //! Each pass refreshes capability health, maintains receipt/peer retention, ticks the scheduler,
 //! and notifies effect workers. Archival preserves replay identity; health failures report the
 //! affected maintenance boundary without manufacturing new workflow outcomes.
-use super::{Owner, health::SharedHealth, read_model::bounded, read_model::public_persistence};
-use milkdrift_persistence::{ApplicationReceiptArchiveRequest, TimestampMillis};
+use super::{Owner, health::SharedHealth, read_model::bounded};
 use std::sync::Weak;
 use tracing::warn;
 
@@ -20,40 +19,6 @@ impl Owner {
                 bounded(&error.message)
             );
             health.failure("bounded capability health refresh failed");
-        }
-        match self.store.application_receipt_status() {
-            Ok(status) if status.hot_count >= u64::from(status.hot_bound) => {
-                let outcome = self.now().and_then(|now| {
-                    self.store
-                        .archive_application_command_receipts(ApplicationReceiptArchiveRequest {
-                            expected_generation: status.archive_generation,
-                            archived_at: TimestampMillis::new(now),
-                        })
-                        .map_err(public_persistence)
-                });
-                match outcome {
-                    Ok(outcome) => health.receipt_status(outcome.status),
-                    Err(error) => {
-                        warn!(
-                            outcome = "error",
-                            code = "application_receipt_archive",
-                            "{}",
-                            bounded(&error.message)
-                        );
-                        health.receipt_failure();
-                    }
-                }
-            }
-            Ok(status) => health.receipt_status(status),
-            Err(error) => {
-                warn!(
-                    outcome = "error",
-                    code = "application_receipt_status",
-                    "{}",
-                    bounded(&error.to_string())
-                );
-                health.receipt_failure();
-            }
         }
         if self.recovery_controls {
             return;
@@ -88,21 +53,5 @@ impl Owner {
                 health.set_active_effects(u32::try_from(active).unwrap_or(u32::MAX));
             }
         }
-        if let Some(publications) = self
-            .workflow
-            .as_ref()
-            .and_then(|workflow| workflow.publications.as_ref())
-            && let Err(error) = publications.maintain_retirement()
-        {
-            warn!(
-                outcome = "error",
-                code = "publication_retirement",
-                "{}",
-                bounded(&error.to_string())
-            );
-            health.failure("published generation retirement failed");
-        }
     }
 }
-
-use milkdrift_persistence::ApplicationCommandStore as _;

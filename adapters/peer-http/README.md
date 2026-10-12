@@ -39,8 +39,9 @@ makes no progress is refused instead of looping indefinitely.
 
 The origin's remote adapter remaps its local capability identity to the pinned remote descriptor
 and constructs one `ServingInvocationRequest` with a peer delegation and real workflow origin.
-It freezes explicit artifact inputs and the causal manifest before entry, then stages them against
-the final request, including its originating controller reservation, before submission. The server
+It freezes the task's explicit artifact inputs before entry, then stages those exact references
+against the final request before submission. The origin owns its cumulative task account; the
+serving host independently enforces its accepted execution allowance. The server
 first checks for exact replay. Fresh requests
 must pass catalog and authority checks, then one store transaction binds acceptance, request digest,
 relationship/catalog generations, capacity, and dispatch availability. An acceptance response means
@@ -80,7 +81,7 @@ An input upload's `AlreadyPresent` response confirms publication and closure of 
 transfer; the origin does not abort that closed transfer. A resume offset alone does not establish
 publication. Output downloads remain open until their explicit abort releases the read transfer.
 Empty outputs commit without a data chunk. Input transfer
-remains explicit. A remote context manifest names origin evidence and does not imply a shared store.
+remains explicit. Origin artifact references do not imply a shared store.
 Between output chunks the adapter renews the origin's durable execution lease and checks shutdown.
 A refused renewal or shutdown stops the transfer and attempts staging cleanup; accepted remote work keeps
 its existing uncertainty rules.

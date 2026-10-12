@@ -4,8 +4,6 @@
 mod placement;
 #[path = "support/process.rs"]
 mod process;
-#[path = "two_daemon_peer/published.rs"]
-mod published;
 use process::configured_process_profile;
 
 use std::{
@@ -16,26 +14,22 @@ use std::{
 };
 
 use milkdrift_authority::{AccessMode, FilesystemScope, NetworkProfileRef, NetworkScope};
-use milkdrift_blueprint::{
-    AuthorRef, BlueprintRevision, BlueprintRevisionDocument, Edge, EdgeId, EdgeKind, Mutation,
-    MutationBatch, Node, NodeId, NodeKind, PortId, TerminalOutcome, WorkflowId,
-};
-use milkdrift_capability::{CapabilityRequirement, OperationId, PeerId};
+use milkdrift_capability::PeerId;
 use milkdrift_control_client::{BearerCredential, ClientConfig, ControlClient};
-use milkdrift_control_protocol::{Command, CommandRequest, PageRequest, ProtocolVersion};
+use milkdrift_control_protocol::tasks::{
+    CreateWorkflowRequest, TaskReadDto, TaskStateDto, WorkflowReceipt,
+};
 use milkdrift_daemon::{
-    ActorBindingConfig, ActorGrantConfig, AdapterConfig, ApplicationReceiptConfig,
-    AuthorityPresetConfig, DaemonConfig, DaemonHost, DaemonPlan, PeerHostConfig,
-    PeerRelationshipConfig, PeerSideEffectConfig, RuntimeHostConfig, SecretSourceConfig,
-    ServingHostConfig, ShutdownConfig, serve,
+    ActorBindingConfig, ActorGrantConfig, AdapterConfig, AuthorityPresetConfig, DaemonConfig,
+    DaemonHost, DaemonPlan, PeerHostConfig, PeerRelationshipConfig, PeerSideEffectConfig,
+    RuntimeHostConfig, SecretSourceConfig, ServingHostConfig, ShutdownConfig, serve,
 };
 use milkdrift_peer_protocol::{
     DecodeLimits, FeatureSet, HandshakeRequest, HandshakeResponse, HardLimits, PeerAction,
-    PeerRequestId, ProtocolEnvelope, ProtocolVersion as PeerProtocolVersion, ProtocolVersionRange,
-    SessionId, decode_envelope,
+    ProtocolEnvelope, ProtocolVersion as PeerProtocolVersion, ProtocolVersionRange, SessionId,
+    decode_envelope,
 };
-use milkdrift_persistence::{PageSize, PeerExecutionStore};
-use milkdrift_redb_store::RedbStore;
+
 use tempfile::TempDir;
 use tokio::{sync::oneshot, task::JoinHandle};
 use url::Url;
@@ -137,128 +131,11 @@ async fn exercise_peer_execution_turnover(turnovers: usize) -> TestResult {
     let reconnected = daemon_b.client.peer_action("peer-a", "connect").await?;
     assert!(reconnected.connected);
 
-    let imported = daemon_b
-        .client
-        .submit(&command(
-            "peer-process-import",
-            Command::ImportBlueprint {
-                document: process_blueprint()?,
-            },
-        ))
-        .await?;
-    let revision = imported
-        .value
-        .get("revision_id")
-        .and_then(serde_json::Value::as_str)
-        .ok_or("peer process import omitted revision")?;
-    daemon_b
-        .client
-        .submit(&command(
-            "peer-process-start",
-            Command::StartRun {
-                inputs: Vec::new(),
-                run_id: "run-peer-process".to_owned(),
-                workflow_id: "daemon-peer-process".to_owned(),
-                revision_id: revision.to_owned(),
-            },
-        ))
-        .await?;
-    let deadline = tokio::time::Instant::now() + RUN_OBSERVATION_TIMEOUT;
-    loop {
-        let run = daemon_b.client.run("run-peer-process").await?;
-        if run.lifecycle == "terminal" {
-            if run.terminal.as_deref() != Some("succeeded") {
-                let health_a = daemon_a.client.health().await?;
-                let health_b = daemon_b.client.health().await?;
-                let timeline = daemon_b
-                    .client
-                    .timeline(
-                        "run-peer-process",
-                        &PageRequest {
-                            cursor: None,
-                            limit: 100,
-                        },
-                    )
-                    .await?;
-                let attempt_id = timeline
-                    .items
-                    .iter()
-                    .find_map(|entry| entry.attempt_id.as_deref())
-                    .ok_or("failed peer run omitted attempt")?;
-                let attempt = daemon_b
-                    .client
-                    .attempt("run-peer-process", attempt_id)
-                    .await?;
-                let invocation = attempt
-                    .invocation_id
-                    .as_deref()
-                    .ok_or("failed peer attempt omitted invocation")?;
-                daemon_b.stop().await?;
-                daemon_a.stop().await?;
-                let peer_store = RedbStore::open(root_a.path().join("data"))?;
-                let record = peer_store
-                    .peer_execution_by_request(
-                        &milkdrift_peer_protocol::ServingCaller::peer(
-                            &PeerId::new("peer-a")?,
-                            &PeerId::new("peer-b")?,
-                        ),
-                        &PeerRequestId::new(format!("request:{invocation}"))?,
-                    )?
-                    .ok_or("serving peer omitted accepted execution")?;
-                let observations = peer_store.peer_observations(
-                    &milkdrift_peer_protocol::ServingCaller::peer(
-                        &PeerId::new("peer-a")?,
-                        &PeerId::new("peer-b")?,
-                    ),
-                    record.execution(),
-                    0,
-                    PageSize::new(128)?,
-                )?;
-                return Err(format!(
-                    "remote process run failed: run={run:?}, timeline={:?}, attempt={attempt:?}, remote_record={record:?}, remote_observations={:?}, health_a={health_a:?}, health_b={health_b:?}",
-                    timeline.items, observations.observations
-                )
-                .into());
-            }
-            let timeline = daemon_b
-                .client
-                .timeline(
-                    "run-peer-process",
-                    &PageRequest {
-                        cursor: None,
-                        limit: 100,
-                    },
-                )
-                .await?;
-            let attempt_id = timeline
-                .items
-                .iter()
-                .find_map(|entry| entry.attempt_id.as_deref())
-                .ok_or("peer process run omitted its attempt")?;
-            let attempt = daemon_b
-                .client
-                .attempt("run-peer-process", attempt_id)
-                .await?;
-            assert_eq!(attempt.peer_id.as_deref(), Some("peer-a"));
-            assert!(
-                attempt
-                    .capability_id
-                    .as_deref()
-                    .is_some_and(|identity| identity.starts_with("peer:"))
-            );
-            break;
-        }
-        if tokio::time::Instant::now() >= deadline {
-            let capabilities = daemon_b.client.capabilities().await?;
-            let health = daemon_b.client.health().await?;
-            return Err(format!(
-                "remote process run did not terminate: run={run:?}, capabilities={capabilities:?}, health={health:?}"
-            )
-            .into());
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-
+    let receipt = submit_remote(&daemon_b.client, "peer-process-start", &["peer-a"]).await?;
+    let first = completed_tasks(&daemon_b.client, &receipt.workflow_id).await?;
+    assert_eq!(first.len(), 1);
+    assert!(first[0].definition.capability.id.starts_with("peer:"));
+    assert!(first[0].frozen.as_ref().is_some_and(|start| start.entered));
     // Cross the tiny serving hot-history bound repeatedly before the restart half.
     for index in 0..turnovers {
         // Keep the entire bounded operation inside a live catalog. The serving peer caches
@@ -284,31 +161,13 @@ async fn exercise_peer_execution_turnover(turnovers: usize) -> TestResult {
                     .is_some_and(|value| value > expires)
             );
         }
-        let run_id = format!("run-peer-turnover-{index}");
-        daemon_b
-            .client
-            .submit(&command(
-                &format!("peer-turnover-start-{index}"),
-                Command::StartRun {
-                    inputs: Vec::new(),
-                    run_id: run_id.clone(),
-                    workflow_id: "daemon-peer-process".to_owned(),
-                    revision_id: revision.to_owned(),
-                },
-            ))
-            .await?;
-        let turnover_deadline = tokio::time::Instant::now() + RUN_OBSERVATION_TIMEOUT;
-        loop {
-            let run = daemon_b.client.run(&run_id).await?;
-            if run.lifecycle == "terminal" {
-                assert_eq!(run.terminal.as_deref(), Some("succeeded"));
-                break;
-            }
-            if tokio::time::Instant::now() >= turnover_deadline {
-                return Err(format!("remote turnover run stalled: {run:?}").into());
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+        let receipt = submit_remote(
+            &daemon_b.client,
+            &format!("peer-turnover-{index}"),
+            &["peer-a"],
+        )
+        .await?;
+        completed_tasks(&daemon_b.client, &receipt.workflow_id).await?;
     }
     tokio::time::sleep(Duration::from_millis(50)).await;
     let serving_health = daemon_a.client.health().await?.peer_executions;
@@ -328,33 +187,13 @@ async fn exercise_peer_execution_turnover(turnovers: usize) -> TestResult {
             .await?
             .connected
     );
-    daemon_b
-        .client
-        .submit(&command(
-            "peer-process-restart-start",
-            Command::StartRun {
-                inputs: Vec::new(),
-                run_id: "run-peer-process-after-restart".to_owned(),
-                workflow_id: "daemon-peer-process".to_owned(),
-                revision_id: revision.to_owned(),
-            },
-        ))
-        .await?;
-    let restart_deadline = tokio::time::Instant::now() + RUN_OBSERVATION_TIMEOUT;
-    loop {
-        let run = daemon_b
-            .client
-            .run("run-peer-process-after-restart")
-            .await?;
-        if run.lifecycle == "terminal" {
-            assert_eq!(run.terminal.as_deref(), Some("succeeded"));
-            break;
-        }
-        if tokio::time::Instant::now() >= restart_deadline {
-            return Err(format!("remote process run after daemon restart stalled: {run:?}").into());
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    let restarted =
+        submit_remote(&daemon_b.client, "peer-process-restart-start", &["peer-a"]).await?;
+    completed_tasks(&daemon_b.client, &restarted.workflow_id).await?;
+    assert_eq!(
+        completed_tasks(&daemon_b.client, &receipt.workflow_id).await?,
+        first
+    );
 
     let revoked = daemon_b.client.peer_action("peer-a", "revoke").await?;
     assert!(!revoked.connected);
@@ -384,7 +223,11 @@ async fn assert_peer_protocol_boundary(endpoint: &Url) -> TestResult {
         limits: HardLimits::default(),
     };
     let current = serde_json::to_value(ProtocolEnvelope::v1(request.clone()))?;
-    for minor in [1_u16, 2, 3, 4, 6] {
+    let current_minor = milkdrift_peer_protocol::PROTOCOL_MINOR_V1;
+    let future_minor = current_minor
+        .checked_add(1)
+        .ok_or("protocol minor exhausted")?;
+    for minor in (0..current_minor).chain(std::iter::once(future_minor)) {
         let mut incompatible = current.clone();
         *incompatible
             .pointer_mut("/protocol/minor")
@@ -407,8 +250,8 @@ async fn assert_peer_protocol_boundary(endpoint: &Url) -> TestResult {
     assert_eq!(response.status(), reqwest::StatusCode::OK);
     let envelope: ProtocolEnvelope<HandshakeResponse> =
         decode_envelope(&response.bytes().await?, DecodeLimits::default())?;
-    assert_eq!(envelope.protocol, PeerProtocolVersion::V1_5);
-    assert_eq!(envelope.message.selected_version, PeerProtocolVersion::V1_5);
+    assert_eq!(envelope.protocol, PeerProtocolVersion::V1_6);
+    assert_eq!(envelope.message.selected_version, PeerProtocolVersion::V1_6);
     Ok(())
 }
 
@@ -597,63 +440,63 @@ fn configuration_document(
             }],
         },
         shutdown: ShutdownConfig::default(),
-        application_receipts: ApplicationReceiptConfig {
-            hot_receipt_bound: 100,
-            archive_batch_size: 10,
-        },
         security_audit_record_bound: 100,
     })
 }
 
-fn command(identity: &str, command: Command) -> CommandRequest {
-    CommandRequest {
-        protocol: ProtocolVersion::CURRENT,
-        command_id: identity.to_owned(),
-        expected_sequence: None,
-        expected_revision: None,
-        reason: "two-daemon peer execution test".to_owned(),
-        evidence: Vec::new(),
-        command,
-    }
+async fn submit_remote(
+    client: &ControlClient,
+    key: &str,
+    hosts: &[&str],
+) -> TestResult<WorkflowReceipt> {
+    let capabilities = client.capabilities().await?;
+    let tasks=hosts.iter().enumerate().map(|(index,host)| {
+        let selected=capabilities.iter().find(|candidate|candidate.peer_id.as_deref()==Some(*host) && candidate.current && !candidate.draining && candidate.operations.iter().any(|operation|operation=="process.execute")).ok_or("requested peer has no authorized configured process")?;
+        Ok(serde_json::json!({"alias":format!("repository-{index}"),"definition":{
+            "title":format!("Inspect repository on {host}"),"description":"Physical placement fixture","instructions":"Inspect the repository assigned to this exact host",
+            "capability":{"id":selected.capability_id,"operation":"process.execute"},"inputs":{},"outputs":{},
+            "dependencies":if index==0 {Vec::<String>::new()} else {vec![format!("repository-{}",index-1)]},"required":true,"corrective_of":null,"paths":[]
+        }}))
+    }).collect::<TestResult<Vec<_>>>()?;
+    let request: CreateWorkflowRequest = serde_json::from_value(
+        serde_json::json!({"request_id":key,"title":key,"description":"Authenticated peer execution", "tasks":tasks,"inputs":{},"finish_when_settled":true,"limits":null}),
+    )?;
+    Ok(client.create_workflow(&request).await?)
 }
 
-fn process_blueprint() -> TestResult<serde_json::Value> {
-    let task = Node::new(
-        NodeId::new("process")?,
-        NodeKind::task_direct_inputs(CapabilityRequirement::new(OperationId::new(
-            "process.execute",
-        )?))?,
-    )?
-    .with_control_output(PortId::new("next")?)?;
-    let terminal = Node::new(
-        NodeId::new("done")?,
-        NodeKind::Terminal {
-            outcome: TerminalOutcome::Success,
-        },
-    )?
-    .with_control_input(PortId::new("in")?)?;
-    let revision = BlueprintRevision::genesis(
-        WorkflowId::new("daemon-peer-process")?,
-        MutationBatch::new(vec![
-            Mutation::AddNode { node: task },
-            Mutation::AddNode { node: terminal },
-            Mutation::AddEdge {
-                edge: Edge::new(
-                    EdgeId::new("process-done")?,
-                    EdgeKind::Control,
-                    NodeId::new("process")?,
-                    PortId::new("next")?,
-                    NodeId::new("done")?,
-                    PortId::new("in")?,
-                ),
-            },
-        ])?,
-        AuthorRef::new("human:two-daemon-test")?,
-        "execute a process through the authenticated peer adapter",
-    )?;
-    Ok(serde_json::from_slice(
-        &BlueprintRevisionDocument::new(&revision).to_canonical_json()?,
-    )?)
+async fn completed_tasks(client: &ControlClient, workflow: &str) -> TestResult<Vec<TaskReadDto>> {
+    let deadline = tokio::time::Instant::now() + RUN_OBSERVATION_TIMEOUT * 2;
+    loop {
+        let read = client.workflow(workflow).await?;
+        if read.tasks.iter().any(|task| {
+            matches!(
+                task.state,
+                TaskStateDto::Failed | TaskStateDto::Stopped | TaskStateDto::Uncertain
+            )
+        }) {
+            let mut details = Vec::new();
+            for task in &read.tasks {
+                details.push(client.task(workflow, &task.id).await?);
+            }
+            return Err(format!("peer task execution failed: {details:?}").into());
+        }
+        if read
+            .tasks
+            .iter()
+            .all(|task| task.state == TaskStateDto::Completed)
+        {
+            let mut tasks = Vec::new();
+            for task in &read.tasks {
+                tasks.push(client.task(workflow, &task.id).await?);
+            }
+            tasks.sort_by(|a, b| a.definition.title.cmp(&b.definition.title));
+            return Ok(tasks);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(format!("peer workflow did not settle: {read:?}").into());
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }
 
 fn write_secret(path: &std::path::Path, value: &str) -> TestResult {

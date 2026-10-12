@@ -204,7 +204,6 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::config::{ApplicationReceiptConfig, StoragePlan};
 
     struct ControlledSource {
         now: AtomicU64,
@@ -246,14 +245,8 @@ mod tests {
             milkdrift_redb_store::RedbStoreConfig::new(directory.path())
                 .with_clock(Arc::new(StoreClockAdapter(source.clone()))),
         )?);
-        let storage = StoragePlan {
-            data_root: directory.path().to_path_buf(),
-            application_receipts: ApplicationReceiptConfig::default(),
-            security_audit_record_bound: 10,
-        };
         let health = Arc::new(SharedHealth::new(
             4,
-            &storage,
             None,
             milkdrift_control_protocol::HostRole::WorkflowEnabled,
         ));

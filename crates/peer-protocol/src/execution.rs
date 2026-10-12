@@ -218,9 +218,6 @@ impl ExecutionLimits {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DelegatedAuthorization {
-    /// Exact enclosing publications from the originating runtime; prevents cycles across hosts.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub publication_ancestry: Vec<milkdrift_capability::PublicationAncestor>,
     /// Opaque relationship-local record identity; it is not a bearer credential.
     pub reference: DelegationRef,
     /// Daemon issuing the delegation.
@@ -243,45 +240,18 @@ pub struct DelegatedAuthorization {
     pub nonce: String,
     /// Validated direct or workflow origin, independently of peer transport.
     pub origin: InvocationOrigin,
-    /// Origin-owned reservation committed before submission. The serving host retains
-    /// its linkage and enforces `limits`; it does not create a second controller charge.
-    pub controller_reservation: Option<String>,
 }
 
 impl DelegatedAuthorization {
     /// Validates non-secret bounded delegation facts.
     ///
     /// # Errors
-    /// Refuses invalid limits or workflow identities, publication ancestry beyond a
-    /// retained depth ceiling, ancestry or reservation without workflow origin, an
-    /// invalid reservation identity, zero expiry, or an empty, oversized or non-ASCII nonce.
+    /// Refuses invalid limits or workflow identities, zero expiry, or an empty, oversized
+    /// or non-ASCII nonce.
     pub fn validate(&self) -> Result<(), PeerProtocolError> {
         self.limits.validate()?;
         if let InvocationOrigin::Workflow { provenance } = &self.origin {
             provenance.validate()?;
-        }
-        if self.publication_ancestry.len()
-            > usize::from(milkdrift_capability::MAX_PUBLICATION_DEPTH)
-            || self.publication_ancestry.iter().any(|ancestor| {
-                self.publication_ancestry.len() > usize::from(ancestor.maximum_depth())
-            })
-            || (!self.publication_ancestry.is_empty() && self.origin.workflow().is_none())
-        {
-            return Err(PeerProtocolError::InvalidContract(
-                "publication ancestry requires bounded workflow provenance".to_owned(),
-            ));
-        }
-        if self
-            .controller_reservation
-            .as_ref()
-            .is_some_and(|reservation| {
-                !safe_reference(reservation) || self.origin.workflow().is_none()
-            })
-        {
-            return Err(PeerProtocolError::InvalidContract(
-                "controller allowance requires exact workflow origin and reservation identity"
-                    .to_owned(),
-            ));
         }
         if self.expires_at_unix_ms == 0
             || self.nonce.is_empty()
@@ -444,17 +414,12 @@ impl ServingInvocationRequest {
         self.limits.validate()?;
         self.authorization.validate()?;
         if matches!(self.authorization.origin(), InvocationOrigin::Direct)
-            && (self.request.context_manifest().is_some()
-                || self.request.inputs().iter().any(|input| {
-                    input.name() == milkdrift_capability::CONTEXT_MANIFEST_INPUT_NAME
-                        || input
-                            .name()
-                            .starts_with(milkdrift_capability::CONTEXT_ITEM_INPUT_PREFIX)
-                        || matches!(
-                            input.value(),
-                            milkdrift_capability::InvocationValueReference::WorkspaceValue { .. }
-                        )
-                }))
+            && self.request.inputs().iter().any(|input| {
+                matches!(
+                    input.value(),
+                    milkdrift_capability::InvocationValueReference::WorkspaceValue { .. }
+                )
+            })
         {
             return Err(PeerProtocolError::InvalidContract(
                 "direct origin cannot carry workflow-selected inputs".to_owned(),
@@ -511,8 +476,7 @@ impl ServingInvocationRequest {
             .request
             .inputs()
             .iter()
-            .filter_map(|input| input.value().artifact())
-            .chain(self.request.context_manifest());
+            .filter_map(|input| input.value().artifact());
         references.try_fold(0_u64, |total, reference| {
             let size = reference.size_bytes().ok_or_else(|| {
                 PeerProtocolError::InvalidContract(

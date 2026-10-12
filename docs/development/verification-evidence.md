@@ -1,5 +1,48 @@
 # Verification and operational evidence
 
+## Prompt 01 focused task acceptance
+
+The task cutover was exercised on Linux x86-64 with Rust 1.95.0, Node 24 and Chromium.
+The first connected slice was committed as `37aa8c4` before broad retirement. The final
+production browser run passed all eight cases: input-dependent Cargo analysis, complete client
+disposal and fresh-session discovery, distinct daemon connections, missing-input repair, queued
+stop, lost acceptance response recovery, controlled model inputs, keyboard/phone-sized access,
+identity refusal and exact-origin refusal. Frontend check, lint, 26 unit/component tests and
+production build passed. Actual 1280-pixel desktop and 390-pixel phone renders were inspected.
+Raw logs and screenshots are under `target/daemon-workflows/frontend/final-g/`.
+
+The following focused owner checks passed. Logs remain under `target/daemon-workflows/`;
+earlier failed runs are preserved beside the successful reruns.
+
+| Boundary | Executed evidence | Successful log |
+| --- | --- | --- |
+| Definitions, authority, persistence, redb | All-feature owner suites, including exact receipts, reserved stop/settlement capacity, native claims and incompatible-store refusal without migration | `owner-suites-5.log` |
+| Bounded discovery storage | Large records remain reachable across byte-limited pages | `storage-page-final.log` |
+| Task runtime | 18 durable runtime tests, including frozen content, admission races, capacity deferral, revocation, uncertain entry, correction shape and envelope integrity | `runtime-final-2.log` |
+| CLI | 18 unit and 18 automation tests, including exact requests and independent invocation upload protections | CLI sections of `client-owner-suites-5.log` |
+| Control, protocol and Rust client | All-feature suites, wire refusals, generated contracts and bounded authenticated SSE decoding | `control-final.log` |
+| Production daemon | 40 library tests, 28 control-plane tests and two storage administration tests; raw JSON and actual CLI consumers included | `daemon-lib-final.log`, control/storage sections of `daemon-integration-final-2.log` |
+| Host and local process | Native claims, materialization, effect workers, registry selection, seven profile tests and 34 execution tests | host/process sections of `host-owner-suites-3.log`; final registry/worker rerun `host-capacity-final-2.log` |
+| Managed resources | 21 unit, 18 lifecycle, one model conformance and five recipe tests | managed sections of `host-owner-suites-3.log` |
+| Peer serving | 19 adapter unit and 55 service tests, protocol suite, and two real two-daemon placement/lifecycle tests | capability/peer sections of `peer-protocol-owner-suites-4.log`, `peer-protocol-final.log`, `daemon-peer-final-2.log` |
+| Models | 30 controlled endpoint/fault tests plus model contract tests and doctest | `model-owner-suites-1.log`, `model-contract-final.log` |
+| Rust browser fixture | Two fixture tests and rebuilt production daemon, CLI and Rust helpers | fixture section of `evidence-consumers-final.log`, `production-build-final-5.log` |
+| Retained external-evidence consumer | Five fixture/refusal tests pass through ordinary tasks, with explicit correction, restart and model-finish validation; fixture mode remains non-qualifying | `external-final-3.log` |
+| Repository contracts | All 30 contracts, including current versions, examples, links, dependency direction and compile-fail consumer probes | `contracts-7.log` |
+
+Default/all-feature public API inventories succeeded for all 18 changed library packages under
+`target/public-api/daemon-workflows-01/`. Review traced task definitions, frozen records, exact
+storage receipts, native-path ports and transport projections through their consumers. Removed
+graph/publication/controller owners have no compatibility facade. Feature differences remain
+explicit test/evidence helpers; normal/build dependency trees for production daemon and CLI contain
+no `test-support`, `test-admin` or `operational-evidence`. `cargo machete` found no unused dependency.
+
+These are prompt-01 focused checks. The workspace full gate remains assigned to prompt 07.
+Manual peer longevity and real Podman qualification lanes were not run. Controlled model/process
+fixtures do not qualify a real coding agent, paid endpoint, model quality, physical phone,
+deployed HTTPS arrangement or another operating system. Actual user review in prompt 02 remains
+pending. Existing stores, unrelated services and both Git preservation refs were retained.
+
 ## Connected task checkpoint
 
 Prompt 01 of the daemon task workflow implementation has reached its first production browser
@@ -20,8 +63,8 @@ redacted browser logs and screenshots are under `target/daemon-workflows/fronten
 Focused checks passed for task storage (5), task runtime (9), wire fixtures/refusals (3), CORS (1)
 and the durable clock boundary (1). Production daemon/CLI/evidence binaries built. Browser testing
 exposed and drove fixes for obsolete artifact-provenance lookup and a worker-clock/owner-queue lock
-inversion; their failed fixture roots remain preserved. The rest of prompt 01's retirement and
-owner checks remain in progress. No full-system gate or actual user review is claimed here.
+inversion; their failed fixture roots remain preserved. The focused cutover evidence above records
+the later retirement checks. No full-system gate or actual user review is claimed here.
 
 Use this guide to choose a reproducible check and understand what its observations support.
 The ordinary [full gate](workflow.md#full-local-gate) checks executable changes, at the point
@@ -30,12 +73,19 @@ lanes below exercise application use, mutation sensitivity, sustained load, and 
 The [evidence package guide](../../tools/evidence/README.md) compares the tools and their entry points.
 [Status](../product/status.md#current-validationevidence-snapshot) owns the latest executed state.
 
+## Pre-cutover evidence
+
+The following evidence describes the preserved pre-task implementation and its historical checks.
+Retired workflow binaries and graph/publication procedures are not current commands or task-path
+qualification. Their source is retained in the pre-cutover Git checkpoint; current prompt-01 checks
+are recorded above when executed. Independent host/managed evidence retains only its stated scope.
+
 ## Live client streams
 
 The bounded correction starts at `991d21a319fe76d6078c2d64f0db4a51c09bfe8b` and reaches executable
 source `18db4b2`. Control protocol 2.20 replaces single-capability observations with complete
 authorized snapshots; cursor schema 2 and durable formats remain unchanged. The
-[control contract](../reference/control-api.md#cursors-and-sse) owns client behavior and bounds,
+[control contract](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/docs/reference/control-api.md#cursors-and-sse) owns client behavior and bounds,
 and [ADR 0050](../decisions/0050-live-capability-snapshots.md) owns the compatibility decision.
 
 | Correction | Executed focused evidence | Checkpoint |
@@ -174,7 +224,7 @@ no automatic retries. The CLI observes each two-step run for at most 390 seconds
 does not prove external termination. The profile must identify the actual loopback alias and
 features; an authenticated SSH forward can expose an authorized remote listener on loopback.
 For the exercised Ornith configuration, use the explicit
-[reasoning option](../guides/local-model-endpoint.md#llamacpp-reasoning-stream-compatibility).
+[reasoning option](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/docs/guides/local-model-endpoint.md#llamacpp-reasoning-stream-compatibility).
 The runner does not configure or stop attached servers. Live mode omits synthetic repair failures;
 review the two retained text files separately for usefulness. Product completeness checks require
 nonempty final prose and `stop`, and do not establish editorial correctness or useful learning.
@@ -706,7 +756,7 @@ the guard. The targeted commands and failure assertions are retained under
 
 ## Governed Slotbook method and publication
 
-Run the [maintained CLI qualification](../../examples/adaptive-slotbook/README.md) on a provisioned
+Run the [maintained CLI qualification](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/examples/adaptive-slotbook/README.md) on a provisioned
 rootless Linux host. It freezes the HTTP/API representation, uses explicitly seeded fixture failures,
 submits a structured prospective repair, and obtains fresh trusted observations before deploying
 immutable executable bytes. Its files preserve the original failure, proposal identity, accepted agreement,
@@ -715,7 +765,7 @@ reopen separately exercise the managed owner outside a workflow. Container ident
 mounted bytes support the replay and exact-candidate observations. This does not qualify arbitrary
 application behavior, model reasoning, power loss, hostile host administration or another machine.
 
-For actual generated source, use the separate [`slotbook-evidence develop` route](../../examples/adaptive-slotbook/README.md#develop-source-with-a-real-model).
+For actual generated source, use the separate [`slotbook-evidence develop` route](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/examples/adaptive-slotbook/README.md#develop-source-with-a-real-model).
 It selects the fixed public source brief, obtains at most three actual structured proposals,
 submits them through a scoped advisor credential and compiles returned Rust in an isolated worker.
 Completed compiler/verifier evidence feeds bounded repair requests. The immutable candidate must
@@ -1047,7 +1097,7 @@ artifacts after compaction, settled restart, and crash/reopen of an entered proc
 artifact obligation. These are process-kill boundaries, not power-loss or escaped-descendant proof.
 Revoked approval is exercised by disabling the approver and restarting. The serving owner records
 the effective revocation in its immutable admission generation; re-enablement uses a fresh grant
-revision and revocation generation, as described in [changing authority](../operations/authority.md#changing-authority).
+revision and revocation generation, as described in [changing authority](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/docs/operations/authority.md#changing-authority).
 Both disabled and enabled modes refuse an unmarked subworkflow placed before the marked
 repeat: its parent remains created and no child is admitted outside the cumulative account.
 The process fixture emits bounded entry progress, lives at most ten seconds, and has a thirty-second
@@ -1062,7 +1112,7 @@ path against operator-selected profiles. Registration and local preparation must
 the exact admission refusal is accepted as evidence. A refusal is not a qualifying model/controller
 loop. Requested output units, endpoint/profile provenance, unknown effective server settings, and
 the unchanged model-admission count are retained separately. Activation is an explicit operator
-configuration described in [daemon operation](../operations/daemon.md#controller-activation).
+configuration described in [daemon operation](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/docs/operations/daemon.md#controller-activation).
 
 The same scenario's `--controller-review-profile PATH` selects an explicitly approved loopback
 model for two connected review stages. Real mode also requires `--controller-server-facts PATH`,
@@ -1082,7 +1132,7 @@ contract. Unbilled final tokens settle without an invented monetary report. Bill
 exact currency, cached/input/output rates and conservative rounding; unknown charge remains a
 different refusal. Missing/contradictory final usage, over-envelope tokens, reporting failure,
 revoked preparation and lost-stream restart are covered by adapter/account/host contracts. The
-[local guide](../guides/local-model-endpoint.md#controlled-local-text-requests) owns reproduction,
+[local guide](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/docs/guides/local-model-endpoint.md#controlled-local-text-requests) owns reproduction,
 server-contract obligations and the distinction between direct model calls and agent launches.
 
 Current review evidence is retained under `target/review-03a-*`: gate/focused logs,
@@ -1128,7 +1178,7 @@ Earlier `target/model-budgets-*` reports remain evidence for their own source an
 a stopped review and a 300-second agent timeout. Windows process termination/reopen does not
 qualify power-loss durability or escaped descendants. Cloud testing was not authorized or performed.
 
-The separate [local-model lane](../guides/local-model-endpoint.md#run-the-maintained-daemoncli-lane)
+The separate [local-model lane](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/docs/guides/local-model-endpoint.md#run-the-maintained-daemoncli-lane)
 checks wait/restart/release, selected/omitted context, streaming/usage/artifact provenance,
 nonduplication, post-entry response loss, unsafe-retry refusal, and explicit retain. Its deterministic
 mode is non-qualifying. Real mode requires an explicit separately managed loopback profile and
@@ -1552,7 +1602,7 @@ before all holds settle. The physical-parent counterpart is redb's
 Removing the wrapper proof guard in an isolated worktree made the new continuation test fail;
 the patch and assertion are retained in `target/adaptive-hosts/06/mutation-no-entry.*`.
 
-For actual binaries, follow the [Slotbook setup](../../examples/adaptive-slotbook/README.md), then
+For actual binaries, follow the [Slotbook setup](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/examples/adaptive-slotbook/README.md), then
 run the following against a separate fresh prepared directory for each mode:
 
 ```sh
@@ -1585,7 +1635,7 @@ configuration, caller permissions and operating limits belong to the
 
 ## Selected learning and product variants
 
-The [learning example](../../examples/adaptive-slotbook/README.md) continues the native published
+The [learning example](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/examples/adaptive-slotbook/README.md) continues the native published
 source through `slotbook-evidence learn`. An operator profile supplies the proposal endpoint.
 `slotbook-evidence model-fixture` is the separate deterministic HTTP lane; useful, unhelpful,
 malformed, invented-evidence and forbidden-edit modes exercise the same adapter and readers.
@@ -1650,7 +1700,7 @@ deterministic desktop observations; the physical host and real-model evidence is
 
 ## Integrated host acceptance
 
-The maintained [Slotbook example](../../examples/adaptive-slotbook/README.md) provides the
+The maintained [Slotbook example](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/examples/adaptive-slotbook/README.md) provides the
 `headless-cli-evidence --installed-hosts` and `slotbook-evidence develop` routes for physical hosts
 and bounded source studies. Exact binaries, inputs and retained evidence live under
 `target/adaptive-hosts/06/`; the final assisted run is under `completion/assisted/`.

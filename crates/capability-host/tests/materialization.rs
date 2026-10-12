@@ -21,10 +21,8 @@ use milkdrift_capability_host::{
     StoreInvocationDataAccess,
 };
 use milkdrift_persistence::{
-    ArtifactReadAuthority, ArtifactStore, AtomicRunCommitRequest, AttemptId, CommandDisposition,
-    CommandId, CommandReceipt, CommandResultDocument, EventId, EvidenceId, IndexedRunState,
-    NodeExecutionId, PersistenceError, RunEventEnvelope, RunEventKind, RunIndexUpdate, RunJournal,
-    RunSequence, RunSummaryIndex, TimestampMillis, WorkspaceAccounting,
+    ArtifactReadAuthority, ArtifactStore, PersistenceError, TimestampMillis, WorkflowCommit,
+    WorkflowSnapshot, WorkflowStore,
 };
 use milkdrift_redb_store::{
     FaultInjector, FaultPoint, RedbStore, RedbStoreConfig, injected_failure,
@@ -60,15 +58,69 @@ impl FaultInjector for FailOnce {
     }
 }
 
-fn context() -> TestResult<AdapterExecutionContext> {
+fn context(
+    request: &InvocationRequest,
+    budget: WorkspaceBudget,
+) -> TestResult<AdapterExecutionContext> {
+    use milkdrift_authority::{
+        AuthorityBudget, AuthorityDecisionSnapshot, AuthorityExecutionProvenance,
+        AuthorityOperation, AuthorityRequest, BoundaryTimeMillis, DecisionId, DecisionReasonCode,
+        ExecutionAuthorityBasis, GrantDigest, GrantId, PolicyId, RequestedResourceFacts,
+    };
+    use milkdrift_capability::{
+        CapabilityDescriptorDocument, ResolvedCapabilitySnapshot, SideEffectClass,
+    };
     let revision: RevisionId = serde_json::from_value(json!(format!("rev_{}", "1".repeat(64))))?;
-    Ok(AdapterExecutionContext::new(
-        RunId::new("run-materialization")?,
-        revision,
-        NodeId::new("node-materialization")?,
-        NodeExecutionId::new("execution-materialization")?,
-        AttemptId::new("attempt-materialization")?,
-    ))
+    let workflow = WorkflowId::new("run-materialization")?;
+    let run = RunId::new(workflow.as_str())?;
+    let decision = AuthorityDecisionSnapshot::from_evaluation(
+        PolicyId::new("materialization-test")?,
+        1,
+        AuthorityRequest {
+            decision: DecisionId::new("materialization-start")?,
+            actor: ActorRef::new("actor-materialization")?,
+            grant: GrantId::new("materialization-grant")?,
+            grant_revision: 1,
+            grant_digest: GrantDigest::new(format!("b3_{}", "0".repeat(64)))?,
+            revocation_generation: 0,
+            operation: AuthorityOperation::StartRun,
+            resources: RequestedResourceFacts::empty(),
+            budget: AuthorityBudget::default(),
+            evaluated_at: BoundaryTimeMillis::new(10),
+            provenance: AuthorityExecutionProvenance::default(),
+        },
+        vec![DecisionReasonCode::Allowed],
+        AuthorityBudget::default(),
+        SideEffectClass::Unknown,
+    )?;
+    let basis = ExecutionAuthorityBasis::from_start_decision(
+        &decision,
+        workflow,
+        run.clone(),
+        revision.clone(),
+    )?;
+    let mut descriptor: serde_json::Value = serde_json::from_slice(include_bytes!(
+        "../../capability/tests/fixtures/descriptor-v1.json"
+    ))?;
+    descriptor["descriptor"]["identity"] = json!(request.capability());
+    descriptor["descriptor"]["provider_profile"] = json!(request.provider_profile());
+    descriptor["descriptor"]["category"] = json!({"type":"process"});
+    let operation = descriptor["descriptor"]["operations"]["model.generate"].take();
+    descriptor["descriptor"]["operations"] = json!({request.operation().as_str(): operation});
+    let descriptor = CapabilityDescriptorDocument::from_json(&serde_json::to_vec(&descriptor)?)?;
+    let resolution =
+        ResolvedCapabilitySnapshot::from_descriptor(descriptor.body(), request.operation())?;
+    // This trusted fixture restores the same immutable dispatch representation as durable recovery.
+    let dispatch: milkdrift_runtime::ExecutionDispatch = serde_json::from_value(json!({
+        "run":run,"revision":revision,"node":NodeId::new("node-materialization")?,
+        "execution":"execution-materialization","attempt":"attempt-materialization",
+        "lease":"lease-materialization","lease_expires_at":1000,
+        "resolution":resolution,"execution_authority":basis,
+        "resolution_authorization":decision,"entry_authorization":decision,"request":request
+    }))?;
+    Ok(AdapterExecutionContext::from_dispatch(
+        &dispatch.for_task(budget, Vec::new()),
+    )?)
 }
 
 fn request() -> TestResult<InvocationRequest> {
@@ -260,144 +312,32 @@ fn seed_invocation(
     store: &RedbStore,
     context: &AdapterExecutionContext,
     request: &InvocationRequest,
-    budget: WorkspaceBudget,
 ) -> TestResult {
-    let command = CommandId::new("command-materialization")?;
-    let receipt = CommandReceipt::new(
-        command.clone(),
+    let workflow = WorkflowId::new(
         context
             .workflow()
             .ok_or("workflow context missing")?
             .run()
-            .clone(),
-        ActorRef::new("actor-materialization")?,
-        RunSequence::ZERO,
-        TimestampMillis::new(10),
-        br#"{"schema_version":1,"type":"fixture"}"#.to_vec(),
+            .as_str(),
     )?;
-    let root_scope = milkdrift_workspace::WorkspaceScope::run_root(
-        context
-            .workflow()
-            .ok_or("workflow context missing")?
-            .run()
-            .clone(),
-        milkdrift_workspace::ScopeId::new("root")?,
-    );
-    let created = RunEventEnvelope::new(
-        EventId::new("event-materialization-created")?,
-        context
-            .workflow()
-            .ok_or("workflow context missing")?
-            .run()
-            .clone(),
-        RunSequence::FIRST,
-        TimestampMillis::new(10),
-        RunEventKind::RunCreated {
-            workflow: WorkflowId::new("workflow-materialization")?,
-            revision: context
-                .workflow()
-                .ok_or("workflow context missing")?
-                .revision()
-                .clone(),
-            revision_digest: serde_json::from_value(json!(format!("b3_{}", "2".repeat(64))))?,
-            root_scope: root_scope.clone(),
-            workspace_budget: budget.clone(),
-            inputs: Vec::new(),
+    store.commit_workflow(WorkflowCommit {
+        expected_generation: None,
+        snapshot: WorkflowSnapshot {
+            workflow,
+            generation: 1,
+            title: "materialization fixture".into(),
+            description: String::new(),
+            owner_actor: "actor-materialization".into(),
+            updated_at: TimestampMillis::new(10),
+            document: json!({"fixture":"accepted task entry"}),
+            entered_invocations: vec![request.invocation().clone()],
+            managed_executions: Vec::new(),
+            artifact_capacity: 4096,
+            reserved_bytes: 0,
+            reserved_receipts: 0,
         },
-    )?;
-    let event = RunEventEnvelope::new(
-        EventId::new("event-materialization")?,
-        context
-            .workflow()
-            .ok_or("workflow context missing")?
-            .run()
-            .clone(),
-        RunSequence::new(2),
-        TimestampMillis::new(10),
-        RunEventKind::NodeScheduled {
-            node: context
-                .workflow()
-                .ok_or("workflow context missing")?
-                .node()
-                .clone(),
-            execution: context
-                .workflow()
-                .ok_or("workflow context missing")?
-                .execution()
-                .clone(),
-            attempt: context
-                .workflow()
-                .ok_or("workflow context missing")?
-                .attempt()
-                .clone(),
-            invocation: request.invocation().clone(),
-            idempotency_key: None,
-            request: request.clone(),
-        },
-    )?;
-    let result = CommandResultDocument::new(
-        command,
-        context
-            .workflow()
-            .ok_or("workflow context missing")?
-            .run()
-            .clone(),
-        receipt.fingerprint().clone(),
-        CommandDisposition::Accepted,
-        RunSequence::new(2),
-        vec![created.event_id().clone(), event.event_id().clone()],
-        BoundedJson::new(json!({"accepted": true}))?,
-    )?;
-    let required_artifacts: Vec<_> = event
-        .kind()
-        .required_artifacts()?
-        .into_iter()
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    let mut resulting_usage = WorkspaceUsage::EMPTY;
-    for reference in &required_artifacts {
-        resulting_usage = budget.admit_artifact_reference(&resulting_usage, reference)?;
-    }
-    let commit = AtomicRunCommitRequest::new(
-        receipt,
-        vec![created, event],
-        vec![milkdrift_persistence::WorkspaceMutation::CreateScope { scope: root_scope }],
-        Some(WorkspaceAccounting {
-            budget,
-            expected_usage: WorkspaceUsage::EMPTY,
-            resulting_usage,
-        }),
-        required_artifacts.clone(),
-        required_artifacts,
-        None,
-        result,
-        RunIndexUpdate::new(
-            Some(RunSummaryIndex {
-                run: context
-                    .workflow()
-                    .ok_or("workflow context missing")?
-                    .run()
-                    .clone(),
-                workflow: WorkflowId::new("workflow-materialization")?,
-                revision: context
-                    .workflow()
-                    .ok_or("workflow context missing")?
-                    .revision()
-                    .clone(),
-                state: IndexedRunState::Active,
-                through_sequence: RunSequence::new(2),
-                updated_at: TimestampMillis::new(10),
-            }),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        ),
-    )?;
-    assert!(matches!(
-        store.commit_command(&commit)?,
-        milkdrift_persistence::AtomicRunCommitOutcome::Committed(_)
-    ));
+        command: None,
+    })?;
     Ok(())
 }
 
@@ -412,9 +352,9 @@ fn isolated_inputs_and_outputs_use_the_durable_artifact_protocol() -> TestResult
         execution_owner.path(),
         ArtifactReadAuthority::PublicOnly,
     )?;
-    let context = context()?;
     let request = request()?;
-    seed_invocation(store.as_ref(), &context, &request, budget)?;
+    let context = context(&request, budget)?;
+    seed_invocation(store.as_ref(), &context, &request)?;
     let workspace = access.materialize(
         &context,
         &request,
@@ -463,51 +403,10 @@ fn isolated_inputs_and_outputs_use_the_durable_artifact_protocol() -> TestResult
 }
 
 #[test]
-fn configured_process_input_can_materialize_the_exact_context_manifest() -> TestResult {
-    let store_owner = tempfile::tempdir()?;
-    let execution_owner = tempfile::tempdir()?;
-    let store = Arc::new(RedbStore::open(store_owner.path())?);
-    let budget = WorkspaceBudget::new(16, 1024, 4096, 16, 1024, 4096)?;
-    let context = context()?;
-    let base_request = request()?;
-    seed_invocation(store.as_ref(), &context, &base_request, budget)?;
-    let authorized = ArtifactReadAuthority::Authorized {
-        actor: ActorRef::new("actor-materialization")?,
-        evidence: EvidenceId::new("evidence-materialization")?,
-    };
-    let access = StoreInvocationDataAccess::new(store, execution_owner.path(), authorized)?;
-    let manifest_bytes = br#"{"schema_version":2,"selection":"frozen"}"#;
-    let manifest = access.publish_bytes(
-        &context,
-        &base_request,
-        "context-manifest",
-        "application/vnd.milkdrift.context-manifest.v2+json",
-        manifest_bytes,
-        limits(),
-    )?;
-    let request = request()?.with_context_manifest(manifest)?;
-    let workspace = access.materialize(
-        &context,
-        &request,
-        &[InputMaterialization::new(
-            milkdrift_capability::CONTEXT_MANIFEST_INPUT_NAME,
-            "context/manifest.json",
-        )?],
-        limits(),
-    )?;
-    let path = workspace
-        .input_path(milkdrift_capability::CONTEXT_MANIFEST_INPUT_NAME)
-        .ok_or("missing context manifest path")?;
-    assert_eq!(fs::read(path)?, manifest_bytes);
-    Ok(())
-}
-
-#[test]
 fn output_publication_preserves_aliased_inputs_as_one_exact_causal_parent() -> TestResult {
     let store_owner = tempfile::tempdir()?;
     let execution_owner = tempfile::tempdir()?;
     let store = Arc::new(RedbStore::open(store_owner.path())?);
-    let context = context()?;
     let source = milkdrift_capability::ArtifactReference::new(
         "evidence:accepted-decision",
         ContentDigest::for_bytes(b"accepted").to_hex(),
@@ -561,17 +460,41 @@ fn output_publication_preserves_aliased_inputs_as_one_exact_causal_parent() -> T
             .collect::<Result<_, _>>()?,
         BTreeMap::new(),
     )?;
-    seed_invocation(
-        store.as_ref(),
-        &context,
+    let context = context(
         &request,
         WorkspaceBudget::new(16, 1024, 4096, 16, 1024, 4096)?,
     )?;
+    seed_invocation(store.as_ref(), &context, &request)?;
     let access = StoreInvocationDataAccess::new(
         store.clone(),
         execution_owner.path(),
         ArtifactReadAuthority::PublicOnly,
     )?;
+    let workspace = access.materialize(
+        &context,
+        &request,
+        &[
+            InputMaterialization::new("acceptance_result", "first.txt")?,
+            InputMaterialization::new("accepted_result", "second.txt")?,
+        ],
+        limits(),
+    )?;
+    assert_eq!(
+        fs::read(
+            workspace
+                .input_path("acceptance_result")
+                .ok_or("first input missing")?
+        )?,
+        b"accepted"
+    );
+    assert_eq!(
+        fs::read(
+            workspace
+                .input_path("accepted_result")
+                .ok_or("second input missing")?
+        )?,
+        b"accepted"
+    );
     let first = access.publish_bytes(
         &context,
         &request,
@@ -601,8 +524,11 @@ fn traversal_symlink_special_file_and_budget_escapes_are_rejected() -> TestResul
         execution_owner.path(),
         ArtifactReadAuthority::PublicOnly,
     )?;
-    let context = context()?;
     let request = request()?;
+    let context = context(
+        &request,
+        WorkspaceBudget::new(16, 1024, 4096, 16, 1024, 4096)?,
+    )?;
     let workspace = access.materialize(
         &context,
         &request,
@@ -693,6 +619,7 @@ fn traversal_symlink_special_file_and_budget_escapes_are_rejected() -> TestResul
     );
 
     let two_inputs = two_input_request()?;
+    let two_context = context_for_request(&two_inputs)?;
     let specifications = [
         InputMaterialization::new("first", "first.json")?,
         InputMaterialization::new("second", "second.json")?,
@@ -701,7 +628,7 @@ fn traversal_symlink_special_file_and_budget_escapes_are_rejected() -> TestResul
     one_file.max_files = 1;
     assert!(
         access
-            .materialize(&context, &two_inputs, &specifications, one_file)
+            .materialize(&two_context, &two_inputs, &specifications, one_file)
             .is_err()
     );
     let mut shallow = limits();
@@ -717,11 +644,11 @@ fn traversal_symlink_special_file_and_budget_escapes_are_rejected() -> TestResul
             .is_err()
     );
     let mut aggregate = limits();
-    aggregate.max_file_bytes = 4;
-    aggregate.max_total_bytes = 6;
+    aggregate.max_file_bytes = 3;
+    aggregate.max_total_bytes = 3;
     assert!(
         access
-            .materialize(&context, &two_inputs, &specifications, aggregate)
+            .materialize(&two_context, &two_inputs, &specifications, aggregate)
             .is_err()
     );
     Ok(())
@@ -752,14 +679,12 @@ fn publication_failure_reports_abort_failure_and_remains_recoverable() -> TestRe
         execution_owner.path(),
         ArtifactReadAuthority::PublicOnly,
     )?;
-    let context = context()?;
     let request = request()?;
-    seed_invocation(
-        store.as_ref(),
-        &context,
+    let context = context(
         &request,
         WorkspaceBudget::new(16, 1024, 4096, 16, 1024, 4096)?,
     )?;
+    seed_invocation(store.as_ref(), &context, &request)?;
     let bytes = b"retained failed output";
     let expected = expected_process_artifact(
         &context,
@@ -811,9 +736,9 @@ fn failed_publication_is_aborted_without_a_committed_reference() -> TestResult {
         execution_owner.path(),
         ArtifactReadAuthority::PublicOnly,
     )?;
-    let context = context()?;
     let request = request()?;
-    seed_invocation(store.as_ref(), &context, &request, budget)?;
+    let context = context(&request, budget)?;
+    seed_invocation(store.as_ref(), &context, &request)?;
     let bytes = b"publication must be atomic";
     let expected =
         expected_process_artifact(&context, &request, "faulted-output", "text/plain", bytes)?;
@@ -843,4 +768,11 @@ fn failed_publication_is_aborted_without_a_committed_reference() -> TestResult {
     assert_eq!(recovered.identity(), expected.artifact().as_str());
     assert!(store.is_committed(&expected)?);
     Ok(())
+}
+
+fn context_for_request(request: &InvocationRequest) -> TestResult<AdapterExecutionContext> {
+    context(
+        request,
+        WorkspaceBudget::new(16, 1024, 4096, 16, 1024, 4096)?,
+    )
 }

@@ -124,7 +124,6 @@ pub(crate) fn peer_storage_turnover(executions: u32) -> EvidenceResult<PeerTurno
             .generation;
         if !matches!(
             store.mark_peer_entered(&PeerEntryRequest {
-                published_invocation: None,
                 owner: &milkdrift_peer_protocol::ServingCaller::peer(&target, &owner),
                 execution: &execution,
                 worker: &worker,
@@ -556,8 +555,6 @@ fn request_with_observation_limit(
         limits.clone(),
         deadline,
         DelegatedAuthorization {
-            publication_ancestry: Vec::new(),
-            controller_reservation: None,
             reference: DelegationRef::new("delegation-operational-evidence")?,
             issuer_peer: issuer.clone(),
             actor: ActorRef::new(format!("peer:{}", issuer.as_str()))?,

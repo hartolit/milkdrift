@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use milkdrift_authority::{
     ActorRef, ArtifactAuthorityScope, AuthorityBudget, AuthorityGrant, AuthorityGrantBuilder,
     AuthorityOperation, BoundaryTimeMillis, CapabilityAuthorityScope, DaemonAuthorityScope,
-    GrantId, LayoutAuthorityScope, NetworkScope, PeerAuthorityScope, ResourceScope,
-    WorkflowRunScope, WorkspaceAuthorityScope,
+    GrantId, NetworkScope, PeerAuthorityScope, ResourceScope, WorkflowRunScope,
+    WorkspaceAuthorityScope,
 };
 use serde::{Deserialize, Serialize};
 
@@ -18,13 +18,13 @@ pub enum AuthorityPreset {
     Invoker,
     /// Inspect only the exact state permitted by resource scope.
     Observer,
-    /// Inspect and submit prospective proposals.
+    /// Inspect future definitions; task edits require a stronger scoped role.
     Advisor,
-    /// Pause, resume, retry/cancel, approve, and apply within exact scope.
+    /// Edit future task definitions and request stop within exact scope.
     Supervisor,
-    /// Apply broader prospective revisions within exact scope and budgets.
+    /// Create and execute tasks and administer permitted hosts within explicit scope.
     Controller,
-    /// Repeat controller operations under strict caller-supplied ceilings.
+    /// Create and execute tasks under strict caller-supplied ceilings.
     Autonomous,
 }
 
@@ -57,32 +57,21 @@ impl AuthorityPreset {
 
     fn operations(self) -> BTreeSet<AuthorityOperation> {
         use AuthorityOperation::{
-            AdministerPeer, Apply, Approve, Cancel, CancelCapability, CreateRun, DeliverSignal,
-            ImportBlueprint, Inspect, InspectAttempt, InspectCapabilityHealth, InspectDaemonHealth,
-            InspectNodeExecution, InspectOwnAuthority, InspectPeer, InspectProposal,
-            InspectProviderProfile, InspectRevision, InspectRun, InspectTimeline, InvokeCapability,
-            ListCapabilities, NegotiateControlProtocol, Pause, Propose, ProposeOffline,
-            PublishArtifact, ReadArtifactContent, ReadArtifactMetadata, ReadCapabilityOutput,
-            ReadLayout, ReadReadiness, ReadWorkspaceValue, Resume, Retry, StartRun, Terminate,
-            ValidateBlueprint, WriteLayout,
+            AdministerCapabilities, AdministerPeer, Apply, Cancel, CancelCapability, CreateRun,
+            Inspect, InspectCapabilityHealth, InspectDaemonHealth, InspectOwnAuthority,
+            InspectPeer, InspectProviderProfile, InspectRun, InvokeCapability, ListCapabilities,
+            NegotiateControlProtocol, PublishArtifact, ReadArtifactContent, ReadArtifactMetadata,
+            ReadCapabilityOutput, ReadReadiness, StartRun,
         };
         let reads = [
             Inspect,
-            ValidateBlueprint,
-            InspectRevision,
             InspectRun,
-            InspectTimeline,
-            InspectNodeExecution,
-            InspectAttempt,
-            InspectProposal,
             ListCapabilities,
             InspectCapabilityHealth,
             InspectProviderProfile,
             ReadArtifactMetadata,
             ReadArtifactContent,
             ReadCapabilityOutput,
-            ReadWorkspaceValue,
-            ReadLayout,
             NegotiateControlProtocol,
             ReadReadiness,
             InspectDaemonHealth,
@@ -92,79 +81,47 @@ impl AuthorityPreset {
         match self {
             Self::Invoker => [
                 Inspect,
-                ReadCapabilityOutput,
-                InvokeCapability,
-                CancelCapability,
                 ListCapabilities,
                 InspectCapabilityHealth,
                 InspectProviderProfile,
+                ReadCapabilityOutput,
                 ReadArtifactMetadata,
                 ReadArtifactContent,
                 PublishArtifact,
+                InvokeCapability,
+                CancelCapability,
                 NegotiateControlProtocol,
                 ReadReadiness,
                 InspectOwnAuthority,
             ]
             .into_iter()
             .collect(),
-            Self::Observer => reads.into_iter().collect(),
-            Self::Advisor => reads.into_iter().chain([Propose, ProposeOffline]).collect(),
-            Self::Supervisor => reads
-                .into_iter()
-                .chain([
-                    Propose,
-                    ProposeOffline,
-                    Approve,
-                    Apply,
-                    Pause,
-                    Resume,
-                    Cancel,
-                    Retry,
-                    DeliverSignal,
-                    WriteLayout,
-                ])
-                .collect(),
+            Self::Observer | Self::Advisor => reads.into_iter().collect(),
+            Self::Supervisor => reads.into_iter().chain([Apply, Cancel]).collect(),
             Self::Controller => reads
                 .into_iter()
                 .chain([
-                    Propose,
-                    Approve,
-                    Apply,
-                    ImportBlueprint,
                     CreateRun,
                     StartRun,
+                    Apply,
+                    Cancel,
                     InvokeCapability,
                     CancelCapability,
                     PublishArtifact,
-                    Pause,
-                    Resume,
-                    Cancel,
-                    Retry,
-                    DeliverSignal,
-                    Terminate,
-                    WriteLayout,
                     AdministerPeer,
-                    AuthorityOperation::AdministerCapabilities,
+                    AdministerCapabilities,
                 ])
                 .collect(),
             Self::Autonomous => reads
                 .into_iter()
                 .chain([
-                    Propose,
-                    Approve,
-                    Apply,
-                    ImportBlueprint,
                     CreateRun,
                     StartRun,
+                    Apply,
+                    Cancel,
                     InvokeCapability,
                     CancelCapability,
                     PublishArtifact,
-                    Pause,
-                    Resume,
-                    Cancel,
-                    Retry,
-                    DeliverSignal,
-                    WriteLayout,
                 ])
                 .collect(),
         }
@@ -229,7 +186,6 @@ impl GrantTemplate {
                 network: NetworkScope::new(BTreeSet::new(), BTreeSet::new())?,
                 secrets: BTreeSet::new(),
                 artifacts: ArtifactAuthorityScope::none(),
-                layouts: LayoutAuthorityScope::none(),
                 peers: PeerAuthorityScope::none(),
                 daemon: DaemonAuthorityScope::default(),
                 workspace: WorkspaceAuthorityScope::none(),

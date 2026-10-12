@@ -14,30 +14,20 @@ use milkdrift_authority::{
     CapabilityAuthorityScope, CapabilityExecutionRequirements, DecisionReasonCode, GrantDigest,
     GrantId, PolicyId,
 };
-use milkdrift_blueprint::{
-    AuthorRef, BlueprintRevision, Edge, EdgeId, EdgeKind, Mutation, MutationBatch, Node, NodeId,
-    NodeKind, PortId, TerminalOutcome, WorkflowId, WorkflowInterface,
-};
+use milkdrift_blueprint::{NewTask, TaskDefinition, TaskId, WorkflowCreate, WorkflowLimits};
 use milkdrift_capability::{
     CancellationAcknowledgement, CancellationRequest, CapabilityDescriptorDocument,
-    CapabilityObservation, CapabilityRequirement, ErrorClass, InvocationAdmissionEnvelope,
-    InvocationEvent, InvocationEventKind, InvocationTerminal, OperationId, SideEffectClass,
-    TerminalStatus,
+    CapabilityObservation, CapabilityRequirement, InvocationAdmissionEnvelope, InvocationEvent,
+    InvocationEventKind, InvocationTerminal, OperationId, SideEffectClass, TerminalStatus,
 };
 use milkdrift_capability_host::{
     AdapterError, AdapterInvocation, AdapterReporter, CapabilityAdapter, CapabilityHost,
     CapabilitySelectionPolicy, EffectShutdownMode, EffectWorkerConfig, EffectWorkerHost,
     HostConfig,
 };
-use milkdrift_persistence::{
-    CommandId, PageSize, Reason, RevisionStore, RunJournal, RunSequence, TimestampMillis, WorkerId,
-};
-use milkdrift_redb_store::RedbStore;
-use milkdrift_runtime::{
-    CommandAuthorityClaim, EffectAction, ManualClock, RetryPolicy, RunCommand, RunCommandDocument,
-    RuntimeConfig, RuntimeService, SchedulerLimits, SequentialIdGenerator, TaskExecutor,
-};
-use milkdrift_workspace::{RunId, ScopeId, WorkspaceBudget, WorkspaceScope};
+use milkdrift_persistence::TimestampMillis;
+use milkdrift_redb_store::{RedbStore, RedbStoreConfig, StoreClock};
+use milkdrift_runtime::{ManualClock, SequentialIdGenerator, TaskExecutor, TaskRuntime};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -53,21 +43,15 @@ fn maximum_shutdown_duration_does_not_overflow_the_clock() -> TestResult {
         },
         CapabilitySelectionPolicy::priorities(BTreeMap::new()),
     )?;
-    let runtime = Arc::new(RuntimeService::new_with_authority(
-        Arc::new(RedbStore::open(directory.path())?),
+    let runtime = Arc::new(TaskRuntime::new(
+        Arc::new(RedbStore::open_with_config(
+            RedbStoreConfig::new(directory.path()).with_clock(Arc::new(FixtureClock)),
+        )?),
         Arc::new(host.clone()),
         Arc::new(AllowAuthority),
         Arc::new(ManualClock::new(1_000)),
         Arc::new(SequentialIdGenerator::new("maximum-shutdown", 1)?),
-        RuntimeConfig::new(
-            WorkerId::new("maximum-shutdown")?,
-            ActorRef::new("controller:maximum-shutdown")?,
-            30_000,
-            32,
-            SchedulerLimits::new(8, 4, 2, 4)?,
-            RetryPolicy::new(1, Vec::new(), 1, 1, 0)?,
-        )?,
-    )?);
+    ));
     let workers = EffectWorkerHost::start(
         runtime,
         host,
@@ -98,7 +82,13 @@ impl AuthorityEvaluator for AllowAuthority {
             1,
             request.clone(),
             vec![DecisionReasonCode::Allowed],
-            AuthorityBudget::default(),
+            AuthorityBudget {
+                invocations: Some(256),
+                artifact_bytes: Some(1_073_741_824),
+                units: Some(2_000_000),
+                concurrency: Some(256),
+                ..Default::default()
+            },
             SideEffectClass::Unknown,
         )
     }
@@ -108,6 +98,7 @@ struct BlockingAdapter {
     gate: Arc<(Mutex<bool>, Condvar)>,
     preparation_gate: Option<Arc<(Mutex<usize>, Condvar)>>,
     entered: AtomicUsize,
+    cancellations: AtomicUsize,
     exact_authority_seen: std::sync::atomic::AtomicBool,
     panic_admission: bool,
 }
@@ -192,6 +183,7 @@ impl BlockingAdapter {
             gate,
             preparation_gate: None,
             entered: AtomicUsize::new(0),
+            cancellations: AtomicUsize::new(0),
             exact_authority_seen: std::sync::atomic::AtomicBool::new(false),
             panic_admission: false,
         }
@@ -316,6 +308,7 @@ impl CapabilityAdapter for BlockingAdapter {
         &self,
         request: &CancellationRequest,
     ) -> Result<CancellationAcknowledgement, AdapterError> {
+        self.cancellations.fetch_add(1, Ordering::SeqCst);
         CancellationAcknowledgement::new(
             request.invocation().clone(),
             request.request_sequence(),
@@ -356,9 +349,9 @@ impl CapabilityAdapter for BlockingAdapter {
 fn duplicate_effect_delivery_never_enters_twice_or_leaks_the_prepared_generation_permit()
 -> TestResult {
     let directory = tempfile::tempdir()?;
-    let store = Arc::new(RedbStore::open(directory.path())?);
-    let revision = revision()?;
-    store.put_revision(&revision)?;
+    let store = Arc::new(RedbStore::open_with_config(
+        RedbStoreConfig::new(directory.path()).with_clock(Arc::new(FixtureClock)),
+    )?);
     let descriptor = CapabilityDescriptorDocument::from_json(include_bytes!(
         "../../capability/tests/fixtures/descriptor-v1.json"
     ))?
@@ -390,39 +383,24 @@ fn duplicate_effect_delivery_never_enters_twice_or_leaks_the_prepared_generation
             "ready",
         )?),
     )?;
-    let runtime = Arc::new(RuntimeService::new_with_authority(
+    let runtime = Arc::new(TaskRuntime::new(
         store.clone(),
         Arc::new(host.clone()),
         Arc::new(AllowAuthority),
         Arc::new(ManualClock::new(1_000)),
         Arc::new(SequentialIdGenerator::new("prepared-conflict", 1)?),
-        RuntimeConfig::new(
-            WorkerId::new("worker-prepared-conflict")?,
-            ActorRef::new("controller:prepared-conflict")?,
-            30_000,
-            32,
-            SchedulerLimits::new(8, 4, 2, 4)?,
-            RetryPolicy::new(1, vec![ErrorClass::Transport], 10, 100, 0)?,
-        )?,
-    )?);
-    create_and_start(runtime.as_ref(), store.as_ref(), &revision, 77)?;
-    assert_eq!(runtime.scheduler_tick()?.dispatched, 1);
-    let action = runtime
-        .claim_execution_effects(PageSize::new(1)?)?
+    ));
+    create_and_start(runtime.as_ref(), 77)?;
+    let dispatch = runtime
+        .tick(1)?
         .pop()
-        .ok_or("prepared conflict action is absent")?;
-    let EffectAction::Execute(dispatch) = action else {
-        return Err("prepared conflict fixture claimed cancellation".into());
-    };
-    let actions = [
-        EffectAction::Execute(Box::new((*dispatch).clone())),
-        EffectAction::Execute(dispatch),
-    ];
+        .ok_or("prepared conflict dispatch missing")?;
+    let actions = [dispatch.clone(), dispatch];
     let workers = actions
         .into_iter()
         .map(|action| {
             let runtime = runtime.clone();
-            std::thread::spawn(move || runtime.execute_effect(action))
+            std::thread::spawn(move || runtime.execute(action))
         })
         .collect::<Vec<_>>();
     let mut succeeded = 0;
@@ -464,9 +442,9 @@ fn duplicate_effect_delivery_never_enters_twice_or_leaks_the_prepared_generation
 #[test]
 fn admission_panic_is_contained_before_entry_and_releases_the_generation_permit() -> TestResult {
     let directory = tempfile::tempdir()?;
-    let store = Arc::new(RedbStore::open(directory.path())?);
-    let revision = revision()?;
-    store.put_revision(&revision)?;
+    let store = Arc::new(RedbStore::open_with_config(
+        RedbStoreConfig::new(directory.path()).with_clock(Arc::new(FixtureClock)),
+    )?);
     let descriptor = CapabilityDescriptorDocument::from_json(include_bytes!(
         "../../capability/tests/fixtures/descriptor-v1.json"
     ))?
@@ -496,30 +474,18 @@ fn admission_panic_is_contained_before_entry_and_releases_the_generation_permit(
             "ready",
         )?),
     )?;
-    let runtime = RuntimeService::new_with_authority(
+    let runtime = TaskRuntime::new(
         store.clone(),
         Arc::new(host.clone()),
         Arc::new(AllowAuthority),
         Arc::new(ManualClock::new(1_000)),
         Arc::new(SequentialIdGenerator::new("admission-panic", 1)?),
-        RuntimeConfig::new(
-            WorkerId::new("worker-admission-panic")?,
-            ActorRef::new("controller:admission-panic")?,
-            30_000,
-            32,
-            SchedulerLimits::new(8, 4, 2, 4)?,
-            RetryPolicy::new(1, vec![ErrorClass::Transport], 10, 100, 0)?,
-        )?,
-    )?;
-    create_and_start(&runtime, store.as_ref(), &revision, 88)?;
-    assert_eq!(runtime.scheduler_tick()?.dispatched, 1);
-    let action = runtime
-        .claim_execution_effects(PageSize::new(1)?)?
+    );
+    create_and_start(&runtime, 88)?;
+    let dispatch = runtime
+        .tick(1)?
         .pop()
-        .ok_or("admission-panic action is absent")?;
-    let EffectAction::Execute(dispatch) = action else {
-        return Err("admission-panic fixture claimed cancellation".into());
-    };
+        .ok_or("admission panic dispatch missing")?;
     assert!(matches!(
         host.prepare_exact_entry(&dispatch),
         Err(milkdrift_runtime::ExecutorError::AdapterPanicked { after_entry: false })
@@ -539,116 +505,73 @@ fn admission_panic_is_contained_before_entry_and_releases_the_generation_permit(
     Ok(())
 }
 
-fn revision() -> TestResult<BlueprintRevision> {
-    let task_id = NodeId::new("task")?;
-    let terminal_id = NodeId::new("done")?;
-    let task = Node::new(
-        task_id.clone(),
-        NodeKind::task_direct_inputs(CapabilityRequirement::new(OperationId::new(
-            "model.generate",
-        )?))?,
-    )?
-    .with_control_output(PortId::new("next")?)?;
-    let terminal = Node::new(
-        terminal_id.clone(),
-        NodeKind::Terminal {
-            outcome: TerminalOutcome::Success,
-        },
-    )?
-    .with_control_input(PortId::new("in")?)?;
-    Ok(BlueprintRevision::genesis(
-        WorkflowId::new("effect-worker-workflow")?,
-        MutationBatch::new(vec![
-            Mutation::SetInterface {
-                interface: WorkflowInterface::new([], [])?,
-            },
-            Mutation::AddNode { node: task },
-            Mutation::AddNode { node: terminal },
-            Mutation::AddEdge {
-                edge: Edge::new(
-                    EdgeId::new("task-done")?,
-                    EdgeKind::Control,
-                    task_id,
-                    PortId::new("next")?,
-                    terminal_id,
-                    PortId::new("in")?,
-                ),
-            },
-        ])?,
-        AuthorRef::new("human:effect-worker-test")?,
-        "effect worker fixture",
-    )?)
+struct FixtureClock;
+impl StoreClock for FixtureClock {
+    fn now(&self) -> Result<TimestampMillis, milkdrift_persistence::PersistenceError> {
+        Ok(TimestampMillis::new(1_000))
+    }
 }
 
-fn authority_claim() -> TestResult<CommandAuthorityClaim> {
-    Ok(CommandAuthorityClaim::new(
-        GrantId::new("grant:effect-worker-test")?,
-        1,
-        GrantDigest::new(format!("b3_{}", "0".repeat(64)))?,
-        0,
-    )?)
-}
-
-fn create_and_start(
-    runtime: &RuntimeService,
-    store: &RedbStore,
-    revision: &BlueprintRevision,
-    index: usize,
-) -> TestResult {
-    let run = RunId::new(format!("run-effect-worker-{index}"))?;
+fn create_and_start(runtime: &TaskRuntime, index: usize) -> TestResult {
+    use milkdrift_authority::{
+        AuthorityExecutionProvenance, AuthorityOperation, AuthorityRequest, BoundaryTimeMillis,
+        DecisionId, RequestedResourceFacts,
+    };
     let actor = ActorRef::new("human:effect-worker-test")?;
-    let create = RunCommandDocument::new(
-        CommandId::new(format!("command-create-effect-worker-{index}"))?,
-        run.clone(),
-        actor.clone(),
-        RunSequence::ZERO,
-        TimestampMillis::new(1_000),
-        Reason::new("create effect-worker fixture")?,
-        Vec::new(),
-        RunCommand::CreateRun {
-            workflow: revision.semantic().workflow().clone(),
-            revision: revision.id().clone(),
-            root_scope: WorkspaceScope::run_root(
-                run.clone(),
-                ScopeId::new(format!("scope-effect-worker-{index}"))?,
-            ),
-            workspace_budget: WorkspaceBudget::new(8, 1024, 4096, 4, 1024, 4096)?,
-            inputs: Vec::new(),
+    let key = format!("worker-create-{index}");
+    let workflow = TaskRuntime::workflow_identity(actor.as_str(), &key)?;
+    let decision = AllowAuthority.evaluate(&AuthorityRequest {
+        decision: DecisionId::new(format!("worker-start-{index}"))?,
+        actor: actor.clone(),
+        grant: GrantId::new("grant:effect-worker-test")?,
+        grant_revision: 1,
+        grant_digest: GrantDigest::new(format!("b3_{}", "0".repeat(64)))?,
+        revocation_generation: 0,
+        operation: AuthorityOperation::StartRun,
+        resources: RequestedResourceFacts {
+            workflow: Some(workflow),
+            ..RequestedResourceFacts::empty()
         },
+        budget: AuthorityBudget::default(),
+        evaluated_at: BoundaryTimeMillis::new(1_000),
+        provenance: AuthorityExecutionProvenance::default(),
+    })?;
+    runtime.create(
+        actor.as_str(),
+        &key,
+        WorkflowCreate {
+            title: "Effect worker fixture".into(),
+            description: String::new(),
+            tasks: vec![NewTask {
+                alias: TaskId::new("task")?,
+                definition: TaskDefinition {
+                    title: "Exercise worker".into(),
+                    description: String::new(),
+                    instructions: "Exercise the retained worker owner".into(),
+                    capability: CapabilityRequirement::new(OperationId::new("model.generate")?),
+                    inputs: BTreeMap::new(),
+                    dependencies: Default::default(),
+                    outputs: BTreeMap::new(),
+                    required: true,
+                    corrective_of: None,
+                    paths: Vec::new(),
+                },
+            }],
+            inputs: BTreeMap::new(),
+            limits: WorkflowLimits::default(),
+            finish_when_settled: true,
+        },
+        decision,
     )?;
-    assert_eq!(
-        runtime
-            .handle_authorized_command(&create, &authority_claim()?)?
-            .result()
-            .disposition(),
-        milkdrift_persistence::CommandDisposition::Accepted
-    );
-    let start = RunCommandDocument::new(
-        CommandId::new(format!("command-start-effect-worker-{index}"))?,
-        run.clone(),
-        actor,
-        store.head(&run)?,
-        TimestampMillis::new(1_001),
-        Reason::new("start effect-worker fixture")?,
-        Vec::new(),
-        RunCommand::StartRun,
-    )?;
-    assert_eq!(
-        runtime
-            .handle_authorized_command(&start, &authority_claim()?)?
-            .result()
-            .disposition(),
-        milkdrift_persistence::CommandDisposition::Accepted
-    );
     Ok(())
 }
 
 #[test]
 fn bounded_queues_backpressure_and_forced_shutdown_preserves_unresolved_truth() -> TestResult {
     let directory = tempfile::tempdir()?;
-    let store = Arc::new(RedbStore::open(directory.path())?);
-    let revision = revision()?;
-    store.put_revision(&revision)?;
+    let store = Arc::new(RedbStore::open_with_config(
+        RedbStoreConfig::new(directory.path()).with_clock(Arc::new(FixtureClock)),
+    )?);
     let descriptor = CapabilityDescriptorDocument::from_json(include_bytes!(
         "../../capability/tests/fixtures/descriptor-v1.json"
     ))?
@@ -676,28 +599,18 @@ fn bounded_queues_backpressure_and_forced_shutdown_preserves_unresolved_truth() 
             "ready",
         )?),
     )?;
-    let runtime = Arc::new(RuntimeService::new_with_authority(
+    let runtime = Arc::new(TaskRuntime::new(
         store.clone(),
         Arc::new(host.clone()),
         Arc::new(AllowAuthority),
         Arc::new(ManualClock::new(1_000)),
         Arc::new(SequentialIdGenerator::new("effect-worker", 1)?),
-        RuntimeConfig::new(
-            WorkerId::new("worker-effect-host")?,
-            ActorRef::new("controller:effect-host")?,
-            30_000,
-            32,
-            SchedulerLimits::new(8, 4, 2, 4)?,
-            RetryPolicy::new(1, vec![ErrorClass::Transport], 10, 100, 0)?,
-        )?,
-    )?);
+    ));
     for index in 0..3 {
-        create_and_start(runtime.as_ref(), store.as_ref(), &revision, index)?;
+        create_and_start(runtime.as_ref(), index)?;
     }
-    let scheduled = runtime.scheduler_tick()?;
-    assert_eq!(scheduled.dispatched, 3);
     let workers = EffectWorkerHost::start(
-        runtime,
+        runtime.clone(),
         host.clone(),
         EffectWorkerConfig {
             execution_threads: 1,
@@ -719,6 +632,43 @@ fn bounded_queues_backpressure_and_forced_shutdown_preserves_unresolved_truth() 
     assert_eq!(health.active_executions, 1);
     assert_eq!(health.queued_executions, 1);
 
+    // A full execution queue cannot prevent the independent cancellation worker from running.
+    let mut entered = None;
+    for index in 0..3 {
+        let id = TaskRuntime::workflow_identity(
+            "human:effect-worker-test",
+            &format!("worker-create-{index}"),
+        )?;
+        let workflow = runtime.workflow(&id)?.ok_or("worker workflow missing")?;
+        if let Some(task) = workflow
+            .tasks
+            .values()
+            .find(|task| task.frozen.as_ref().is_some_and(|start| start.entered))
+        {
+            entered = Some((id, workflow.generation, task.id.clone()));
+            break;
+        }
+    }
+    let (workflow, generation, task) = entered.ok_or("entered task missing")?;
+    runtime.edit(
+        "human:effect-worker-test",
+        &format!("stop:{workflow}:{task}"),
+        &workflow,
+        milkdrift_blueprint::TaskBatch {
+            expected_generation: generation,
+            changes: vec![milkdrift_blueprint::TaskChange::Stop { task }],
+        },
+    )?;
+    assert_eq!(workers.poll()?.cancellations, 1);
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while adapter.cancellations.load(Ordering::SeqCst) == 0 && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(adapter.cancellations.load(Ordering::SeqCst), 1);
+    assert_eq!(workers.health()?.active_executions, 1);
+    assert_eq!(workers.poll()?.cancellations, 0);
+
     let shutdown = workers.shutdown(EffectShutdownMode::Cancel, Duration::from_secs(3))?;
     assert!(shutdown.clean);
     assert_eq!(shutdown.unresolved_invocations.len(), 1);
@@ -736,7 +686,9 @@ fn bounded_queues_backpressure_and_forced_shutdown_preserves_unresolved_truth() 
 #[test]
 fn blocking_adapter_lifecycle_cannot_overrun_the_effect_shutdown_deadline() -> TestResult {
     let directory = tempfile::tempdir()?;
-    let store = Arc::new(RedbStore::open(directory.path())?);
+    let store = Arc::new(RedbStore::open_with_config(
+        RedbStoreConfig::new(directory.path()).with_clock(Arc::new(FixtureClock)),
+    )?);
     let descriptor = CapabilityDescriptorDocument::from_json(include_bytes!(
         "../../capability/tests/fixtures/descriptor-v1.json"
     ))?
@@ -763,21 +715,13 @@ fn blocking_adapter_lifecycle_cannot_overrun_the_effect_shutdown_deadline() -> T
             "ready",
         )?),
     )?;
-    let runtime = Arc::new(RuntimeService::new_with_authority(
+    let runtime = Arc::new(TaskRuntime::new(
         store,
         Arc::new(host.clone()),
         Arc::new(AllowAuthority),
         Arc::new(ManualClock::new(1_000)),
         Arc::new(SequentialIdGenerator::new("effect-deadline", 1)?),
-        RuntimeConfig::new(
-            WorkerId::new("worker-effect-deadline")?,
-            ActorRef::new("controller:effect-deadline")?,
-            30_000,
-            32,
-            SchedulerLimits::new(8, 4, 2, 4)?,
-            RetryPolicy::new(1, vec![ErrorClass::Transport], 10, 100, 0)?,
-        )?,
-    )?);
+    ));
     let workers = EffectWorkerHost::start(
         runtime,
         host,

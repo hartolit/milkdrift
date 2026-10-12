@@ -154,18 +154,18 @@ composed outcome. Known defects belong to their current boundary, not a convenie
 ## Primary-source checks that constrain the reconstruction
 
 - `RuntimeService::try_satisfy_join` and `add_ready_successors` in
-  [completion.rs](../../../../../crates/runtime/src/engine/completion.rs) distinguish join
+  [completion.rs](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/completion.rs) distinguish join
   satisfaction/selected source readiness from physical completion. `add_ready_successors` uses
   current occurrence/scope, route and predecessor readiness before `NodeBecameEligible`; it is not
   an external-entry transaction. This is why PR-C1 matters. The new merge is still unimplemented.
-- [Terminal deferral](../../../../../crates/runtime/tests/structured_runtime/lifecycle/cancellation.rs)
+- [Terminal deferral](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/tests/structured_runtime/lifecycle/cancellation.rs)
   keeps a run nonterminal while an already-dispatched join loser remains active. The managed
   `release`/`transfer` checks in [uses.rs](../../../../../adapters/redb-store/src/managed/uses.rs)
   retain quiescence and exact accepted lineage requirements; they distinguish the wrapper's
   `NoExternalEntry` from a physical parent needing a fresh entry epoch. E06 tests positive child
   transfer and lost stop proof, supporting PR-C2 without proving the new combined graph.
-- [SavedRunRequest](../../../../../crates/control-client/src/saved_run.rs) requires exact current
-  `AuthorityRead`, and [command_fingerprint](../../../../../apps/daemon/src/host/receipts.rs)
+- [SavedRunRequest](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control-client/src/saved_run.rs) requires exact current
+  `AuthorityRead`, and [command_fingerprint](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/src/host/receipts.rs)
   binds actor/grant identity/revision/digest. In contrast,
   [invoke_client](../../../../../crates/capability-host/src/serving/direct.rs) looks up a retained
   actor-scoped serving request, requires current Inspect, takes its stored authorization basis
@@ -224,9 +224,9 @@ relay ambiguity. These three findings are resolved in the plan.
 
 The subsequent PR-C4 was a real new correction, not something silently presumed in the first read.
 Bram reported it; Cyra read
-[authoring.rs](../../../../../apps/daemon/src/host/commands/authoring.rs) `base` and `finish`,
-[definitions.rs](../../../../../apps/daemon/src/host/commands/definitions.rs) `retain_revision`,
-and [revision.rs](../../../../../adapters/redb-store/src/revision.rs) `RedbStore::put_revision`.
+[authoring.rs](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/src/host/commands/authoring.rs) `base` and `finish`,
+[definitions.rs](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/src/host/commands/definitions.rs) `retain_revision`,
+and [revision.rs](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/adapters/redb-store/src/revision.rs) `RedbStore::put_revision`.
 The first compares `request.expected_revision` with `draft.base_revision`, then loads that exact
 authorized base. Retention verifies immutable identity/canonical content and parent workflow/
 sequence, with no mutable current-head compare-and-swap. Valid divergent same-parent revisions
@@ -340,7 +340,7 @@ disputed. `ApproveKnowledgeForReuse` records the permitted reuse purpose/applica
 assessments separately; a later packet selects it under current rights and retains its limitations.
 
 This requires the new closed contract because current
-[KnowledgeSelection](../../../../../crates/control/src/learning/request.rs) unconditionally names
+[KnowledgeSelection](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control/src/learning/request.rs) unconditionally names
 `method`, managed `workspace` and pages, while its approval/supersession is a publication-promotion
 receipt. The old protected profile must retain those original meanings. The new route cannot be
 implemented by making protected verifier/target fields optional or by declaring “human reviewed”
@@ -424,7 +424,7 @@ not a second claim to have re-audited every package. I ran no Cargo, model or br
 
 ### Source-backed live-work and authority trace
 
-The actual [reconciliation action table](../../../../../crates/runtime/src/reconciliation.rs)
+The actual [reconciliation action table](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/reconciliation.rs)
 preserves unchanged scoped work, uses new pending/eligible configurations prospectively, and
 chooses `UseNewOnNextInvocation` for changed active work under `FinishCurrentThenAdopt`. Changed
 side effects and started-descendant dependencies have separate authority/remediation/refusal
@@ -440,7 +440,7 @@ A generated Program target follows the same application route using Program edit
 cannot make an accepted conversion or authority claim true by labeling its output that way.
 Stale target/sequence is a saved refusal, and reply loss replays the accepted proposal/action.
 
-[The current agreement validator](../../../../../crates/blueprint/src/agreement.rs) seals every
+[The current agreement validator](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/blueprint/src/agreement.rs) seals every
 outside node and crossing edge and admits only bounded Tasks with exact allowed requirements
 inside the prefix. An inherited child cannot adopt independently merely because its isolated
 definition can be edited. NP4 preserves both the valid protected-root Task repair and that distinct
@@ -476,10 +476,10 @@ outcome/Return route is not falsely certified equivalent to historical last-term
 No useful general crossed-ownership execution or universal conversion is established.
 
 The cancellation finding is supported directly by bounded ancestor traversal in
-[execution_branch_state](../../../../../crates/runtime/src/engine/support.rs), the immediate-owner
-test in [projection helpers](../../../../../crates/runtime/src/projection/helpers.rs), and its
-[timer consumer](../../../../../crates/runtime/src/projection/apply_timer.rs).
-[PlanTransition::push_event](../../../../../crates/runtime/src/engine/transition.rs) applies to a
+[execution_branch_state](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/support.rs), the immediate-owner
+test in [projection helpers](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/projection/helpers.rs), and its
+[timer consumer](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/projection/apply_timer.rs).
+[PlanTransition::push_event](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/transition.rs) applies to a
 prospective projection before appending its event. The observed errors therefore do not establish
 corrupt durable history. Future acceptance must prove the corrected drain/reopen behavior and
 continue to reject unrelated-scope cancellation; the source diagnosis does not substitute for it.

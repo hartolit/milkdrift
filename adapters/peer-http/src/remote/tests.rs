@@ -133,7 +133,7 @@ fn serve_archived_execution(
                 peer: remote_peer,
                 session: SessionId::new("session-remote-conformance-server")
                     .map_err(|error| error.to_string())?,
-                selected_version: ProtocolVersion::V1_5,
+                selected_version: ProtocolVersion::V1_6,
                 features: FeatureSet {
                     resumable_observations: true,
                     resumable_artifacts: true,
@@ -317,16 +317,18 @@ fn remote_case(scenario: ConformanceScenario) -> Result<RemoteCase, Box<dyn std:
     });
     let revision: RevisionId =
         serde_json::from_value(serde_json::json!(format!("rev_{}", "0".repeat(64))))?;
+    let selection = milkdrift_capability_host::DirectInputSelection::new(&request, 1_048_576)?;
     Ok(RemoteCase {
         adapter,
         descriptor: local_descriptor,
         request,
-        context: AdapterExecutionContext::new(
+        context: AdapterExecutionContext::originated(
             RunId::new("run-remote-conformance")?,
             revision,
             NodeId::new("remote-conformance")?,
             NodeExecutionId::new("execution-remote-conformance")?,
             AttemptId::new("attempt-remote-conformance")?,
+            selection,
         ),
         server,
     })
@@ -567,7 +569,6 @@ fn remote_resolution_requires_transport_scope_and_each_resource_ceiling()
                 network,
                 secrets: BTreeSet::new(),
                 artifacts: milkdrift_authority::ArtifactAuthorityScope::none(),
-                layouts: milkdrift_authority::LayoutAuthorityScope::none(),
                 peers: milkdrift_authority::PeerAuthorityScope::none(),
                 daemon: milkdrift_authority::DaemonAuthorityScope::default(),
                 workspace: milkdrift_authority::WorkspaceAuthorityScope::none(),

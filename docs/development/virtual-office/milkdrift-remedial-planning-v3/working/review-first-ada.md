@@ -27,9 +27,9 @@ The merge can forward a correct summary while the review never becomes eligible.
 choice test with only mapped outputs does not discriminate this failure. A client that hides the
 bypassing wire would make the diagram still more misleading.
 
-**Source ground:** [predecessors_ready](../../../../../crates/runtime/src/engine/support.rs)
+**Source ground:** [predecessors_ready](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/support.rs)
 requires each required data edge to have a successful related-scope source with the named output;
-control readiness alone is insufficient. [validate_binding](../../../../../crates/blueprint/src/validation.rs)
+control readiness alone is insufficient. [validate_binding](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/blueprint/src/validation.rs)
 requires exact node-output bindings to carry their explicit data dependency. Existing validation
 cannot establish correctness of a not-yet-existing choice region. This is a prospective contract
 gap, not an executed defect claim about R-C01.
@@ -85,8 +85,8 @@ removing start authority. The original host/run/request still exist and the user
 record. They should be able to inspect a permitted accepted run without changing the request's
 old authority or accidentally submitting a new start.
 
-**Source ground:** [SavedRunRequest::submit_saved_run](../../../../../crates/control-client/src/saved_run.rs)
-requires exact `AuthorityRead` equality. [command_fingerprint](../../../../../apps/daemon/src/host/receipts.rs)
+**Source ground:** [SavedRunRequest::submit_saved_run](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control-client/src/saved_run.rs)
+requires exact `AuthorityRead` equality. [command_fingerprint](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/src/host/receipts.rs)
 binds actor, grant identity, revision, digest and canonical command; receipt lookup conflicts if
 that digest changes. [HTTP routes](../../../../../apps/daemon/src/http.rs) expose exact run reads
 and serving request lookup, but not a generic public command-receipt lookup. Changing the local
@@ -114,7 +114,7 @@ could satisfy the named prompt literally while leaving F1's advertised starting 
 
 A fresh reviewer who has a goal and no hand-authored mutation document, or a fresh browser looking
 for an old failed study without its `{actor, command}` reference, discriminates these gaps. Current
-[LearningRequest](../../../../../crates/control/src/learning/request.rs) has exact Inspect, not
+[LearningRequest](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control/src/learning/request.rs) has exact Inspect, not
 receipt discovery. Generic construction/proposal validation does not itself call a planner and
 retain its malformed/declined candidate. This is not a demand for new generic engines.
 

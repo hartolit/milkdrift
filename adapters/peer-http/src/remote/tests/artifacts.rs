@@ -255,7 +255,6 @@ fn transfer_case(
         1000,
         &mut imported,
         &mut total,
-        None,
         &reporter,
     );
     let received = server.join().map_err(|_| "transfer server panicked")??;

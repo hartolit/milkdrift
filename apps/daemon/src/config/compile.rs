@@ -86,54 +86,9 @@ impl DaemonConfig {
             ));
         }
         validate_runtime(&self.runtime)?;
-        if !self.runtime.publication_services.is_empty() {
-            if self.role != milkdrift_control_protocol::HostRole::WorkflowEnabled
-                || self.runtime.controller_activation == super::ControllerActivation::Disabled
-            {
-                return Err(ConfigError::Invalid("publication services require workflow_enabled and enabled controller accounting".to_owned()));
-            }
-            if self.runtime.publication_services.len() > 128
-                || self.runtime.publication_services.values().any(|grant| {
-                    !self
-                        .actors
-                        .iter()
-                        .any(|actor| actor.enabled && actor.grant_id == grant.as_str())
-                })
-            {
-                return Err(ConfigError::Invalid("publication service grants must name enabled configured actors (at most 128 capabilities)".to_owned()));
-            }
-        }
-        if self.role == milkdrift_control_protocol::HostRole::ExecutionOnly
-            && self.runtime.controller_activation != super::ControllerActivation::Disabled
-        {
-            return Err(ConfigError::Invalid(
-                "controller activation requires the workflow_enabled role".to_owned(),
-            ));
-        }
-        match self.runtime.controller_activation {
-            super::ControllerActivation::Disabled | super::ControllerActivation::Enabled => {}
-            super::ControllerActivation::Qualification
-                if cfg!(feature = "controller-qualification") => {}
-            super::ControllerActivation::Qualification => {
-                return Err(ConfigError::Invalid(
-                    "controller qualification requires the development-only controller-qualification build feature and an isolated test installation".to_owned(),
-                ));
-            }
-        }
         if self.shutdown.deadline_ms == 0 || self.shutdown.deadline_ms > 300_000 {
             return Err(ConfigError::Invalid(
                 "shutdown deadline must be in 1..=300000 milliseconds".to_owned(),
-            ));
-        }
-        if self.application_receipts.hot_receipt_bound == 0
-            || self.application_receipts.hot_receipt_bound > 1_000_000
-            || self.application_receipts.archive_batch_size == 0
-            || self.application_receipts.archive_batch_size
-                > self.application_receipts.hot_receipt_bound
-        {
-            return Err(ConfigError::Invalid(
-                "application hot receipt bound must be in 1..=1000000 and archive batch must be in 1..=hot bound"
-                    .to_owned(),
             ));
         }
         if self.security_audit_record_bound == 0 || self.security_audit_record_bound > 1_000_000 {
@@ -221,7 +176,6 @@ impl DaemonConfig {
             bind: self.bind,
             storage: StoragePlan {
                 data_root: self.data_root,
-                application_receipts: self.application_receipts,
                 security_audit_record_bound: self.security_audit_record_bound,
             },
             authentication: AuthenticationPlan {
@@ -306,8 +260,7 @@ fn validate_actor_authority(authority: &ActorGrantConfig) -> Result<(), ConfigEr
     let effectively_unbounded = authority.valid_until.get() == u64::MAX;
     let broad_reads = authority.resources.artifacts.has_any_selector()
         || authority.resources.peers.allows_any()
-        || authority.resources.workspace.allows_any_in_run()
-        || authority.resources.layouts.has_any_selector();
+        || authority.resources.workspace.allows_any_in_run();
     if broad_workflow
         || broad_capability
         || broad_reads
@@ -475,14 +428,8 @@ fn validate_runtime(config: &RuntimeHostConfig) -> Result<(), ConfigError> {
         || config.request_queue > 65_536
         || config.maintenance_interval_ms == 0
         || config.maintenance_interval_ms > 60_000
-        || config.maximum_tick_items == 0
-        || config.maximum_tick_items > 1_000
         || config.global_concurrency == 0
-        || config.per_run_concurrency == 0
-        || config.per_run_concurrency > config.global_concurrency
-        || config.per_branch_concurrency == 0
-        || config.per_branch_concurrency > config.per_run_concurrency
-        || config.per_capability_concurrency == 0
+        || config.global_concurrency > 65_536
         || config.effect_threads == 0
         || config.effect_threads > 256
         || config.effect_queue == 0

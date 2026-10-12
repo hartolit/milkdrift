@@ -81,9 +81,10 @@ impl PeerClientConfig {
 
 fn validate_current_protocol_range(versions: ProtocolVersionRange) -> Result<(), PeerHttpError> {
     if versions != ProtocolVersionRange::default() {
-        return Err(PeerHttpError::Configuration(
-            "peer protocol configuration must select exactly v1.5".to_owned(),
-        ));
+        return Err(PeerHttpError::Configuration(format!(
+            "peer protocol configuration must select exactly v1.{}",
+            milkdrift_peer_protocol::PROTOCOL_MINOR_V1
+        )));
     }
     Ok(())
 }
@@ -104,19 +105,18 @@ mod tests {
     use super::validate_current_protocol_range;
 
     #[test]
-    fn configured_protocol_ranges_must_name_only_v1_5() -> Result<(), Box<dyn std::error::Error>> {
+    fn configured_protocol_ranges_must_name_only_v1_6() -> Result<(), Box<dyn std::error::Error>> {
         assert!(validate_current_protocol_range(ProtocolVersionRange::default()).is_ok());
+        let current = milkdrift_peer_protocol::PROTOCOL_MINOR_V1;
+        let next = current.checked_add(1).ok_or("protocol minor exhausted")?;
+        let prior = current
+            .checked_sub(1)
+            .ok_or("protocol minor lacks predecessor")?;
         for (minimum, maximum) in [
-            (1_u16, 1_u16),
-            (1, 2),
-            (2, 2),
-            (2, 3),
-            (3, 3),
-            (3, 4),
-            (4, 5),
-            (4, 4),
-            (5, 6),
-            (6, 6),
+            (prior, prior),
+            (prior, current),
+            (current, next),
+            (next, next),
         ] {
             let range = ProtocolVersionRange::new(
                 ProtocolVersion {

@@ -45,8 +45,6 @@ fn fixture_proves_the_harness_without_claiming_external_qualification() -> TestR
             .args([
                 "--fixture",
                 "--allow-fixture",
-                "--max-output-units",
-                "2048",
                 "--timeout-secs",
                 // A workflow wait covers several sequential processes and acceptance steps.
                 // Keep an explicit non-default bound without timing out valid debug-build work.
@@ -67,7 +65,7 @@ fn fixture_proves_the_harness_without_claiming_external_qualification() -> TestR
         report
             .pointer("/schema_version")
             .ok_or("missing /schema_version")?,
-        1
+        2
     );
     assert_eq!(
         report
@@ -107,21 +105,21 @@ fn fixture_proves_the_harness_without_claiming_external_qualification() -> TestR
             report
                 .get(scenario)
                 .ok_or("scenario report absent")?
-                .pointer("/restart_boundaries/0/duplicate_attempts")
-                .ok_or("missing /restart_boundaries/0/duplicate_attempts")?,
+                .pointer("/restart_boundaries/0/duplicate_tasks")
+                .ok_or("missing /restart_boundaries/0/duplicate_tasks")?,
             false
         );
     }
     assert_eq!(
         report
-            .pointer("/process/facts/distinct_process_invocations")
-            .ok_or("missing /process/facts/distinct_process_invocations")?,
+            .pointer("/process/facts/distinct_process_tasks")
+            .ok_or("missing /process/facts/distinct_process_tasks")?,
         5
     );
     assert_eq!(
         report
-            .pointer("/process/facts/process_invocations")
-            .ok_or("missing /process/facts/process_invocations")?
+            .pointer("/process/facts/process_tasks")
+            .ok_or("missing /process/facts/process_tasks")?
             .as_array()
             .map(Vec::len),
         Some(5)
@@ -134,17 +132,14 @@ fn fixture_proves_the_harness_without_claiming_external_qualification() -> TestR
     );
     assert!(
         report
-            .pointer("/model/facts/omitted_count")
-            .ok_or("missing /model/facts/omitted_count")?
+            .pointer("/model/facts/unselected_count")
+            .ok_or("missing /model/facts/unselected_count")?
             .as_u64()
             .is_some_and(|count| count >= 1)
     );
-    assert!(
-        report
-            .pointer("/model/facts/streaming_observations")
-            .ok_or("missing /model/facts/streaming_observations")?
-            .as_u64()
-            .is_some_and(|count| count >= 1)
+    assert_eq!(
+        report.pointer("/model/facts/streaming"),
+        Some(&Value::Bool(false))
     );
     assert_eq!(
         report
@@ -154,9 +149,9 @@ fn fixture_proves_the_harness_without_claiming_external_qualification() -> TestR
     );
     assert_eq!(
         report
-            .pointer("/model/facts/max_output_units")
-            .ok_or("missing /model/facts/max_output_units")?,
-        2048
+            .pointer("/model/facts/model_output_units")
+            .ok_or("missing /model/facts/model_output_units")?,
+        4096
     );
     assert_eq!(
         report
@@ -282,7 +277,7 @@ fn fixture_process_and_model_scenario_failures_exit_nonzero() -> TestResult {
             "{fault}: {report}"
         );
         let expected_reason = if fault == "model-truncated" {
-            "model result not accepted: output_allowance_exhausted; invocation terminal=succeeded"
+            "provider response finish_reason=Length; truncated or incomplete output cannot qualify"
         } else {
             "fixture-injected"
         };
@@ -343,17 +338,17 @@ fn committed_report_schema_is_strict_and_versioned() -> TestResult {
         .join("../..")
         .canonicalize()?;
     let schema: Value = serde_json::from_slice(&fs::read(
-        repository.join("docs/reference/external-evidence-report-v1.schema.json"),
+        repository.join("docs/reference/external-evidence-report-v2.schema.json"),
     )?)?;
     assert_eq!(
         schema.pointer("/$id").ok_or("missing /$id")?,
-        "https://milkdrift.dev/schema/external-evidence-report-v1.json"
+        "https://milkdrift.dev/schema/external-evidence-report-v2.json"
     );
     assert_eq!(
         schema
             .pointer("/properties/schema_version/const")
             .ok_or("missing /properties/schema_version/const")?,
-        1
+        2
     );
     assert_eq!(
         schema

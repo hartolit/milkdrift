@@ -16,9 +16,9 @@ Four objects answer different questions:
 | `ResolvedCapabilitySnapshot` | Which generation and operation were selected for an attempt, with a digest of the frozen selection facts. |
 | Host-owned `CapabilityAdapter` | The live implementation that can enter a process, endpoint, or peer. |
 
-For a supported consumer trace, follow `TaskConfig` in
-[blueprint](../blueprint/src/model/node.rs), the runtime's
-[dispatch construction](../runtime/src/engine/dispatch.rs), then the host's
+For a supported consumer trace, follow `TaskDefinition` in
+[blueprint](../blueprint/src/task.rs), the runtime's
+[dispatch construction](../runtime/src/tasks/scheduling.rs), then the host's
 [selection](../capability-host/src/registry/selection.rs) and
 [entry](../capability-host/src/registry/execution.rs). The task keeps a requirement so later work
 can resolve against available generations. An accepted attempt keeps a snapshot so a replacement
@@ -40,8 +40,7 @@ schema 3. Older development snapshot formats are refused. See [peer authoring](.
 
 `InvocationRequest` names the exact capability, operation, profile, and inputs; its companion
 snapshot supplies the descriptor revision. Inputs hold bounded inline JSON or opaque durable
-references. A frozen context manifest has a separate reference, with reserved input names for
-selected content. The host materializes those references; this crate does not fetch bytes.
+references. Every input is explicitly named; invocation schema 3 carries no implicit history or context-manifest channel.
 
 Adapters emit sequenced `InvocationEvent`s containing progress, output references, and a terminal
 report. Large results belong in artifacts. `InvocationFailure::retryable` is an adapter observation;
@@ -58,7 +57,7 @@ alone never establishes that boundary.
 Use the `*Document::from_json` readers at serialized boundaries and `to_canonical_json` when exact
 bytes matter. They check versions, duplicate keys, bounds, and domain invariants. The
 [document owner](src/document.rs) and [golden tests](tests/runtime_contracts.rs) explain the
-supported forms and refusal behavior; [status](../../docs/product/status.md) lists current
+supported forms and refusal behavior; [version reference](../../docs/reference/versions.md) lists current
 versions. Opaque reference identities deliberately keep workspace and storage types out of this
 crate. `AdmissionBound::Unknown` likewise preserves a missing enforceable resource limit instead
 of turning an estimate into a reservation guarantee.

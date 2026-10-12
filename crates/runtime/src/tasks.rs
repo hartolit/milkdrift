@@ -2,6 +2,7 @@
 
 mod account;
 mod admission;
+mod capacity;
 mod effects;
 mod scheduling;
 
@@ -15,7 +16,7 @@ use milkdrift_persistence::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     sync::{Arc, Mutex},
 };
 
@@ -65,6 +66,8 @@ pub enum WorkflowState {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FrozenTaskStart {
+    /// Workflow generation that atomically accepted this immutable start.
+    pub accepted_generation: u64,
     /// Exact accepted definition used by this attempt.
     pub definition: TaskDefinition,
     /// Selected bytes and immutable output references, independent of later input edits.
@@ -180,6 +183,11 @@ pub struct TaskRuntime {
     ids: Arc<dyn IdGenerator>,
     gate: Mutex<()>,
     cursor: Mutex<Option<String>>,
+    cancellation_cursor: Mutex<Option<String>>,
+    maximum_active_tasks: u32,
+    active_tasks: Mutex<Option<u64>>,
+    executing: Mutex<BTreeSet<milkdrift_capability::InvocationId>>,
+    admission_closed: std::sync::atomic::AtomicBool,
 }
 
 impl TaskRuntime {
@@ -200,7 +208,66 @@ impl TaskRuntime {
             ids,
             gate: Mutex::new(()),
             cursor: Mutex::new(None),
+            cancellation_cursor: Mutex::new(None),
+            maximum_active_tasks: 32,
+            active_tasks: Mutex::new(None),
+            executing: Mutex::new(BTreeSet::new()),
+            admission_closed: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Bounds accepted unfinished starts across all workflows on this daemon.
+    /// Existing retained starts keep their ownership when reopening with a tighter bound.
+    ///
+    /// # Errors
+    /// Refuses zero or a bound above 65,536 tasks.
+    pub fn with_maximum_active_tasks(mut self, maximum: u32) -> Result<Self, RuntimeError> {
+        if maximum == 0 || maximum > 65_536 {
+            return Err(RuntimeError::Scheduling(
+                "global task concurrency must be 1..=65,536".into(),
+            ));
+        }
+        self.maximum_active_tasks = maximum;
+        Ok(self)
+    }
+
+    fn active_task_count(&self) -> Result<u64, RuntimeError> {
+        let mut active = self
+            .active_tasks
+            .lock()
+            .map_err(|_| RuntimeError::Scheduling("task occupancy lock unavailable".into()))?;
+        if let Some(count) = *active {
+            return Ok(count);
+        }
+        let mut count = 0_u64;
+        let mut cursor = None;
+        loop {
+            let page = self.store.workflows(cursor.as_deref(), 200)?;
+            for snapshot in page.items {
+                let record = self.require_workflow(&snapshot.workflow)?;
+                count = count.checked_add(active_starts(&record)?).ok_or_else(|| {
+                    RuntimeError::Scheduling("global task occupancy overflow".into())
+                })?;
+            }
+            cursor = page.next;
+            if cursor.is_none() {
+                break;
+            }
+        }
+        *active = Some(count);
+        Ok(count)
+    }
+
+    /// Closes new admission and scheduling while accepted reports and stop requests remain writable.
+    /// Worker shutdown separately decides whether already frozen starts drain or remain for recovery.
+    pub fn begin_shutdown(&self) {
+        self.admission_closed
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn is_closed(&self) -> bool {
+        self.admission_closed
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Reads current task state and verifies the discovery envelope matches its document.
@@ -216,7 +283,11 @@ impl TaskRuntime {
                     || record.id != snapshot.workflow
                     || record.generation != snapshot.generation
                     || record.owner_actor != snapshot.owner_actor
+                    || record.title != snapshot.title
+                    || record.description != snapshot.description
+                    || record.updated_at != snapshot.updated_at
                     || entered_invocations(&record) != snapshot.entered_invocations
+                    || managed_executions(&record) != snapshot.managed_executions
                 {
                     return Err(RuntimeError::InvalidHistory(
                         "task workflow envelope differs from its durable document".into(),
@@ -243,16 +314,48 @@ impl TaskRuntime {
             .values()
             .filter(|task| !task.state.is_settled())
             .count();
-        let reserved_bytes = u64::try_from(pending)
-            .ok()
-            .and_then(|count| count.checked_mul(2 * 1024 * 1024))
-            .ok_or_else(|| {
-                RuntimeError::InvalidTransition("task settlement reservation overflow".into())
-            })?;
-        let reserved_receipts = u32::try_from(pending).map_err(|_| {
-            RuntimeError::InvalidTransition("task control reservation overflow".into())
-        })?;
-        Ok(self.store.commit_workflow(WorkflowCommit {
+        let reserved_bytes = capacity::remaining(record)?;
+        let document = serde_json::to_value(record)?;
+        let document_bytes = u64::try_from(serde_json::to_vec(&document)?.len())
+            .map_err(|e| RuntimeError::InvalidTransition(e.to_string()))?;
+        if document_bytes
+            .checked_add(reserved_bytes)
+            .is_none_or(|bytes| bytes > milkdrift_persistence::MAX_WORKFLOW_DOCUMENT_BYTES as u64)
+        {
+            return Err(RuntimeError::InvalidTransition("workflow document cannot reserve its remaining start, observation and settlement records".into()));
+        }
+        let reserved_receipts = u32::try_from(
+            record
+                .tasks
+                .values()
+                .filter(|task| !task.state.is_settled() && !task.stop_requested)
+                .count(),
+        )
+        .map_err(|_| RuntimeError::InvalidTransition("task control reservation overflow".into()))?;
+        // This count is a cache of committed frozen starts, rebuilt from the same store on reopen.
+        // Keeping it under the transition gate avoids rescanning every workflow on each worker poll.
+        let mut active = self
+            .active_tasks
+            .lock()
+            .map_err(|_| RuntimeError::Scheduling("task occupancy lock unavailable".into()))?;
+        let next_active = (*active)
+            .map(|count| {
+                let prior = self
+                    .workflow(&record.id)?
+                    .map(|value| active_starts(&value))
+                    .transpose()?
+                    .unwrap_or(0);
+                count
+                    .checked_sub(prior)
+                    .and_then(|count| count.checked_add(active_starts(record).ok()?))
+                    .ok_or_else(|| {
+                        RuntimeError::Scheduling(
+                            "global task occupancy contradicts durable starts".into(),
+                        )
+                    })
+            })
+            .transpose()?;
+        let outcome = self.store.commit_workflow(WorkflowCommit {
             expected_generation,
             snapshot: WorkflowSnapshot {
                 workflow: record.id.clone(),
@@ -261,13 +364,27 @@ impl TaskRuntime {
                 description: record.description.clone(),
                 owner_actor: record.owner_actor.clone(),
                 updated_at: record.updated_at,
-                document: serde_json::to_value(record)?,
+                document,
                 reserved_bytes,
                 reserved_receipts,
                 entered_invocations: entered_invocations(record),
+                managed_executions: managed_executions(record),
+                artifact_capacity: if pending == 0 {
+                    0
+                } else {
+                    u64::from(record.admitted_tasks)
+                        .checked_mul(TASK_OUTPUT_BYTES)
+                        .ok_or_else(|| {
+                            RuntimeError::InvalidTransition("artifact reservation overflow".into())
+                        })?
+                },
             },
             command,
-        })?)
+        })?;
+        if matches!(outcome, WorkflowCommitOutcome::Applied(_)) {
+            *active = next_active;
+        }
+        Ok(outcome)
     }
 
     fn advance(&self, record: &mut WorkflowRecord) -> Result<u64, RuntimeError> {
@@ -281,6 +398,48 @@ impl TaskRuntime {
     }
 }
 
+fn active_starts(record: &WorkflowRecord) -> Result<u64, RuntimeError> {
+    u64::try_from(
+        record
+            .tasks
+            .values()
+            .filter(|task| task.frozen.is_some() && !task.state.is_settled())
+            .count(),
+    )
+    .map_err(|error| RuntimeError::Scheduling(error.to_string()))
+}
+
+/// Enforceable maximum aggregate output bytes of one ordinary task.
+pub(crate) const TASK_OUTPUT_BYTES: u64 = 2_097_152;
+
+fn managed_executions(
+    record: &WorkflowRecord,
+) -> Vec<milkdrift_persistence::WorkflowManagedExecution> {
+    record
+        .tasks
+        .values()
+        .filter_map(|task| {
+            let frozen = task.frozen.as_ref()?;
+            let selection = frozen.dispatch.resolution();
+            if !selection
+                .descriptor_extensions()
+                .keys()
+                .any(|key| key.as_str() == milkdrift_capability::managed::MANAGED_BINDING_EXTENSION)
+            {
+                return None;
+            }
+            Some(milkdrift_persistence::WorkflowManagedExecution {
+                task: task.id.clone(),
+                invocation: frozen.dispatch.request().invocation().clone(),
+                accepted_generation: frozen.accepted_generation,
+                selection: selection.clone(),
+                entered: frozen.entered,
+                settled: task.state.is_settled(),
+            })
+        })
+        .collect()
+}
+
 fn entered_invocations(record: &WorkflowRecord) -> Vec<milkdrift_capability::InvocationId> {
     let mut invocations: Vec<_> = record
         .tasks
@@ -292,6 +451,38 @@ fn entered_invocations(record: &WorkflowRecord) -> Vec<milkdrift_capability::Inv
     invocations.sort();
     invocations.dedup();
     invocations
+}
+
+fn output_contract_failure(
+    definition: &milkdrift_blueprint::TaskDefinition,
+    outputs: &BTreeMap<String, milkdrift_capability::ArtifactReference>,
+) -> Option<String> {
+    for (name, declaration) in &definition.outputs {
+        let Some(reference) = outputs.get(name) else {
+            if declaration.required {
+                return Some(format!("required output {name} was not published"));
+            }
+            continue;
+        };
+        if reference
+            .size_bytes()
+            .is_none_or(|bytes| bytes > declaration.max_bytes)
+        {
+            return Some(format!(
+                "output {name} size is unknown or exceeds its declared allowance"
+            ));
+        }
+        if declaration
+            .media_type
+            .as_deref()
+            .is_some_and(|expected| reference.media_type() != Some(expected))
+        {
+            return Some(format!(
+                "output {name} media type differs from its declaration"
+            ));
+        }
+    }
+    None
 }
 
 fn update_workflow_state(workflow: &mut WorkflowRecord) {

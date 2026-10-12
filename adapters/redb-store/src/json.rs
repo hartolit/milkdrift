@@ -3,6 +3,14 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use milkdrift_persistence::PersistenceError;
 
 const MAX_INTERNAL_DOCUMENT_BYTES: usize = 8_388_608;
+
+fn document_limit(family: &str) -> usize {
+    if family == "task workflow" {
+        milkdrift_persistence::MAX_WORKFLOW_DOCUMENT_BYTES.saturating_add(2 * 1024 * 1024)
+    } else {
+        MAX_INTERNAL_DOCUMENT_BYTES
+    }
+}
 const INTERNAL_DOCUMENT_SCHEMA_VERSION: u32 = 1;
 const INTERNAL_DOCUMENT_DIGEST_DOMAIN: &[u8] = b"milkdrift.redb.internal-document.v1\0";
 
@@ -37,10 +45,11 @@ pub(crate) fn encode<T: Serialize>(
     };
     let bytes = serde_json::to_vec(&envelope)
         .map_err(|cause| PersistenceError::InvalidDocument(format!("{family}: {cause}")))?;
-    if bytes.len() > MAX_INTERNAL_DOCUMENT_BYTES {
+    let maximum = document_limit(family);
+    if bytes.len() > maximum {
         return Err(PersistenceError::Bounds {
             location: "storage_document",
-            reason: format!("{family} envelope exceeds {MAX_INTERNAL_DOCUMENT_BYTES} bytes"),
+            reason: format!("{family} envelope exceeds {maximum} bytes"),
         });
     }
     Ok(bytes)
@@ -50,9 +59,10 @@ pub(crate) fn decode<T: DeserializeOwned + Serialize>(
     bytes: &[u8],
     family: &'static str,
 ) -> Result<T, PersistenceError> {
-    if bytes.len() > MAX_INTERNAL_DOCUMENT_BYTES {
+    let maximum = document_limit(family);
+    if bytes.len() > maximum {
         return Err(PersistenceError::Corruption(format!(
-            "stored {family} exceeds {MAX_INTERNAL_DOCUMENT_BYTES} bytes"
+            "stored {family} exceeds {maximum} bytes"
         )));
     }
     let decoded: InternalDocumentEnvelope<T> = serde_json::from_slice(bytes).map_err(|cause| {

@@ -7,10 +7,8 @@
 //! protocol. A locally valid request can still ask for an unsupported endpoint feature
 //! or token allowance; [`ModelTaskRequest::new`] explains those choices.
 //!
-//! Separately, the runtime uses a blueprint task's context policy to construct a
-//! [`ContextManifest`]. It records evidence selected for an attempt, omitted sources,
-//! and byte/provenance facts, and survives retries without selecting newer
-//! history. This contract also serves process tasks. [`ModelResponse`] preserves final
+//! The runtime freezes explicit named inputs and their provenance before model entry.
+//! [`ModelResponse`] preserves final
 //! text, structured output, tool-call data, finish reason, and reported usage; a returned
 //! tool call is data, not an instruction this crate executes.
 //!
@@ -41,7 +39,6 @@
 //! # Ok::<(), ModelContractError>(())
 //! ```
 
-mod context;
 mod continuation;
 pub use continuation::{
     CONTINUATION_MEDIA_TYPE, ContinuationHistory, ContinuationTurn, MAX_CONTINUATION_DEPTH,
@@ -49,14 +46,9 @@ pub use continuation::{
 mod document;
 mod task;
 
-pub use context::{
-    AuthorityFact, ContextEvidenceReference, ContextInclusionReason, ContextManifest,
-    ContextManifestDigest, ContextManifestEntry, ContextManifestReference, ContextOmission,
-    ContextOmissionReason, ContextProducerFact, ContextSemanticKind, ContextSource, ContextTotals,
-};
 pub use document::{
-    ContextManifestDocument, ContinuationHistoryDocument, MAX_MODEL_DOCUMENT_BYTES,
-    ModelContractError, ModelResponseDocument, ModelTaskRequestDocument,
+    ContinuationHistoryDocument, MAX_MODEL_DOCUMENT_BYTES, ModelContractError,
+    ModelResponseDocument, ModelTaskRequestDocument,
 };
 pub use task::{
     ContentPart, FinishReason, MAX_MODEL_OUTPUT_UNITS, Message, MessageRole, ModelResponse,

@@ -101,7 +101,6 @@ pub(crate) const fn public_status(record: &PeerExecutionRecord) -> RemoteExecuti
             RemoteExecutionStatus::Accepted
         }
         PeerExecutionPhase::Entered { .. }
-        | PeerExecutionPhase::AwaitingWorkflow { .. }
         | PeerExecutionPhase::CancellationRequested {
             evidence: Some(_), ..
         } => RemoteExecutionStatus::Running,

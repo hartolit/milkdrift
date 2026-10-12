@@ -1,96 +1,63 @@
 # milkdrift-persistence
 
-This package defines what must be saved together so a runtime decision can be recovered.
-[Runtime](../runtime/README.md) decides which events a command produces; storage adapters
-implement the synchronous traits here. Change this package when callers and storage need a
-different durable contract, not to add database mechanics.
+This package defines the facts that must be saved together so accepted work survives reopening.
+[Runtime](../runtime/README.md) owns task meaning and legal state changes; storage adapters implement
+these synchronous ports without scheduling tasks or interpreting model output.
+
+## Accept work and recover its reply
 
 Ordinary daemon tasks use [`WorkflowStore`](src/task.rs). Runtime supplies one bounded document
-containing definitions, frozen starts and retained results. The store atomically saves that document,
-discovery fields, its compare-and-swap generation, capacity reservation and the exact actor-scoped
-request receipt. The runtime remains responsible for legal state changes; storage does not schedule
-tasks or interpret model output. Discovery does not require a caller to retain a workflow ID: the
-public owner filters the bounded storage pages against current grants.
+containing retained definitions, frozen starts, observations and results. A compare-and-swap commit
+saves that document together with discovery metadata, capacity reservations and the exact
+actor-scoped request receipt. Typed entry and managed-execution facts let storage enforce artifact
+provenance and resource holds in the same transaction, without becoming a second task state machine.
 
-Task receipt lookup requires the authenticated actor and original request key. Identical canonical
-bytes return the saved result before stale-generation or capacity checks; different bytes conflict.
-Every accepted task keeps space for its remaining settlement and mandatory controls. Exhaustion
-refuses admission while those reservations remain available. Native directory claims use the
-separate [`NativePathClaimStore`](src/native_paths.rs): only the capability host captures physical
-identities, and claims survive loss of the host until runtime settlement or authorized reconciliation.
+Receipt lookup requires the authenticated actor and original request key. Identical canonical bytes
+return the saved result before stale-generation or capacity checks; changed bytes conflict. An I/O
+error may arrive after commit. Read the receipt or redeliver the exact request to discover acceptance;
+an error alone does not establish rollback or prove that an external action did not occur.
 
-## Commit a command and recover its reply
+Each accepted task reserves its remaining document growth, output allowance and mandatory stop
+receipt. A server-issued stop identity can consume its reserved slot once. Other submissions cannot
+spend that slot, and arbitrary keys do not create additional emergency capacity. History and accepted
+keys are never evicted to admit new work. The storage usage query exposes the same counters used by
+admission, including pending artifact writes and retained content bytes.
 
-Accepting a new run must save its creation event, root scope, initial values, usage, discovery
-summary, and response together. Otherwise restart could find a run without its inputs, or a
-caller could lose the response to work already accepted.
+Discovery uses bounded pages and requires no previously retained workflow ID. The public boundary
+filters those pages against current grants. Storage cursors and recorded actor identities do not
+grant access, and corruption remains an error rather than an empty result.
 
-Runtime packages that decision as an [`AtomicRunCommitRequest`](src/journal/commit.rs).
-Its [`CommandReceipt`](src/journal/receipt.rs) binds command/run/actor identity to canonical
-intent and retains a complete audit document. The request constructor checks that events,
-result, workspace mutations, and derived accounting agree. `RunJournal::commit_command`
-then checks current storage and saves the whole transaction.
+## Select the durable owner
 
-```text
-planned command -> receipt + result + events + workspace/accounts + indexes
-                                              |
-                                         atomic commit
-                                              |
-                               saved result survives a lost reply
-```
-
-A matching saved receipt returns `Replayed` before a new delivery's optimistic sequence is
-checked. Changed intent under the same identity conflicts. A new command returns `Committed`;
-inspect its disposition because a durable rejection has a response but no semantic events.
-The runtime receipt excludes delivery time and sequence from intent. The daemon's
-[`ApplicationCommandStore`](src/application.rs) separately binds the complete canonical
-external request to its original response.
-
-An I/O error can arrive after commit. Preserve the command identity and intent, read
-`RunJournal::command_result` and compare fingerprints, or redeliver the same request.
-A read failure does not prove absence. A sequence, usage, lease, or account conflict requires
-the runtime to reread state and reconsider its plan. A run with a writable artifact reservation
-may be busy until that publication commits or aborts.
-
-Artifact bytes are published before a journal event can reference them. An optional snapshot
-is saved after the append that commits its payload commitment. Neither operation can replace
-command history. The [redb adapter](../../adapters/redb-store/README.md) implements these
-transactions; `RunJournal` owns the detailed obligations for another implementation.
-
-## Select the port for the operation
-
-| Reader or writer's task | Contract and consequence |
+| Operation | Contract and consequence |
 | --- | --- |
-| Store a definition | [`RevisionStore`](src/revision.rs) verifies immutable bytes and ancestry. Storing a revision does not adopt it into a run. |
-| Read history or discover work | [`RunQueryStore`](src/journal/query.rs) supplies verified event pages and derived discovery. Follow continuations even after an empty filtered page. |
-| Read logical workspace state | [`WorkspaceStore`](src/journal/query.rs) resolves exact scopes and value versions. Writes accompany their owning journal events. |
-| Publish or read artifact content | [`ArtifactStore`](src/artifact.rs) owns resumable chunks, verified publication, accounting, and bounded reads. Authorization proof and content integrity are separate requirements. |
-| Reserve cumulative resources | [Controller accounts](src/controller_account.rs) change with entry/terminal events or artifact publication. Read totals through `ControllerAccountStore`; do not maintain a separate counter. |
-| Accelerate recovery | [`SnapshotStore`](src/snapshot.rs) stores optional checkpoints verified against journal commitments. Invalid optional checkpoints can be discarded for replay. |
-| Retain external replies, layouts, proposals, or audit | [Application ports](src/application.rs) keep exact receipts, independent presentation state, derived proposal discovery, and bounded audit. |
-| Save remote acceptance and worker ownership | [`PeerExecutionStore`](src/peer.rs) binds canonical requests, claims, observations, and retained dispositions. The serving peer owns these facts separately from the origin run. |
-| Remember observed time | [`ClockWatermarkStore`](src/clock.rs) atomically compares an observation with durable high-water evidence. A rejected rollback must not be used as current time. |
-| Inspect storage integrity | [`StorageAdmin`](src/admin.rs) exposes schema, sampled health, and resumable read-only scrubs. Health is not a complete historical scan. |
+| Accept or change ordinary work | [`WorkflowStore`](src/task.rs) saves one generation and its exact command result atomically. |
+| Publish or read artifact content | [`ArtifactStore`](src/artifact.rs) owns resumable chunks, verified publication, accounting and bounded reads. Content integrity and read authorization are separate requirements. |
+| Hold a native directory | [`NativePathClaimStore`](src/native_paths.rs) atomically claims complete physical path sets; equal or nested writers conflict, while readers may share. |
+| Protect a managed installation | [Managed resource ports](src/managed.rs) preserve frozen descriptor bindings, active uses, physical fences, independent evaluation evidence and update/removal guards. |
+| Save remote acceptance and worker ownership | [`PeerExecutionStore`](src/peer.rs) retains canonical requests, claims, observations and compact terminal dispositions independently of any originating workflow. |
+| Retain security audit | [`SecurityAuditStore`](src/security.rs) preserves a bounded ordered window with monotonic sequence identities. |
+| Remember observed time | [`ClockWatermarkStore`](src/clock.rs) compares observations against durable high-water evidence; a rejected rollback cannot be used as current time. |
+| Inspect storage | [`StorageAdmin`](src/admin.rs) exposes schema, sampled health and resumable integrity scans. A health sample is not a full historical scan. |
 
-Persistence queries are internal storage ports. Authentication and authority filtering belong
-to their boundary callers; a cursor or stored value is not a grant. Corrupt evidence remains
-an error rather than an empty result. Pages bound individual work and memory, not the total
-time required to traverse a store.
+Native claims do not expire on elapsed time or restart. The host captures canonical physical roots;
+runtime releases claims only after durable settlement. An uncertain writer continues to block
+conflicting work. Managed holds likewise distinguish physical stop evidence from a workflow's logical
+outcome; neither a cancellation request nor an uncertain outcome proves that a process stopped.
 
-Retention follows the owning family. Application receipt archival preserves exact requests and
-responses in cold storage; peer tombstones retain acceptance and final disposition with less
-observation detail. Audit may evict its oldest rows. Runtime projection compaction and optional
-snapshot discard leave journal history intact. Artifact cleanup acts only under its separate
-ownership and retention checks.
+Artifact publication saves its intent before accepting chunks and verifies content before exposing a
+committed reference. Task artifacts require the owning workflow's durable entry proof. Cumulative
+output ceilings cover committed and pending output, while global capacity includes unrelated uploads
+and retained content. Aborting a publication releases its reservation without manufacturing a result.
+
+Peer tombstones retain acceptance and final disposition while eligible detailed observations retire.
+Audit may evict its oldest rows. Artifact cleanup follows independent ownership and retention checks.
+These mechanisms do not remove accepted ordinary task history or request identities.
 
 ## Verify a change
 
-This package needs no database setup or feature selection to construct documents. Run
-`cargo test -p milkdrift-persistence --all-features` for their contracts, and use the
-redb contract suite to verify implementation obligations. [Development workflow](../../docs/development/workflow.md)
-owns focused commands and the checks required for each kind of change.
-
-Failure/reopen tests establish the tested software boundaries. They do not establish filesystem
-power-loss behavior or exactly-once external effects: command acceptance cannot prove an external
-outcome. Runtime interprets durable entry, terminal, cancellation, and uncertainty observations
-before permitting another attempt.
+Run `cargo test -p milkdrift-persistence --all-features` for contract checks and the
+[redb suite](../../adapters/redb-store/README.md) for durable implementation obligations.
+The [development workflow](../../docs/development/workflow.md) owns focused commands and required gates.
+Failure/reopen tests establish tested software boundaries, not filesystem power-loss behavior or
+exactly-once external effects.

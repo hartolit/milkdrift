@@ -1,7 +1,7 @@
 use super::*;
 use crate::config::{
-    AdapterConfig, ApplicationReceiptConfig, DaemonConfig, PeerHostConfig, RuntimeHostConfig,
-    SecretSourceConfig, ShutdownConfig,
+    AdapterConfig, DaemonConfig, PeerHostConfig, RuntimeHostConfig, SecretSourceConfig,
+    ShutdownConfig,
 };
 use std::{collections::BTreeMap, fs, net::SocketAddr};
 
@@ -33,10 +33,6 @@ fn config(root: &std::path::Path, token: &std::path::Path) -> DaemonConfig {
         adapters: AdapterConfig::default(),
         peers: PeerHostConfig::default(),
         shutdown: ShutdownConfig::default(),
-        application_receipts: ApplicationReceiptConfig {
-            hot_receipt_bound: 100,
-            archive_batch_size: 10,
-        },
         security_audit_record_bound: 100,
     }
 }

@@ -45,7 +45,7 @@ newer history nor removes omission metadata to make the old decision appear safe
 requires a distinct execution. A daemon blocked during ordinary startup cannot serve commands.
 [ADR 0035](0035-authorized-recovery-controls.md) adds an explicitly selected authenticated recovery
 mode for reviewed prospective repair; it does not rewrite manifests or relax this execution check.
-The [daemon operations guide](../operations/daemon.md#authorized-recovery-controls) owns the procedure
+The [daemon operations guide at the retained checkpoint](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/docs/operations/daemon.md#authorized-recovery-controls) records the procedure
 and remaining effect-resolution requirements.
 
 When claiming a `model.generate` invocation of a model capability, runtime reads its supplied
@@ -87,10 +87,10 @@ may require an operator decision even when its reference happened to be safe; gr
 policy version would invent proof. No schema migration, provider session support, or process-session
 continuation is claimed.
 
-[Builder tests](../../crates/runtime/tests/causal_context.rs) and
-[production context tests](../../crates/runtime/tests/structured_runtime/context_enforcement.rs)
+[Builder tests](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/tests/causal_context.rs) and
+[production context tests](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/tests/structured_runtime/context_enforcement.rs)
 cover selection, persisted omissions, old-writer schedules, and store-reopen retries. The
 [runtime/host/local-HTTP matrix](../../adapters/model-provider/tests/mock_endpoints/runtime_session.rs)
-checks session agreement and provider refusal. [Sequence tests](../../crates/prompt-sequence/tests/sequence.rs)
+checks session agreement and provider refusal. [Sequence tests](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/prompt-sequence/tests/sequence.rs)
 isolate the label's identity effect and preserve historical decoding. These are deterministic
 software checks, not real-provider interoperability evidence.

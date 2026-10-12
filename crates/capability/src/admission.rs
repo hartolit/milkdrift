@@ -2,75 +2,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::ContractError;
 
-/// Catalog projection of a publication's immutable cumulative allowance. The publishing owner
-/// validates this projection; remote adapters still require serving-side prepared admission.
-pub const PUBLISHED_ALLOWANCE_EXTENSION: &str = "org.milkdrift/published-allowance.v1";
-
-/// Maximum retained publication ancestry, bounding local and delegated invocation metadata.
-pub const MAX_PUBLICATION_DEPTH: u16 = 32;
-
-/// One enclosing published invocation and its accepted ceiling on the complete call chain.
-/// Descendants carry this fact across hosts; choosing a more permissive method cannot reset it.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct PublicationAncestor {
-    capability: crate::CapabilityId,
-    generation: u64,
-    maximum_depth: u16,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PublicationAncestorWire {
-    capability: crate::CapabilityId,
-    generation: u64,
-    maximum_depth: u16,
-}
-
-milkdrift_contracts::deserialize_via!(PublicationAncestor, PublicationAncestorWire, |wire| {
-    Self::new(wire.capability, wire.generation, wire.maximum_depth)
-});
-
-impl PublicationAncestor {
-    /// Retain the exact enclosing generation and its inclusive call-chain depth ceiling.
-    ///
-    /// # Errors
-    /// Rejects generation zero or a depth outside `1..=MAX_PUBLICATION_DEPTH`.
-    pub fn new(
-        capability: crate::CapabilityId,
-        generation: u64,
-        maximum_depth: u16,
-    ) -> Result<Self, ContractError> {
-        if generation == 0 || maximum_depth == 0 || maximum_depth > MAX_PUBLICATION_DEPTH {
-            return Err(ContractError::InvalidContract(
-                "invalid publication ancestor generation or depth ceiling".to_owned(),
-            ));
-        }
-        Ok(Self {
-            capability,
-            generation,
-            maximum_depth,
-        })
-    }
-
-    /// Capability whose recursion remains forbidden in descendants.
-    #[must_use]
-    pub fn capability(&self) -> &crate::CapabilityId {
-        &self.capability
-    }
-
-    /// Immutable enclosing implementation generation.
-    #[must_use]
-    pub const fn generation(&self) -> u64 {
-        self.generation
-    }
-
-    /// Inclusive ceiling on the entire chain, including this ancestor and all descendants.
-    #[must_use]
-    pub const fn maximum_depth(&self) -> u16 {
-        self.maximum_depth
-    }
-}
-
 /// Counts of ordinary process and model entries performed within one composed invocation.
 /// A wrapper's own entry is accounted separately by its frozen capability category.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
@@ -237,7 +168,7 @@ impl AdmissionUnit {
 
 /// Resource maxima an adapter can enforce for one request before external entry.
 ///
-/// Runtime uses these facts to reserve controller resources before committing entry intent.
+/// Runtime uses these facts to reserve cumulative workflow resources before committing entry intent.
 /// Keep a missing bound [`AdmissionBound::Unknown`]; descriptor estimates and eventual usage
 /// observations cannot substitute for a limit the adapter can enforce.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]

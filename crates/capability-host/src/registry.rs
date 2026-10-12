@@ -12,7 +12,6 @@ use milkdrift_capability::{
 use thiserror::Error;
 
 mod execution;
-mod published;
 pub(crate) use execution::PreparedHostInvocation;
 mod lifecycle;
 mod selection;
@@ -248,8 +247,6 @@ struct RegistryState {
 
 struct HostCore {
     native_paths: std::sync::OnceLock<crate::native_paths::NativePathClaims>,
-    published: Mutex<Option<std::sync::Weak<dyn crate::PublishedWorkflowContinuation>>>,
-    published_serving: Mutex<Option<std::sync::Weak<crate::PeerService>>>,
     config: HostConfig,
     policy: CapabilitySelectionPolicy,
     state: Mutex<RegistryState>,

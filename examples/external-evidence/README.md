@@ -10,9 +10,13 @@ working credential, executable identity, or provider model selection.
   compatibility with a particular agent release or authentication setup.
 - Replace the endpoint URL, allowlisted host, exact model alias, feature claims, and secret
   reference. Use `http://127.0.0.1:PORT`, `no_auth`, and `local_development: true` only for a real
-  loopback model server. Remote endpoints require HTTPS.
+  loopback model server. Remote endpoints require HTTPS. Declare enforceable token/output and
+  monetary bounds for that exact service; unknown counting or billing cannot reserve ordinary task
+  execution. The harness uses a fresh nonstream model task with a 4096 output-unit allowance.
 - Copy a template outside the repository before replacing placeholders. Do not commit the rendered
   profile if it reveals private endpoint identity or operational configuration.
 
 The complete command and interpretation rules are in
 [`docs/guides/external-evidence.md`](../../docs/guides/external-evidence.md).
+The schema-2 report records daemon task identities, captured inputs, explicit corrective adoption
+and retained artifact digests. Fixture mode tests that path without qualifying a real integration.

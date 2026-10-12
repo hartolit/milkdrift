@@ -166,18 +166,22 @@ fn executor_documents_round_trip_with_golden_bytes() -> Result<(), Box<dyn std::
     let request = InvocationRequestDocument::new(invocation_request()?);
     assert_golden(
         request.to_canonical_json()?,
-        include_bytes!("fixtures/invocation-request-v2.json"),
+        include_bytes!("fixtures/invocation-request-v3.json"),
         "invocation request",
     )?;
     assert_eq!(
         InvocationRequestDocument::from_json(&request.to_canonical_json()?)?,
         request
     );
-    let migrated = InvocationRequestDocument::from_json(include_bytes!(
-        "fixtures/invocation-request-v1.json"
-    ))?;
-    assert_eq!(migrated.schema_version(), 2);
-    assert_eq!(migrated.body(), request.body());
+    for obsolete in [
+        include_bytes!("fixtures/invocation-request-v1.json").as_slice(),
+        include_bytes!("fixtures/invocation-request-v2.json").as_slice(),
+    ] {
+        assert!(InvocationRequestDocument::from_json(obsolete).is_err());
+    }
+    let mut unsupported = serde_json::to_value(&request)?;
+    unsupported["request"]["context_manifest"] = serde_json::Value::Null;
+    assert!(InvocationRequestDocument::from_json(&serde_json::to_vec(&unsupported)?).is_err());
 
     let event = InvocationEventDocument::new(invocation_event()?);
     assert_golden(

@@ -6,14 +6,12 @@
 
 use std::{env, io::IsTerminal as _, path::PathBuf, process::ExitCode, time::Duration};
 
-use clap::{Args, Parser, Subcommand, ValueEnum, error::ErrorKind};
-use milkdrift_control_protocol::EvidenceRef;
+use clap::{Args, Parser, Subcommand, error::ErrorKind};
 use url::Url;
 
 mod command;
 mod error;
 mod input;
-mod learning_args;
 mod output;
 mod session;
 mod workflow_args;
@@ -48,7 +46,7 @@ struct Cli {
     #[arg(long, global = true)]
     json: bool,
     /// Hard wall-clock bound including connection, input, retries and observations (default 60).
-    /// Required explicitly for run wait and noninteractive follow; maximum 86400 seconds.
+    /// Required explicitly for invocation wait and noninteractive follow; maximum 86400 seconds.
     #[arg(long, global = true, value_parser = clap::value_parser!(u64).range(1..=86_400))]
     timeout_secs: Option<u64>,
     /// Maximum reconnects across an observation command.
@@ -63,35 +61,14 @@ struct Cli {
     /// Bounded durable command reason.
     #[arg(long, global = true, default_value = "operator CLI command")]
     reason: String,
-    /// Optional optimistic run-sequence guard.
-    #[arg(long, global = true)]
-    expected_sequence: Option<u64>,
-    /// Optional exact semantic revision guard.
-    #[arg(long, global = true)]
-    expected_revision: Option<String>,
-    /// Durable external evidence reference in KIND=ID form; repeat at most 32 times.
-    #[arg(
-        long,
-        global = true,
-        value_name = "KIND=ID",
-        value_parser = parse_evidence_reference
-    )]
-    evidence: Vec<EvidenceRef>,
     #[command(subcommand)]
     command: TopCommand,
 }
 
 #[derive(Subcommand)]
 enum TopCommand {
-    /// Create, edit and save ordinary model workflows through the daemon.
+    /// Create, edit and inspect daemon-owned task workflows through the daemon.
     Workflow(workflow_args::WorkflowArgs),
-    /// Select evidence, declare a comparison, submit a candidate, compare, promote or inspect.
-    Learning(learning_args::LearningArgs),
-    /// Publish and administer exact reusable workflow capabilities on this host.
-    Method {
-        #[command(subcommand)]
-        command: MethodCommand,
-    },
     /// Approved persistent installation lifecycle, shared with workflow capabilities.
     Resource(ResourceArgs),
     /// Independent execution on the explicitly selected daemon endpoint.
@@ -103,38 +80,6 @@ enum TopCommand {
     Daemon {
         #[command(subcommand)]
         command: DaemonCommand,
-    },
-    /// Immutable blueprint and revision operations.
-    Blueprint {
-        #[command(subcommand)]
-        command: BlueprintCommand,
-    },
-    /// Ordered implementation prompt-sequence operations.
-    Sequence {
-        #[command(subcommand)]
-        command: SequenceCommand,
-    },
-    /// Durable run operations.
-    Run {
-        #[command(subcommand)]
-        command: RunCommand,
-    },
-    /// Durable bounded controller lifecycle operations.
-    Controller {
-        #[command(subcommand)]
-        command: ControllerCommand,
-    },
-    /// Inspect one node execution.
-    Node(NodeInspect),
-    /// Inspect or resolve one exact attempt.
-    Attempt {
-        #[command(subcommand)]
-        command: AttemptCommand,
-    },
-    /// Workflow proposal operations.
-    Proposal {
-        #[command(subcommand)]
-        command: ProposalCommand,
     },
     /// Live capability generations.
     Capability {
@@ -155,11 +100,6 @@ enum TopCommand {
     Artifact {
         #[command(subcommand)]
         command: ArtifactCommand,
-    },
-    /// Presentation-only workflow layout.
-    Layout {
-        #[command(subcommand)]
-        command: LayoutCommand,
     },
 }
 
@@ -321,124 +261,6 @@ enum DaemonCommand {
     Authority,
 }
 
-#[derive(Subcommand)]
-enum SequenceCommand {
-    /// Parse and compile a JSON or Markdown sequence without storing it.
-    Validate { file: PathBuf },
-    /// Compile locally to an ordinary inspectable blueprint document in a new file.
-    Compile {
-        file: PathBuf,
-        #[arg(long)]
-        author: String,
-        #[arg(long)]
-        output: PathBuf,
-    },
-    /// Parse, compile, and store an ordinary immutable blueprint revision.
-    Import { file: PathBuf },
-    /// Inspect the exact generated ordinary blueprint revision.
-    Show { revision: String },
-    /// Show the generated revision and current run stage frontier together.
-    Status { run: String, revision: String },
-    /// Inspect every current node occurrence belonging to one imported stage.
-    Stage { run: String, stage: String },
-    /// Submit a bounded prospective remediation/re-verification/re-review revision.
-    Remediate {
-        /// Original sequence document used for the exact stage contract.
-        sequence_file: PathBuf,
-        /// Paused live run.
-        run: String,
-        /// Exact current base revision.
-        revision: String,
-        /// Failed imported stage identity.
-        stage: String,
-        /// Nonzero bounded remediation generation.
-        #[arg(long)]
-        generation: u16,
-        /// Stable proposal identity.
-        #[arg(long)]
-        proposal: String,
-        /// Fresh remediation prompt Markdown/text file.
-        #[arg(long)]
-        prompt: PathBuf,
-    },
-}
-
-#[derive(Subcommand)]
-enum BlueprintCommand {
-    /// Create an immutable method from an ordered JSON array of structured mutations.
-    Create {
-        file: PathBuf,
-        #[arg(long)]
-        workflow: String,
-        #[arg(long)]
-        author: String,
-        #[arg(long)]
-        output: PathBuf,
-    },
-    /// Validate an operator-owned effect policy and print its exact agreement reference.
-    EffectPolicy { file: PathBuf },
-    /// Seal an immutable agreement around a local method and write a new revision.
-    Govern {
-        /// Complete ungoverned revision document.
-        file: PathBuf,
-        /// Strict adaptation scope JSON document.
-        #[arg(long)]
-        scope: PathBuf,
-        /// Logical agreement name.
-        #[arg(long)]
-        name: String,
-        /// Exact operator-owned effect policy digest.
-        #[arg(long)]
-        effect_policy: String,
-        /// Revision author; this label grants no authority.
-        #[arg(long)]
-        author: String,
-        /// New output file; existing files are never overwritten.
-        #[arg(long)]
-        output: PathBuf,
-    },
-    /// Validate one exact versioned blueprint JSON document without storing it.
-    Validate { file: PathBuf },
-    /// Import one exact versioned blueprint JSON document.
-    Import { file: PathBuf },
-    /// Inspect one immutable revision.
-    Show {
-        revision: String,
-        /// Emit the exact canonical stored document to stdout without a presentation wrapper.
-        #[arg(long, conflicts_with_all = ["output", "json"])]
-        document: bool,
-        /// Write the exact canonical stored document to a new file.
-        #[arg(long, value_name = "FILE")]
-        output: Option<PathBuf>,
-    },
-    /// Export the exact canonical stored blueprint into a new explicit file.
-    Export {
-        revision: String,
-        #[arg(long)]
-        output: PathBuf,
-    },
-    /// List one bounded stable revision page.
-    List(PageArgs),
-    /// Compare two semantic revisions.
-    Diff { from: String, to: String },
-}
-
-#[derive(Args)]
-struct PageArgs {
-    /// Maximum returned items; no implicit auto-pagination.
-    #[arg(long, default_value_t = 100)]
-    limit: u32,
-    /// Opaque continuation from an earlier response.
-    #[arg(long)]
-    cursor: Option<String>,
-    /// Optional workflow filter.
-    #[arg(long)]
-    workflow: Option<String>,
-    /// Optional run state filter.
-    #[arg(long)]
-    state: Option<String>,
-}
-
 #[derive(Args)]
 struct StreamArgs {
     /// Opaque stream continuation from an earlier observation.
@@ -447,291 +269,6 @@ struct StreamArgs {
     /// Follow resumable observations after the initial read.
     #[arg(long)]
     follow: bool,
-}
-
-const DEFAULT_RUN_POLL_MS: u64 = 250;
-const DEFAULT_RUN_MAX_POLLS: u32 = 1000;
-
-#[derive(Subcommand)]
-enum RunCommand {
-    /// Create and start from one exact immutable revision.
-    Start {
-        run: String,
-        workflow: String,
-        revision: String,
-        /// JSON array of named uploaded artifact references.
-        #[arg(long)]
-        inputs: Option<PathBuf>,
-        /// Upload a UTF-8 text file as a named restricted input; may be repeated.
-        #[arg(long, value_name = "NAME=FILE")]
-        input: Vec<String>,
-        /// New private file retaining the exact request before submission.
-        #[arg(long)]
-        request_file: PathBuf,
-        /// Save the request without starting work; reconnect submits it later.
-        #[arg(long, conflicts_with = "wait")]
-        prepare_only: bool,
-        /// Observe completion after acceptance; requires explicit --timeout-secs.
-        #[arg(long)]
-        wait: bool,
-    },
-    /// Recover the exact saved start without rereading input files or choosing new identities.
-    Reconnect {
-        file: PathBuf,
-        /// Observe completion after recovering acceptance; requires explicit --timeout-secs.
-        #[arg(long)]
-        wait: bool,
-    },
-    /// List one bounded stable run page.
-    List(PageArgs),
-    /// Inspect compact current state.
-    Show { run: String },
-    /// Show progress, required checks, final output and permitted next operations.
-    Result {
-        run: String,
-        /// Include model choice, limits, input selection, usage and failure evidence.
-        #[arg(long)]
-        details: bool,
-        /// Download a declared final output to a new file with digest verification.
-        #[arg(long, requires = "output")]
-        field: Option<String>,
-        #[arg(long, requires = "field")]
-        output: Option<PathBuf>,
-    },
-    /// Wait for a terminal outcome with an explicit global --timeout-secs deadline.
-    Wait {
-        run: String,
-        #[arg(long, value_enum, default_value_t = TerminalFilter::Any)]
-        terminal: TerminalFilter,
-        #[arg(long, default_value_t = DEFAULT_RUN_POLL_MS, value_parser = clap::value_parser!(u64).range(10..=60_000))]
-        poll_ms: u64,
-        #[arg(long, default_value_t = DEFAULT_RUN_MAX_POLLS, value_parser = clap::value_parser!(u32).range(1..=100_000))]
-        max_polls: u32,
-    },
-    /// Pause new work.
-    Pause { run: String },
-    /// Resume paused work.
-    Resume { run: String },
-    /// Request durable cancellation.
-    Cancel { run: String },
-    /// Deliver a typed signal.
-    Signal {
-        run: String,
-        #[arg(long)]
-        signal_id: String,
-        #[arg(long)]
-        signal_type: String,
-        #[arg(long)]
-        correlation: Option<String>,
-        #[arg(long)]
-        broadcast: bool,
-        /// JSON signal payload.
-        #[arg(long, default_value = "null")]
-        payload: String,
-    },
-    /// Read or follow the projected timeline.
-    Timeline {
-        run: String,
-        #[arg(long, default_value_t = 100)]
-        limit: u32,
-        #[arg(long)]
-        cursor: Option<String>,
-        #[arg(long)]
-        follow: bool,
-    },
-}
-
-#[derive(Clone, Copy, Debug, ValueEnum)]
-enum TerminalFilter {
-    Any,
-    Succeeded,
-    Failed,
-    Cancelled,
-}
-
-impl TerminalFilter {
-    fn matches(self, terminal: &str) -> bool {
-        match self {
-            Self::Any => true,
-            Self::Succeeded => terminal == "succeeded",
-            Self::Failed => terminal == "failed",
-            Self::Cancelled => terminal == "cancelled",
-        }
-    }
-}
-
-#[derive(Subcommand)]
-enum MethodCommand {
-    /// Prepare a reviewed publication using the daemon's agreement and configured grant facts.
-    Prepare {
-        file: PathBuf,
-        #[arg(long)]
-        output: PathBuf,
-    },
-    /// Validate and publish an exact method document; the next generation promotes a replacement.
-    Publish {
-        file: PathBuf,
-        #[arg(long)]
-        expected_previous_version: Option<u64>,
-    },
-    /// Inspect a protected exact implementation; ordinary discovery is invocation catalog.
-    Show {
-        capability: String,
-        #[arg(long)]
-        generation: u64,
-    },
-    /// Page retained generations with an explicit stable continuation identity.
-    List {
-        #[arg(long)]
-        after_capability: Option<String>,
-        #[arg(long)]
-        after_generation: Option<u64>,
-        #[arg(long, default_value_t = 32)]
-        limit: u32,
-    },
-    /// Close new selection while allowing accepted work to settle.
-    Retire {
-        capability: String,
-        #[arg(long)]
-        generation: u64,
-        #[arg(long)]
-        expected_version: u64,
-    },
-}
-
-#[derive(Subcommand)]
-enum ControllerCommand {
-    /// Inspect exact progress, limits, checkpoint, and reached-bound provenance.
-    Status {
-        run: String,
-        controller_execution: String,
-    },
-    /// Continue one exact human checkpoint under the current actor grant.
-    Continue {
-        run: String,
-        controller_execution: String,
-        decision_id: String,
-    },
-}
-
-#[derive(Args)]
-struct NodeInspect {
-    /// Run aggregate.
-    run: String,
-    /// Logical node-execution identity.
-    execution: String,
-}
-
-#[derive(Args)]
-struct AttemptInspect {
-    /// Run aggregate.
-    run: String,
-    /// Immutable attempt identity.
-    attempt: String,
-}
-
-#[derive(Subcommand)]
-enum AttemptCommand {
-    /// Inspect one exact current or historical attempt.
-    Inspect(AttemptInspect),
-    /// Ask the daemon to resolve retained or uncertain external work.
-    Resolve(AttemptResolve),
-}
-
-#[derive(Args)]
-struct AttemptResolve {
-    /// Run aggregate.
-    run: String,
-    /// Immutable retained or uncertain attempt identity.
-    attempt: String,
-    /// Exact reconciliation decision identity.
-    decision: String,
-    /// Explicit daemon-evaluated resolution action.
-    #[arg(long, value_enum)]
-    action: ResolveChoice,
-    /// Exact remediation node; required only for compensation.
-    #[arg(long)]
-    remediation_node: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
-enum ResolveChoice {
-    /// Query external truth without claiming a terminal outcome.
-    Query,
-    /// Request retry under the runtime's durable idempotency policy.
-    Retry,
-    /// Create explicit compensation at the selected remediation node.
-    Compensate,
-    /// Keep the uncertain obligation visible.
-    Retain,
-    /// Resolve succeeded only from supplied durable evidence.
-    ResolveSucceeded,
-    /// Resolve failed only from supplied durable evidence.
-    ResolveFailed,
-}
-
-#[derive(Subcommand)]
-enum ProposalCommand {
-    /// Prepare a checked future repair at the final model step's paused review hold.
-    Repair(RepairArgs),
-    /// Submit one exact versioned proposal JSON document.
-    Submit { file: PathBuf },
-    /// List proposal statuses known for one run.
-    List {
-        run: String,
-        #[arg(long, default_value_t = 100)]
-        limit: u32,
-        #[arg(long)]
-        cursor: Option<String>,
-    },
-    /// Inspect one proposal/reconciliation status.
-    Show {
-        run: String,
-        proposal: String,
-        revision: String,
-    },
-    /// Approve an exact proposal.
-    Approve(ProposalDecisionArgs),
-    /// Reject an exact proposal.
-    Reject(ProposalDecisionArgs),
-    /// Apply an exact approved proposal.
-    Apply(ProposalApplyArgs),
-}
-
-#[derive(Args)]
-struct RepairArgs {
-    run: String,
-    failed_step: String,
-    #[arg(long)]
-    proposal: String,
-    #[arg(long)]
-    new_step: String,
-    #[arg(long)]
-    model: String,
-    #[arg(long)]
-    prompt: PathBuf,
-    #[arg(long)]
-    maximum_output_units: u64,
-    /// New proposal file; preparing does not change the run.
-    #[arg(long)]
-    file: PathBuf,
-}
-
-#[derive(Args)]
-struct ProposalDecisionArgs {
-    run: String,
-    proposal: String,
-    proposal_digest: String,
-    proposed_revision: String,
-    decision_id: String,
-}
-
-#[derive(Args)]
-struct ProposalApplyArgs {
-    run: String,
-    proposal: String,
-    proposal_digest: String,
-    proposed_revision: String,
 }
 
 #[derive(Subcommand)]
@@ -792,14 +329,6 @@ enum ArtifactCommand {
         #[arg(long)]
         output: PathBuf,
     },
-}
-
-#[derive(Subcommand)]
-enum LayoutCommand {
-    /// Read layout for one exact workflow/revision association.
-    Get { workflow: String, revision: String },
-    /// Optimistically update one versioned layout JSON document.
-    Put { file: PathBuf },
 }
 
 fn main() -> ExitCode {
@@ -870,22 +399,14 @@ async fn run() -> ExitCode {
     };
     let json = cli.json;
     let operation = cli.operation();
-    if !matches!(
-        cli.command,
-        TopCommand::Run {
-            command: RunCommand::Reconnect { .. }
-        }
-    ) {
-        cli.command_id
-            .get_or_insert_with(session::generated_command_id);
-    }
+    cli.command_id
+        .get_or_insert_with(session::generated_command_id);
     let command_id = cli.command_id.clone();
     if (cli.is_wait() || (cli.is_follow() && !std::io::stdout().is_terminal()))
         && cli.timeout_secs.is_none()
     {
         let error = CliError::Invalid(
-            "run wait, --wait, and noninteractive follow require explicit --timeout-secs"
-                .to_owned(),
+            "invocation wait and noninteractive follow require explicit --timeout-secs".to_owned(),
         );
         return report(json, operation, command_id.as_deref(), &error);
     }
@@ -909,19 +430,6 @@ async fn run() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => report(json, operation, command_id.as_deref(), &error),
     }
-}
-
-fn parse_evidence_reference(value: &str) -> Result<EvidenceRef, String> {
-    let (kind, id) = value
-        .split_once('=')
-        .ok_or_else(|| "evidence must use KIND=ID syntax".to_owned())?;
-    if kind.is_empty() || id.is_empty() || id.contains('=') {
-        return Err("evidence must contain one nonempty KIND and ID".to_owned());
-    }
-    Ok(EvidenceRef {
-        id: id.to_owned(),
-        kind: kind.to_owned(),
-    })
 }
 
 #[cfg(test)]
@@ -975,59 +483,23 @@ mod tests {
     }
 
     #[test]
-    fn command_families_retain_their_clap_shapes() -> Result<(), Box<dyn std::error::Error>> {
-        let cli = Cli::try_parse_from([
-            "milkdrift",
-            "--json",
-            "--command-id",
-            "command-fixed",
+    fn retired_workflow_commands_are_not_accepted() {
+        for command in [
             "run",
-            "start",
-            "run-one",
-            "workflow-one",
-            "revision-one",
-            "--request-file",
-            "run-one.request.json",
-        ])?;
-        assert!(cli.json);
-        assert_eq!(cli.command_id.as_deref(), Some("command-fixed"));
-        assert!(matches!(
-            cli.command,
-            TopCommand::Run {
-                command: RunCommand::Start { run, workflow, revision, .. }
-            } if run == "run-one" && workflow == "workflow-one" && revision == "revision-one"
-        ));
-        Ok(())
-    }
-
-    #[test]
-    fn attempt_resolution_and_evidence_have_unambiguous_shapes()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let cli = Cli::try_parse_from([
-            "milkdrift",
-            "--expected-revision",
-            "revision-one",
-            "--evidence",
-            "artifact=artifact-one",
+            "blueprint",
+            "sequence",
+            "controller",
+            "proposal",
+            "method",
+            "learning",
+            "layout",
             "attempt",
-            "resolve",
-            "run-one",
-            "attempt-one",
-            "decision-one",
-            "--action",
-            "resolve-succeeded",
-        ])?;
-        assert_eq!(cli.expected_revision.as_deref(), Some("revision-one"));
-        assert_eq!(cli.evidence.len(), 1);
-        assert!(matches!(
-            cli.command,
-            TopCommand::Attempt {
-                command: AttemptCommand::Resolve(AttemptResolve {
-                    action: ResolveChoice::ResolveSucceeded,
-                    ..
-                })
-            }
-        ));
-        Ok(())
+            "node",
+        ] {
+            assert!(
+                Cli::try_parse_from(["milkdrift", command]).is_err(),
+                "{command}"
+            );
+        }
     }
 }

@@ -1,11 +1,9 @@
 //! Explicit OS-owner operations, outside runtime/configuration/credential composition.
-mod diagnostics;
 mod scan;
 
 use clap::{Args, Subcommand, ValueEnum};
-use milkdrift_persistence::{PageSize, RunSummaryCursor, RunSummaryFilter, RunSummaryPageQuery};
+use milkdrift_persistence::PageSize;
 use milkdrift_redb_store::offline::{BackupProducer, InspectionFamily, OfflineStore};
-use milkdrift_workspace::RunId;
 use serde_json::{Value, json};
 use std::{
     io::{Read, Write},
@@ -30,24 +28,6 @@ pub(super) struct Arguments {
 enum Operation {
     /// Schema, durable clock and table counts; no whole-history logical scan.
     Overview,
-    /// Page through retained run discovery summaries.
-    Runs {
-        #[arg(long, default_value_t = 32, value_parser = clap::value_parser!(u32).range(1..=128))]
-        limit: u32,
-        #[arg(long)]
-        after: Option<String>,
-    },
-    /// Inspect one run's retained attempt frontier by replaying up to the explicit event bound.
-    Run {
-        #[arg(long)]
-        run: String,
-        #[arg(long, default_value_t = 100_000, value_parser = clap::value_parser!(u32).range(1..=1_000_000))]
-        maximum_events: u32,
-        #[arg(long, default_value_t = 32, value_parser = clap::value_parser!(u32).range(1..=128))]
-        limit: u32,
-        #[arg(long)]
-        after_attempt: Option<String>,
-    },
     /// Bounded redacted lease/account/receipt/peer/artifact records.
     Records {
         #[arg(long, value_enum)]
@@ -84,10 +64,8 @@ enum Operation {
 
 #[derive(Clone, Copy, ValueEnum)]
 enum Family {
-    Leases,
-    Accounts,
-    HotReceipts,
-    ColdReceipts,
+    Workflows,
+    Receipts,
     Peers,
     PeerTombstones,
     Artifacts,
@@ -96,10 +74,8 @@ enum Family {
 impl From<Family> for InspectionFamily {
     fn from(value: Family) -> Self {
         match value {
-            Family::Leases => Self::Leases,
-            Family::Accounts => Self::Accounts,
-            Family::HotReceipts => Self::HotReceipts,
-            Family::ColdReceipts => Self::ColdReceipts,
+            Family::Workflows => Self::Workflows,
+            Family::Receipts => Self::Receipts,
             Family::Peers => Self::Peers,
             Family::PeerTombstones => Self::PeerTombstones,
             Family::Artifacts => Self::Artifacts,
@@ -123,34 +99,6 @@ pub(super) fn run(arguments: Arguments) -> Result<()> {
             let store = OfflineStore::open(&root, &scratch)?;
             let data = match operation {
                 Operation::Overview => serde_json::to_value(store.overview()?)?,
-                Operation::Runs { limit, after } => {
-                    let filter = RunSummaryFilter::default();
-                    let cursor = after
-                        .map(|id| {
-                            RunId::new(id)
-                                .map(|run| RunSummaryCursor::for_query(run, filter.clone()))
-                        })
-                        .transpose()?;
-                    let page = store.queries().run_summaries(&RunSummaryPageQuery {
-                        filter,
-                        cursor,
-                        limit: PageSize::new(limit)?,
-                    })?;
-                    json!({"runs": page.runs, "next": page.next.map(|c| c.after_run().to_string()),
-                        "scope": "derived discovery; use explicit integrity scan to verify all indexes"})
-                }
-                Operation::Run {
-                    run,
-                    maximum_events,
-                    limit,
-                    after_attempt,
-                } => diagnostics::run(
-                    &store,
-                    RunId::new(run)?,
-                    maximum_events,
-                    limit,
-                    after_attempt.as_deref(),
-                )?,
                 Operation::Records {
                     family,
                     limit,

@@ -14,6 +14,10 @@ pub const DEFAULT_WORKFLOW_TASKS: u32 = 256;
 pub const MAX_TASK_BATCH_ACTIONS: usize = 32;
 /// Combined instruction and inline-input ceiling for a task definition.
 pub const MAX_TASK_DEFINITION_BYTES: usize = 1_048_576;
+/// Maximum UTF-8 text bytes in one instruction, supplied text or captured file.
+pub const MAX_TASK_TEXT_BYTES: usize = 16_384;
+/// Escaped instructions and known input content must fit the shared inline execution contract.
+const MAX_TASK_RENDERED_BYTES: usize = 24_576;
 
 /// A captured value carries its bytes, rather than a mutable filesystem path.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -59,6 +63,16 @@ impl TaskInputValue {
         let bytes = serde_json::to_vec(self).map_err(|e| TaskDefinitionError(e.to_string()))?;
         if bytes.len() > MAX_TASK_DEFINITION_BYTES {
             return Err(TaskDefinitionError("input exceeds 1 MiB".into()));
+        }
+        let content_bytes = match self {
+            Self::Text { text } | Self::TextFile { text, .. } => text.len(),
+            Self::Json { value } => serde_json::to_vec(value)
+                .map_err(|error| TaskDefinitionError(error.to_string()))?
+                .len(),
+            Self::Artifact { .. } | Self::Absent => 0,
+        };
+        if content_bytes > MAX_TASK_TEXT_BYTES {
+            return Err(TaskDefinitionError("task text or JSON input exceeds 16 KiB; shorten or split the input before submission".into()));
         }
         if let Self::TextFile {
             name,
@@ -149,6 +163,32 @@ pub struct TaskPathAccess {
     pub write: bool,
 }
 
+/// A named artifact obligation checked against immutable capability output evidence.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskOutputDeclaration {
+    /// A successful task must publish this output when true.
+    #[serde(default = "required_by_default")]
+    pub required: bool,
+    /// Exact expected media type, when the caller requires one.
+    #[serde(default)]
+    pub media_type: Option<String>,
+    /// Maximum artifact bytes; unknown artifact sizes cannot satisfy this declaration.
+    pub max_bytes: u64,
+}
+
+/// One explicitly named future input redirected by correction adoption.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskBindingRedirect {
+    /// Consumer whose unstarted definition is being changed.
+    pub consumer: TaskId,
+    /// Exact consumer version observed by the editor.
+    pub expected_version: u64,
+    /// Named input currently bound to an output of the corrected task.
+    pub input: String,
+}
+
 /// Future task content. Runtime freezes the accepted version together with resolved inputs.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -165,6 +205,9 @@ pub struct TaskDefinition {
     /// Named values selected independently of display order or instruction text.
     #[serde(default)]
     pub inputs: BTreeMap<String, TaskInputBinding>,
+    /// Named output obligations checked before successful workflow completion.
+    #[serde(default)]
+    pub outputs: BTreeMap<String, TaskOutputDeclaration>,
     /// Producers that must satisfy their declared outcome condition before entry.
     #[serde(default)]
     pub dependencies: BTreeSet<TaskId>,
@@ -195,7 +238,9 @@ impl TaskDefinition {
             ));
         }
         if self.instructions.trim().is_empty()
+            || self.instructions.len() > MAX_TASK_TEXT_BYTES
             || self.inputs.len() > 64
+            || self.outputs.len() > 64
             || self.dependencies.len() > 256
             || self.paths.len() > 32
         {
@@ -203,8 +248,34 @@ impl TaskDefinition {
                 "task instructions or collection bounds are invalid".into(),
             ));
         }
+        let mut output_bytes = 0_u64;
+        for (name, declaration) in &self.outputs {
+            validate_name(name)?;
+            if declaration.max_bytes == 0
+                || declaration.media_type.as_ref().is_some_and(|value| {
+                    value.is_empty() || value.len() > 255 || value.contains(['\r', '\n'])
+                })
+            {
+                return Err(TaskDefinitionError(
+                    "output declaration needs a positive byte bound and valid media type".into(),
+                ));
+            }
+            output_bytes = output_bytes
+                .checked_add(declaration.max_bytes)
+                .ok_or_else(|| TaskDefinitionError("output byte bound overflow".into()))?;
+        }
+        if output_bytes > 2_097_152 {
+            return Err(TaskDefinitionError(
+                "task declared output allowance exceeds 2 MiB".into(),
+            ));
+        }
         for (name, binding) in &self.inputs {
             validate_name(name)?;
+            if matches!(name.as_str(), "instructions" | "milkdrift.model_task") {
+                return Err(TaskDefinitionError(
+                    "task input name is reserved for the execution request".into(),
+                ));
+            }
             match binding {
                 TaskInputBinding::Inline { value } => value.validate()?,
                 TaskInputBinding::Supplied { name, .. } => validate_name(name)?,
@@ -241,6 +312,56 @@ impl TaskDefinition {
             > MAX_TASK_DEFINITION_BYTES
         {
             return Err(TaskDefinitionError("task definition exceeds 1 MiB".into()));
+        }
+        Ok(())
+    }
+
+    /// Checks known future input content against the shared model/process inline request budget.
+    /// Missing supplied values remain prospective and are checked when a later edit supplies them.
+    ///
+    /// # Errors
+    /// Refuses escaped instructions and known input content above 24 KiB, before admission.
+    pub fn validate_supplied_inputs(
+        &self,
+        supplied: &BTreeMap<String, TaskInputValue>,
+    ) -> Result<(), TaskDefinitionError> {
+        let encoded = |text: &str| {
+            serde_json::to_vec(text)
+                .map(|bytes| bytes.len())
+                .map_err(|error| TaskDefinitionError(error.to_string()))
+        };
+        let mut total = encoded(&self.instructions)?;
+        for (name, binding) in &self.inputs {
+            total = total
+                .checked_add(encoded(&format!("\n\nInput {name}:\n"))?)
+                .ok_or_else(|| TaskDefinitionError("task input budget overflow".into()))?;
+            let value = match binding {
+                TaskInputBinding::Inline { value } => Some(value),
+                TaskInputBinding::Supplied { name, .. } => supplied.get(name),
+                TaskInputBinding::TaskOutput { .. } | TaskInputBinding::SettledOutcome { .. } => {
+                    None
+                }
+            };
+            if let Some(value) = value {
+                value.validate()?;
+                let rendered = match value {
+                    TaskInputValue::Text { text } | TaskInputValue::TextFile { text, .. } => {
+                        text.clone()
+                    }
+                    TaskInputValue::Json { value } => serde_json::to_string(value)
+                        .map_err(|error| TaskDefinitionError(error.to_string()))?,
+                    TaskInputValue::Artifact { .. } => {
+                        "[immutable named artifact supplied with this request]".into()
+                    }
+                    TaskInputValue::Absent => "[explicitly absent optional input]".into(),
+                };
+                total = total
+                    .checked_add(encoded(&rendered)?)
+                    .ok_or_else(|| TaskDefinitionError("task input budget overflow".into()))?;
+            }
+        }
+        if total > MAX_TASK_RENDERED_BYTES {
+            return Err(TaskDefinitionError("task instructions and supplied inputs exceed the combined 24 KiB escaped-content budget; shorten or split the task".into()));
         }
         Ok(())
     }
@@ -367,6 +488,9 @@ pub enum TaskChange {
         task: TaskId,
         /// Successful task that explicitly names the original correction target.
         correction: TaskId,
+        /// Only these named pending bindings follow the correction; started consumers refuse.
+        #[serde(default)]
+        redirects: Vec<TaskBindingRedirect>,
     },
     /// Release an explicit wait so ordinary readiness can be reconsidered.
     Continue,
@@ -460,8 +584,24 @@ pub fn validate_task_set(
                     "task {id} has an invalid correction origin"
                 )));
             }
+            let mut seen = BTreeSet::from([id.clone()]);
+            let mut origin = Some(corrected);
+            while let Some(current) = origin {
+                if !seen.insert(current.clone()) {
+                    return Err(TaskDefinitionError(
+                        "corrective origins contain a cycle".into(),
+                    ));
+                }
+                origin = tasks
+                    .get(current)
+                    .and_then(|task| task.corrective_of.as_ref());
+            }
         }
-        remaining.insert(id.clone(), definition.dependencies.clone());
+        let mut waits_for = definition.dependencies.clone();
+        if let Some(corrected) = &definition.corrective_of {
+            waits_for.insert(corrected.clone());
+        }
+        remaining.insert(id.clone(), waits_for);
     }
     while !remaining.is_empty() {
         let ready: BTreeSet<_> = remaining

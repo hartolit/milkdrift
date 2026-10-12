@@ -1,17 +1,9 @@
-use std::fmt;
+use serde::{Serialize, Serializer};
 
-use serde::{Deserialize, Serialize, Serializer};
+use crate::PersistenceError;
 
-use crate::{EvidenceId, PersistenceError};
-
-/// Maximum bytes in a durable control-transition reason.
-pub const MAX_REASON_BYTES: usize = 2_048;
 /// Maximum bytes in a redacted durable detail string.
 pub const MAX_DETAIL_BYTES: usize = 4_096;
-/// Maximum evidence references carried by one fact.
-pub const MAX_EVIDENCE_REFERENCES: usize = 32;
-/// Maximum event envelopes committed for one accepted command.
-pub const MAX_EVENTS_PER_COMMIT: usize = 512;
 /// Maximum records returned by one page query.
 pub const MAX_PAGE_SIZE: u32 = 1_000;
 /// Maximum bytes in one artifact stream chunk.
@@ -38,45 +30,6 @@ fn validate_text(
     }
     Ok(())
 }
-
-/// Bounded, non-empty reason recorded for a control transition.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct Reason(String);
-
-impl Reason {
-    /// Validates a reason.
-    ///
-    /// # Errors
-    /// Refuses empty text, more than [`MAX_REASON_BYTES`] bytes, or control characters.
-    pub fn new(value: impl Into<String>) -> Result<Self, PersistenceError> {
-        let value = value.into();
-        validate_text(&value, "reason", MAX_REASON_BYTES, false)?;
-        Ok(Self(value))
-    }
-
-    /// Returns the reason text.
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for Reason {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-impl Serialize for Reason {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&self.0)
-    }
-}
-
-milkdrift_contracts::deserialize_via!(Reason, String, |value| Self::new(value));
 
 /// Bounded, redacted detail suitable for durable diagnostics and progress.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -110,70 +63,6 @@ impl Serialize for BoundedDetail {
 }
 
 milkdrift_contracts::deserialize_via!(BoundedDetail, String, |value| Self::new(value));
-
-/// Three-letter uppercase currency code paired with cost observations.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct CurrencyCode(String);
-
-impl CurrencyCode {
-    /// Validates an uppercase three-letter currency code.
-    ///
-    /// # Errors
-    /// Refuses anything other than exactly three uppercase ASCII letters.
-    pub fn new(value: impl Into<String>) -> Result<Self, PersistenceError> {
-        let value = value.into();
-        if value.len() != 3 || !value.bytes().all(|byte| byte.is_ascii_uppercase()) {
-            return Err(PersistenceError::Bounds {
-                location: "currency",
-                reason: "must contain exactly three uppercase ASCII letters".to_owned(),
-            });
-        }
-        Ok(Self(value))
-    }
-
-    /// Returns the validated currency code.
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl Serialize for CurrencyCode {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&self.0)
-    }
-}
-
-milkdrift_contracts::deserialize_via!(CurrencyCode, String, |value| Self::new(value));
-
-/// Relationship between an evidence reference and the fact carrying it.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EvidenceKind {
-    /// Human or controller approval evidence.
-    AuthorityDecision,
-    /// Executor/worker observation.
-    WorkerObservation,
-    /// External-system receipt or status reference.
-    ExternalReceipt,
-    /// Artifact containing larger evidence.
-    Artifact,
-    /// Recovery or integrity observation.
-    RecoveryObservation,
-}
-
-/// Bounded reference to evidence; evidence bytes are not embedded in events.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct EvidenceReference {
-    /// Stable evidence identity.
-    pub id: EvidenceId,
-    /// Semantic relationship to the carrying fact.
-    pub kind: EvidenceKind,
-}
 
 /// Validated page size with an inclusive global maximum.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]

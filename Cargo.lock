@@ -1026,13 +1026,11 @@ dependencies = [
  "blake3",
  "clap",
  "futures-util",
- "milkdrift-authority",
  "milkdrift-blueprint",
  "milkdrift-capability",
  "milkdrift-control-client",
  "milkdrift-control-protocol",
  "milkdrift-peer-protocol",
- "milkdrift-prompt-sequence",
  "milkdrift-workspace",
  "rustix",
  "serde",
@@ -1059,10 +1057,6 @@ dependencies = [
  "milkdrift-authority",
  "milkdrift-blueprint",
  "milkdrift-capability",
- "milkdrift-capability-host",
- "milkdrift-contracts",
- "milkdrift-model",
- "milkdrift-peer-protocol",
  "milkdrift-persistence",
  "milkdrift-redb-store",
  "milkdrift-runtime",
@@ -1125,12 +1119,10 @@ dependencies = [
  "milkdrift-local-process",
  "milkdrift-local-secret",
  "milkdrift-managed-linux",
- "milkdrift-model",
  "milkdrift-model-provider",
  "milkdrift-peer-http",
  "milkdrift-peer-protocol",
  "milkdrift-persistence",
- "milkdrift-prompt-sequence",
  "milkdrift-redb-store",
  "milkdrift-runtime",
  "milkdrift-workspace",
@@ -1164,7 +1156,6 @@ dependencies = [
  "milkdrift-capability",
  "milkdrift-capability-host",
  "milkdrift-contracts",
- "milkdrift-control",
  "milkdrift-control-client",
  "milkdrift-control-protocol",
  "milkdrift-daemon",
@@ -1174,7 +1165,6 @@ dependencies = [
  "milkdrift-model-provider",
  "milkdrift-peer-protocol",
  "milkdrift-persistence",
- "milkdrift-prompt-sequence",
  "milkdrift-redb-store",
  "milkdrift-runtime",
  "milkdrift-workspace",
@@ -1249,12 +1239,9 @@ dependencies = [
 name = "milkdrift-model"
 version = "0.1.0"
 dependencies = [
- "blake3",
- "milkdrift-blueprint",
  "milkdrift-capability",
  "milkdrift-contracts",
  "milkdrift-persistence",
- "milkdrift-workspace",
  "proptest",
  "serde",
  "serde_json",
@@ -1272,6 +1259,7 @@ dependencies = [
  "milkdrift-capability",
  "milkdrift-capability-host",
  "milkdrift-contracts",
+ "milkdrift-control",
  "milkdrift-model",
  "milkdrift-persistence",
  "milkdrift-redb-store",
@@ -1333,7 +1321,6 @@ dependencies = [
 name = "milkdrift-persistence"
 version = "0.1.0"
 dependencies = [
- "base64",
  "blake3",
  "milkdrift-authority",
  "milkdrift-blueprint",
@@ -1343,24 +1330,6 @@ dependencies = [
  "milkdrift-workspace",
  "serde",
  "serde_json",
- "thiserror",
-]
-
-[[package]]
-name = "milkdrift-prompt-sequence"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "milkdrift-authority",
- "milkdrift-blueprint",
- "milkdrift-capability",
- "milkdrift-contracts",
- "milkdrift-control",
- "milkdrift-persistence",
- "milkdrift-workspace",
- "serde",
- "serde_json",
- "tempfile",
  "thiserror",
 ]
 
@@ -1394,8 +1363,6 @@ dependencies = [
  "milkdrift-capability",
  "milkdrift-contracts",
  "milkdrift-control",
- "milkdrift-control-client",
- "milkdrift-control-protocol",
  "milkdrift-model",
  "milkdrift-persistence",
  "milkdrift-redb-store",
@@ -1404,22 +1371,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror",
- "tokio",
- "toml",
- "tracing",
- "url",
-]
-
-[[package]]
-name = "milkdrift-slotbook"
-version = "0.1.0"
-dependencies = [
- "axum",
- "blake3",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
 ]
 
 [[package]]

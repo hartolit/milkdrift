@@ -11,6 +11,8 @@ interface BrowserFixture {
   input_b: string;
   expect_a?: string[];
   expect_b?: string[];
+  model_capability?: string;
+  model_expect?: string[];
 }
 
 const path = process.env.MILKDRIFT_BROWSER_CONFIG;
@@ -27,15 +29,20 @@ async function connect(page: Page, daemon: DaemonFixture, name: string) {
   await expect(page.getByRole('heading', { name: 'Your workflows', exact: true })).toBeVisible();
 }
 
-async function submit(page: Page, title: string, inputPath: string) {
+async function fillTask(page: Page, title: string, inputPath: string, deferBrief = false) {
   await page.getByRole('button', { name: '+ New task', exact: true }).click();
   await page.getByLabel('Task title', { exact: true }).fill(title);
   await page.getByLabel('Short description').fill('Inspect the supplied Cargo project and identify its targets and dependency choices.');
   await page.getByLabel('Instructions', { exact: true }).fill('Read the supplied Cargo.toml. Produce a substantive report of its package, targets, dependencies and workspace structure. State the limits of what the manifest establishes.');
   await page.getByLabel('Brief input').fill('Develop a Rust-based approach to learned animation. Use this real project manifest to identify the available runtime foundation and dependencies.');
+  if (deferBrief) await page.getByLabel('Supply brief now').uncheck();
   await page.getByLabel('Capability', { exact: true }).selectOption({ label: `${config.capability} · process.execute` });
   await page.getByLabel('Text file input').setInputFiles(inputPath);
   await expect(page.getByText(/^Captured /)).toBeVisible();
+}
+
+async function submit(page: Page, title: string, inputPath: string, deferBrief = false) {
+  await fillTask(page, title, inputPath, deferBrief);
   await page.getByRole('button', { name: 'Submit task', exact: true }).click();
   await expect(page.getByRole('heading', { name: title, level: 1, exact: true })).toBeVisible();
 }
@@ -87,6 +94,93 @@ test('a real uploaded project produces discoverable input-dependent results afte
   await page.getByRole('button', { name: 'Disconnect', exact: true }).click();
   await expect(page.getByTestId('result-output')).toHaveCount(0);
   await fresh.close();
+});
+
+test('a queued missing-input task can be edited and repaired through the same inspector', async ({ page }) => {
+  const title = `Queued Cargo analysis ${Date.now()}`;
+  await page.goto('/');
+  await connect(page, config.a, 'Repair studio');
+  await submit(page, title, config.input_b, true);
+  await expect(page.getByLabel('Task dependency timeline').getByText('Queued', { exact: true })).toBeVisible();
+  await expect(page.getByText('Not started', { exact: true }).first()).toBeVisible();
+  await page.getByRole('button', { name: 'List', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit unstarted task', exact: true }).click();
+  await page.getByLabel('Instructions', { exact: true }).fill('Inspect only the captured runtime Cargo manifest and report its actual dependency names.');
+  await page.getByRole('button', { name: 'Save future task', exact: true }).click();
+  await expect(page.getByText('Inspect only the captured runtime Cargo manifest and report its actual dependency names.', { exact: true })).toBeVisible();
+  await page.getByText('Supply a required or replacement input', { exact: true }).click();
+  await page.getByLabel('Workflow input', { exact: true }).selectOption('brief');
+  await page.getByLabel('Input text', { exact: true }).fill('Supply the missing brief and start this queued analysis using its already captured file.');
+  await page.getByRole('button', { name: 'Supply input', exact: true }).click();
+  // The runtime may durably record a queued reason after the edit. A generation conflict
+  // requires an explicit new decision against the refreshed snapshot, with the draft intact.
+  await expect.poll(async () => (await page.getByTestId('result-output').count()) > 0 || (await page.getByRole('alert').allTextContents()).some((text) => text.includes('stale workflow generation')), { timeout: 30000 }).toBe(true);
+  if ((await page.getByRole('alert').allTextContents()).some((text) => text.includes('stale workflow generation'))) {
+    await expect(page.getByLabel('Input text', { exact: true })).toHaveValue('Supply the missing brief and start this queued analysis using its already captured file.');
+    await page.getByRole('button', { name: 'Supply input', exact: true }).click();
+  }
+  await expect(page.getByTestId('result-output')).toBeVisible({ timeout: 30000 });
+  for (const expected of config.expect_b ?? ['dependencies']) await expect(page.getByTestId('result-output')).toContainText(expected);
+  await expect(page.getByRole('button', { name: 'Edit unstarted task', exact: true })).toHaveCount(0);
+});
+
+test('queued cancellation is a daemon outcome and does not invent execution times', async ({ page }) => {
+  await page.goto('/');
+  await connect(page, config.a, 'Stop studio');
+  await submit(page, `Queued stop ${Date.now()}`, config.input_a, true);
+  await page.getByRole('button', { name: 'Request stop', exact: true }).click();
+  await expect(page.getByLabel('Task dependency timeline').getByText('Stopped', { exact: true })).toBeVisible();
+  await expect(page.getByText('Not started', { exact: true }).first()).toBeVisible();
+  await expect(page.getByTestId('result-output')).toHaveCount(0);
+});
+
+test('a lost accepted reply is recovered by the public receipt without resubmission', async ({ page }) => {
+  await page.goto('/');
+  await connect(page, config.a, 'Recovery studio');
+  const title = `Lost reply ${Date.now()}`;
+  await fillTask(page, title, config.input_a);
+  let submitted = 0;
+  await page.route('**/v1/workflows', async (route) => {
+    if (route.request().method() !== 'POST') { await route.continue(); return; }
+    submitted++;
+    const actual = await route.fetch();
+    expect(actual.ok()).toBe(true);
+    await route.abort('failed');
+  });
+  await page.getByRole('button', { name: 'Submit task', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Find submission receipt', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Find submission receipt', exact: true }).click();
+  await expect(page.getByRole('heading', { name: title, level: 1, exact: true })).toBeVisible();
+  await expect(page.getByTestId('result-output')).toBeVisible({ timeout: 30000 });
+  expect(submitted).toBe(1);
+});
+
+test('an unreachable daemon leaves a retryable connection form with no retained credential', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Connect a daemon', exact: true }).click();
+  await page.getByLabel('Connection name').fill('Unavailable');
+  await page.getByLabel('Daemon URL').fill('http://127.0.0.1:1');
+  await page.getByLabel('Installation identity').fill('host:unavailable');
+  await page.getByLabel('Bearer credential').fill('non-secret-unreachable-test');
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('could not be reached');
+  await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeEnabled();
+  await expect(page.getByLabel('Bearer credential')).toHaveValue('');
+});
+
+test('the configured controlled model receives the same brief and captured file through the daemon', async ({ page }) => {
+  test.skip(!config.model_capability, 'The Rust harness must provide the controlled model capability.');
+  await page.goto('/');
+  await connect(page, config.a, 'Model studio');
+  const title = `Controlled model analysis ${Date.now()}`;
+  await fillTask(page, title, config.input_b);
+  await page.getByLabel('Capability', { exact: true }).selectOption({ label: `${config.model_capability} · model.generate` });
+  await page.getByRole('button', { name: 'Submit task', exact: true }).click();
+  await expect(page.getByRole('heading', { name: title, level: 1, exact: true })).toBeVisible();
+  await expect(page.getByTestId('result-output')).toBeVisible({ timeout: 30000 });
+  for (const expected of config.model_expect ?? ['Controlled analysis']) await expect(page.getByTestId('result-output')).toContainText(expected);
+  await page.getByText('Frozen start and selected inputs', { exact: true }).click();
+  await expect(page.getByText('file · Cargo.toml', { exact: true })).toBeVisible();
 });
 
 test('keyboard access and identity refusal are visible on a phone layout', async ({ page }) => {

@@ -1,66 +1,61 @@
 # Control client
 
-Use `ControlClient` to operate a running daemon from Rust. It sends authenticated HTTP requests,
-decodes the [control protocol](../control-protocol/README.md), and exposes bounded reads and
-resumable observations. The CLI uses this same client; it adds argument handling, deadlines,
-confirmation, and output presentation.
+Use `ControlClient` to operate a daemon from Rust. It sends authenticated HTTP requests, decodes
+the [control protocol](../control-protocol/README.md), and exposes bounded reads. The CLI adds
+arguments, deadlines and output presentation; neither client owns workflow execution or persistence.
 
-Create a `ClientConfig` for the daemon URL and a `BearerCredential` from a private source, construct
-the client, and call `negotiate` before other operations. Client and daemon must use the same current
-protocol version. Negotiation, JSON replies, error replies and streamed observations reject a
-different version; upgrade both components together. Construction does not contact the daemon.
-The server maps that credential to an actor and grant; possessing it does not authorize every
-operation. The [daemon guide](../../docs/operations/daemon.md) explains the matching configuration.
+Construct a `ClientConfig` for the daemon origin and a `BearerCredential` from a private source,
+then call `negotiate`. Construction itself performs no I/O. Replies reject an incompatible protocol.
+The daemon maps the credential to an actor and grant; each operation checks the scope it needs.
 
-Other languages use the same [public HTTP operations](../../docs/reference/control-api.md).
-The maintained [independent JSON client test](../../apps/daemon/tests/control_plane/independent_client.rs)
-shows authoring, supplied-input execution, exact recovery, result download and independent copy
-against a real daemon process. It uses public responses for workflow identities and decisions,
-with no CLI, runtime construction or database access. Browser authentication and CORS remain
-separate frontend work.
+## Ordinary tasks
 
-## Choose the operation
+`task_session` reports the installation identity, current actor, effective limits and task choices.
+`upload_task_input` captures UTF-8 file content; `create_workflow` submits instructions and named
+inputs. Acceptance returns daemon-assigned identities and an alias map. A file input identifies
+captured bytes, not a path that can later change under the worker.
 
-| Need | Client operation and consequence |
-| --- | --- |
-| Invoke independently | `execution_discovery` lists choices; `prepare_invocation` asks the serving owner to construct an authorized request. Save that reply before `invoke`. `invocation_lookup`, `invocation`, `invocation_observations`, and `cancel_invocation` inspect or control accepted work in either daemon role. Preserve the exact request across retries. |
-| Supply an input file | `upload_input` publishes bounded verified content with a caller-scoped upload ID. No destination path or producer claim is accepted. |
-| Change workflow or run state | `submit` sends one `CommandRequest` and does not retry it automatically. Retain the exact request to recover a lost reply. |
-| Inspect current or past work | `run_result` explains current progress, checks, terminal output fields and permitted actions. `run`, `node`, `attempt`, and `timeline` expose additional authorized evidence. A compact run does not contain every historical attempt. |
-| Browse definitions or proposals | `revisions`, `runs`, and `proposals` return one page per call. Reuse its cursor with the same filters. |
-| Inspect available execution hosts | Capability, peer, and authority reads expose the caller's permitted view. `peer_action` explicitly changes a configured relationship. |
-| Download output | Read artifact metadata, then fetch ranges. Verify the assembled file's size and digest as the CLI's [download owner](../../apps/cli/src/command/artifact.rs) does. |
-| Observe changes | `subscribe` yields observations and recoverable transport errors. The consumer owns its overall deadline and reconnection limit. |
-| Read presentation state | `layout` reads an exact workflow/revision association; writes use `submit`. |
+`workflows` performs paged discovery and search. `workflow` returns the first bounded task-summary
+page and `workflow_page` accepts its continuation. Read one selected task through `task`; fetch its
+retained result through `task_result`. A bounded text preview exposes its truncation flag. Artifact
+metadata and bounded ranges remain the complete immutable download path. A task read may expose
+lifecycle metadata while marking result content restricted under the caller's current grant.
 
-## Recover a lost connection
+`change_workflow` sends a generation-guarded atomic batch. Started task definitions remain frozen;
+corrections are separate future tasks. `workflow_receipt` recovers exact durable acceptance after
+a reply is lost. Mutations do not retry automatically. Replaying the same exact request returns
+its acceptance; changing a request under its old ID conflicts. A fresh client can authenticate and
+rediscover work without a saved recovery file.
 
-Safe JSON reads retry retryable failures up to `safe_query_retries` after the initial call. Each
-attempt has its own timeout; add an outer deadline when the whole operation must finish by a
-particular time. Negotiation, command submission, peer actions, and artifact ranges do not use
-that automatic read retry loop.
+Other languages use the same [HTTP API](../../docs/reference/control-api.md). The
+[independent JSON integration test](../../apps/daemon/tests/control_plane/independent_client.rs)
+drives actual daemon task creation, captured input, replay, restart and output reads. The standalone
+[web client](../../apps/web/README.md) supplies browser authentication and fetch-based task SSE.
 
-A command timeout can occur after durable acceptance. Repeat the same command ID, body, reason,
-evidence, and guards under the same actor/grant to recover its result. A fresh ID expresses a new
-command and can cause new work. `ClientError::retryable` is an error classification, not evidence
-that the first command was unaccepted or an external effect did not happen.
+## Independent host operations
 
-`subscribe` reconnects with the last cursor it decoded and yields errors to the consumer along
-the way. That cursor is not an acknowledgement that the consumer persisted the observation. A
-consumer resuming after its own restart must save a cursor only after handling its item. Treat
-`ResyncRequired` as a request for a fresh authorized view, then subscribe without a cursor.
-The client suppresses duplicate or older positions within a subscription. Both `ResyncRequired`
-and `StreamClosing` end the subscription after their notice; the caller decides whether to reopen.
-Malformed complete events and nonretryable API errors end the subscription. An incomplete event
-at EOF is discarded, then the connection resumes from the last valid observation. The decoder
-accepts CRLF, LF and CR lines in order, including line endings and UTF-8 split between chunks;
-each event has its own buffer bound. Comments never advance the cursor. Dropping the stream stops
-local observation; it does not cancel a run.
+`execution_discovery` and `prepare_invocation` expose configured independent capabilities in either
+daemon role. Save the prepared reply before `invoke`; retain it exactly for lost-response recovery.
+`invocation_lookup`, `invocation`, `invocation_observations` and `cancel_invocation` inspect and
+control that caller-bound invocation. `upload_input` publishes bounded, verified content without
+accepting a client-selected host path or producer claim.
 
-On `CapabilitySnapshot`, replace the complete displayed catalogue, including when the array is
-empty. The daemon filters and bounds these snapshots. Health and capability cursors require
-resynchronization after the daemon's HTTP feed restarts; durable run cursors can resume history.
+Artifact downloads read metadata, assemble bounded ranges and verify the complete size and digest.
+The [CLI download owner](../../apps/cli/src/command/artifact.rs) demonstrates that contract.
+Capability, authority, peer and managed-resource operations remain separately authorized.
 
-The [crate API](src/lib.rs) owns defaults and individual method behavior. The
-[control reference](../../docs/reference/control-api.md) owns exact feeds and error categories;
-the [CLI guide](../../apps/cli/README.md) shows the operator-facing use of the same calls.
+## Bound observation and recovery
+
+Safe JSON reads retry classified transient failures up to `safe_query_retries`; every attempt has
+a timeout. Add an outer deadline to bound a sequence of operations. Negotiation, mutations, peer
+actions and artifact ranges do not use that safe-read retry loop. `ClientError::retryable` does not
+prove that a command was unaccepted or an external effect absent.
+
+The generic `subscribe` API owns bounded health/capability stream decoding and reconnection. Treat
+`ResyncRequired` as a request for a fresh authorized snapshot and a new subscription without the
+old cursor. Replace the entire capability catalogue on `CapabilitySnapshot`, including an empty
+one. Dropping a subscription stops local observation and leaves daemon work running. HTTP feed
+incarnation changes invalidate their cursors; an SSE cursor does not replace a durable task receipt.
+
+The [crate API](src/lib.rs) owns exact defaults and method behavior. The
+[control reference](../../docs/reference/control-api.md) owns transport bounds and error categories.

@@ -50,7 +50,6 @@ fn entry_checks_lease_and_request_deadline_independently_at_their_boundaries() -
                 .deadline_unix_ms
                 .checked_add_signed(entry_offset)
                 .ok_or("entry overflow")?,
-            published_invocation: None,
         });
         if accepted {
             assert!(matches!(result, Ok(PeerEntryOutcome::Entered(_))));

@@ -29,7 +29,7 @@ derived from the same capability-host operation map. Historical attempts reconst
 from their frozen resolved snapshot rather than the currently registered generation.
 
 Keeping that list does not establish complete-response compatibility with a strict older reader.
-The current [control API](../reference/control-api.md#transport-authentication-and-negotiation)
+The current [control API](../reference/control-api.md#transport-and-authentication)
 returns the server minor without down-converting response fields.
 
 Queries are page- and byte-bounded. Authenticated cursor schema 2 binds a continuation to one exact

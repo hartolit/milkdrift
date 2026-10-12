@@ -175,7 +175,6 @@ pub(crate) fn entered_reference(
         return Err("claim missing".into());
     };
     let PeerEntryOutcome::Entered(record) = store.mark_peer_entered(&PeerEntryRequest {
-        published_invocation: None,
         owner: &caller,
         execution: &execution,
         worker: &worker,

@@ -115,7 +115,7 @@ different host must preserve who accepted and can resolve the old operation. The
 the real value behind existing mechanisms while permitting a better representation.
 
 The standards comparison identified a concrete open activation concern. In
-[predecessors_ready](../../../../../crates/runtime/src/engine/support.rs), a normal target needs
+[predecessors_ready](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/support.rs), a normal target needs
 every incoming control edge's source to have succeeded and selected that edge; Join is the special
 fork-owned exception. There is no Merge NodeKind. A plain exclusive branch whose alternatives
 reconverge on one continuation therefore appears unable to activate that continuation. This is a

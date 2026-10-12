@@ -29,7 +29,7 @@ target/debug/headless-cli-evidence --independent-host-only \
 
 E01: authored-workflow report is `passed: true`, nine controlled model requests, zero planned
 live requests, fixture-count check and daemon/fixture cleanup successful. The maintained
-[journey](../../../../../tools/evidence/src/bin/client-workflow-evidence/journey.rs) covers
+[journey](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/tools/evidence/src/bin/client-workflow-evidence/journey.rs) covers
 authoring, different supplied briefs, results, restart/replay, copies and prospective repair.
 It establishes that this public route works under its fixture, not human comprehension.
 
@@ -37,7 +37,7 @@ E02: independent-host driver exited successfully. Its two actual daemons perform
 workflow-origin process/model work, transfer selected inputs/results, preserve exact replay after
 restart, and retain unknown usage after a dropped model response. The serving host creates no
 synthetic workflows. Source assertions require two process entries and three model requests.
-The [driver](../../../../../tools/evidence/src/bin/headless-cli-evidence/independent.rs) owns
+The [driver](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/tools/evidence/src/bin/headless-cli-evidence/independent.rs) owns
 the scenario. This is same-machine loopback, not two physical machines or C→B direct relay.
 
 E03: these focused publication checks passed (one, five and one tests respectively):

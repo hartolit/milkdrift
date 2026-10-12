@@ -1,14 +1,12 @@
 use milkdrift_workspace::RunId;
 use thiserror::Error;
 
-use crate::{CommandId, IntegrityDigest, RunSequence};
-
 /// Classifies an adapter failure without exposing a database-specific error type.
 ///
 /// These classes describe the failure, not whether a write committed or an external
 /// effect happened. In particular, `Unavailable` is not permission to retry work with
 /// a new identity. Follow the affected port's recovery contract, such as
-/// [`crate::RunJournal`]'s saved-result lookup and command redelivery.
+/// [`crate::WorkflowStore`]'s saved-result lookup and command redelivery.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StorageFailureClass {
     /// Stored bytes or indexes failed integrity validation.
@@ -28,8 +26,8 @@ pub enum StorageFailureClass {
 /// A document could not be constructed/read, or a storage operation could not return success.
 ///
 /// This is distinct from a saved command result whose disposition is
-/// [`crate::CommandDisposition::Rejected`]. Constructors have no storage effects;
-/// errors from a write port need that port's recovery rules. [`crate::RunJournal`]
+/// a task command rejection. Constructors have no storage effects;
+/// errors from a write port need that port's recovery rules. [`crate::WorkflowStore`]
 /// explains how to recover a result when an error may have arrived after commit.
 #[derive(Debug, Error)]
 pub enum PersistenceError {
@@ -90,58 +88,6 @@ pub enum PersistenceError {
     /// Stored data failed its checksum or another integrity check.
     #[error("durable data corruption: {0}")]
     Corruption(String),
-    /// A new command's expected sequence differs from the current journal head.
-    /// The runtime must reread history and replan; changing only the guard could admit
-    /// a transition calculated from stale state. Exact replay precedes this check.
-    #[error("run {run} sequence conflict: expected {expected}, actual {actual}")]
-    SequenceConflict {
-        /// Conflicting run.
-        run: RunId,
-        /// Caller's optimistic guard.
-        expected: RunSequence,
-        /// Authoritative journal sequence.
-        actual: RunSequence,
-    },
-    /// A saved `(run, command)` has a different intent fingerprint.
-    /// Preserve the original result and resolve which request was intended; do not
-    /// choose a fresh key merely to bypass the conflict after losing a response.
-    #[error(
-        "command {command} idempotency conflict for run {run}: existing fingerprint {existing}, supplied {supplied}"
-    )]
-    IdempotencyConflict {
-        /// Aggregate on which the command identity was first observed.
-        run: RunId,
-        /// Reused command identity.
-        command: CommandId,
-        /// Fingerprint recorded by the first durable result.
-        existing: IntegrityDigest,
-        /// Fingerprint supplied by the conflicting delivery.
-        supplied: IntegrityDigest,
-    },
-    /// An actor-scoped external command identity was reused with different canonical content.
-    #[error(
-        "external command {command} idempotency conflict for actor {actor}: existing digest {existing}, supplied {supplied}"
-    )]
-    ExternalCommandIdempotencyConflict {
-        /// Authenticated actor whose command-key namespace was reused.
-        actor: milkdrift_authority::ActorRef,
-        /// Reused client command identity.
-        command: CommandId,
-        /// Digest stored by the first durable result.
-        existing: IntegrityDigest,
-        /// Digest supplied by the conflicting delivery.
-        supplied: IntegrityDigest,
-    },
-    /// Receipt archival raced a different successful archival generation.
-    #[error(
-        "application receipt archive generation conflict: expected {expected}, actual {actual}"
-    )]
-    ApplicationReceiptArchiveGenerationConflict {
-        /// Generation observed by the caller.
-        expected: u64,
-        /// Authoritative generation inside the archival transaction.
-        actual: u64,
-    },
     /// An immutable identity already exists with different bytes.
     #[error("immutable {entity} conflict for identity {identity}")]
     ImmutableConflict {
@@ -161,8 +107,8 @@ pub enum PersistenceError {
     /// A cursor is malformed, belongs to another query, or is no longer resumable.
     #[error("invalid page cursor: {0}")]
     InvalidCursor(String),
-    /// A required artifact is not durably committed, so this append cannot reference it.
-    /// Resolve publication through [`crate::ArtifactStore`] before planning the append again.
+    /// A required artifact is not durably committed, so the transition cannot reference it.
+    /// Resolve publication through [`crate::ArtifactStore`] before planning the transition again.
     #[error("artifact is not durably committed: {0}")]
     ArtifactNotCommitted(String),
     /// Stored workspace accounting differs from the proposed commit's expected usage.
@@ -172,29 +118,10 @@ pub enum PersistenceError {
         /// Conflicting workspace/run accounting domain.
         run: RunId,
     },
-    /// The active-lease set changed after runtime admission was calculated.
-    /// Recheck capacity from a fresh lease snapshot before planning another grant.
-    #[error("lease revision conflict: expected {expected}, actual {actual}")]
-    LeaseRevisionConflict {
-        /// Opaque lease-set revision observed by the runtime.
-        expected: IntegrityDigest,
-        /// Authoritative lease-set revision inside the lease-grant transaction.
-        actual: IntegrityDigest,
-    },
-    /// A controller account changed after runtime planned a guarded transition.
-    #[error("controller account {account} revision conflict: expected {expected}, actual {actual}")]
-    ControllerAccountRevisionConflict {
-        /// Conflicting controller account.
-        account: crate::ControllerAccountId,
-        /// Opaque revision digest observed by runtime.
-        expected: IntegrityDigest,
-        /// Authoritative revision digest inside the transaction.
-        actual: IntegrityDigest,
-    },
     /// Sensitive artifact content was requested without an explicit authority proof.
     #[error("artifact access denied: {0}")]
     ArtifactAccessDenied(String),
-    /// Appending would overflow the run sequence authority.
+    /// Advancing a durable evidence sequence would overflow its numeric range.
     #[error("run sequence overflow")]
     SequenceOverflow,
     /// A migration is required before ordinary access can continue.

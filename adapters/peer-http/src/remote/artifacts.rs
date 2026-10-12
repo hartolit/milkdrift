@@ -12,7 +12,7 @@ use super::{Lifecycle, Ordering, RemoteCapabilityAdapter};
 impl RemoteCapabilityAdapter {
     #[expect(
         clippy::too_many_arguments,
-        reason = "Exact transfer facts, controller ownership and bounded per-execution accounting remain explicit at the output owner"
+        reason = "Exact transfer facts and bounded per-execution accounting remain explicit at the output owner"
     )]
     pub(super) fn import_output(
         &self,
@@ -21,7 +21,6 @@ impl RemoteCapabilityAdapter {
         deadline: u64,
         imported: &mut BTreeSet<String>,
         total_bytes: &mut u64,
-        controller: Option<&milkdrift_persistence::ControllerArtifactOwner>,
         reporter: &dyn AdapterReporter,
     ) -> Result<(), AdapterError> {
         let InvocationEventKind::Output { reference, .. } = observation.event.kind() else {
@@ -88,12 +87,7 @@ impl RemoteCapabilityAdapter {
             upload.direction = ArtifactTransferDirection::Upload;
             let (mut offset, local_limit) = match self
                 .artifacts
-                .negotiate(
-                    peer,
-                    &upload,
-                    self.relationship.maximum_artifact_bytes,
-                    controller,
-                )
+                .negotiate(peer, &upload, self.relationship.maximum_artifact_bytes)
                 .map_err(|error| AdapterError::external_failure(error.to_string()))?
             {
                 ArtifactTransferDecision::AlreadyPresent => return Ok(()),
@@ -221,7 +215,6 @@ impl RemoteCapabilityAdapter {
         &self,
         execution: &PeerExecutionId,
         deadline: u64,
-        controller: Option<&milkdrift_persistence::ControllerArtifactOwner>,
         imported: &mut BTreeSet<String>,
         bytes: &mut u64,
         invocation: &milkdrift_capability::InvocationId,
@@ -241,9 +234,9 @@ impl RemoteCapabilityAdapter {
                     "archived output targets another invocation",
                 ));
             }
-            if let Err(error) = self.import_output(
-                execution, output, deadline, imported, bytes, controller, reporter,
-            ) {
+            if let Err(error) =
+                self.import_output(execution, output, deadline, imported, bytes, reporter)
+            {
                 return super::report_uncertainty(
                     invocation,
                     sequence,

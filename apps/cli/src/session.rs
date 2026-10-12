@@ -1,6 +1,6 @@
 //! Load one credential and negotiate before routing a command through the shared client.
 //!
-//! Common envelope construction preserves operator IDs, guards, reasons, and evidence. Local
+//! Stable request identities remain attached to daemon-owned receipts. Local
 //! confirmation expresses operator intent; the daemon still owns authorization and acceptance.
 //! Document reads share a single-stdin-use rule so one command cannot consume it twice.
 
@@ -13,13 +13,7 @@ use std::{
 };
 
 use milkdrift_control_client::{BearerCredential, ClientConfig, ControlClient};
-use milkdrift_control_protocol::{
-    Command, CommandRequest, Cursor, LayoutDocument, MAX_DOCUMENT_BYTES, MAX_LAYOUT_BYTES,
-    PageRequest, ProtocolVersion,
-};
-use milkdrift_prompt_sequence::{
-    MAX_INLINE_PROMPT_BYTES, MAX_PROMPT_SEQUENCE_DOCUMENT_BYTES, PromptSequenceDocument,
-};
+use milkdrift_control_protocol::{Cursor, MAX_DOCUMENT_BYTES};
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -58,26 +52,6 @@ impl CliSession {
         &self.client
     }
 
-    pub(crate) fn command_request(&self, command: Command) -> Result<CommandRequest, CliError> {
-        command_request(&self.cli, command, None)
-    }
-
-    pub(crate) fn command_request_with_revision(
-        &self,
-        command: Command,
-        required_revision: &str,
-    ) -> Result<CommandRequest, CliError> {
-        command_request(&self.cli, command, Some(required_revision))
-    }
-
-    pub(crate) fn page_request(limit: u32, cursor: Option<&str>) -> Result<PageRequest, CliError> {
-        let cursor = Self::cursor(cursor)?;
-        let page = PageRequest { cursor, limit };
-        page.validate()
-            .map_err(|error| CliError::Invalid(error.to_string()))?;
-        Ok(page)
-    }
-
     pub(crate) fn cursor(value: Option<&str>) -> Result<Option<Cursor>, CliError> {
         value
             .map(|value| serde_json::from_value(Value::String(value.to_owned())))
@@ -96,71 +70,6 @@ impl CliSession {
             .await?;
         milkdrift_control_protocol::decode_json(&bytes)
             .map_err(|error| CliError::Invalid(error.to_string()))
-    }
-
-    pub(crate) async fn read_prompt_sequence(&self, path: &Path) -> Result<Value, CliError> {
-        serde_json::to_value(self.read_prompt_sequence_document(path).await?)
-            .map_err(|error| CliError::Internal(error.to_string()))
-    }
-
-    pub(crate) async fn read_prompt_sequence_document(
-        &self,
-        path: &Path,
-    ) -> Result<PromptSequenceDocument, CliError> {
-        let bytes = self
-            .read_bounded(
-                path,
-                MAX_PROMPT_SEQUENCE_DOCUMENT_BYTES.min(MAX_DOCUMENT_BYTES),
-                "prompt-sequence document",
-            )
-            .await?;
-        PromptSequenceDocument::from_bytes(&bytes)
-            .map_err(|error| CliError::Invalid(error.to_string()))
-    }
-
-    pub(crate) async fn read_remediation_prompt(&self, path: &Path) -> Result<String, CliError> {
-        let bytes = self
-            .read_bounded(path, MAX_INLINE_PROMPT_BYTES, "remediation prompt")
-            .await?;
-        if bytes.is_empty() || bytes.len() > MAX_INLINE_PROMPT_BYTES {
-            return Err(CliError::Invalid(format!(
-                "remediation prompt must contain 1..={MAX_INLINE_PROMPT_BYTES} bytes"
-            )));
-        }
-        String::from_utf8(bytes)
-            .map_err(|_| CliError::Invalid("remediation prompt is not UTF-8".to_owned()))
-    }
-
-    pub(crate) async fn read_layout(&self, path: &Path) -> Result<LayoutDocument, CliError> {
-        let bytes = self
-            .read_bounded(path, MAX_LAYOUT_BYTES, "layout document")
-            .await?;
-        milkdrift_control_protocol::decode_json(&bytes)
-            .map_err(|error| CliError::Invalid(error.to_string()))
-    }
-
-    pub(crate) fn write_exact_document(
-        destination: Option<&Path>,
-        bytes: &[u8],
-    ) -> Result<(), CliError> {
-        if let Some(destination) = destination {
-            if destination == Path::new("-") {
-                return Err(CliError::Invalid(
-                    "use --document, not --output -, to emit a document to stdout".to_owned(),
-                ));
-            }
-            return crate::output::PendingFile::create(destination)?.write_complete(bytes);
-        }
-        let mut stdout = io::stdout().lock();
-        stdout
-            .write_all(bytes)
-            .and_then(|()| stdout.flush())
-            .map_err(|error| {
-                CliError::Internal(format!(
-                    "canonical document output failed: {:?}",
-                    error.kind()
-                ))
-            })
     }
 
     pub(crate) async fn confirm(&self, operation: &str) -> Result<(), CliError> {
@@ -212,37 +121,6 @@ impl CliSession {
         crate::input::read_bounded(path, maximum, kind).await
     }
 }
-fn command_request(
-    cli: &Cli,
-    command: Command,
-    required_revision: Option<&str>,
-) -> Result<CommandRequest, CliError> {
-    if let (Some(selected), Some(required)) = (&cli.expected_revision, required_revision)
-        && selected != required
-    {
-        return Err(CliError::Invalid(
-            "--expected-revision conflicts with the exact revision required by this document"
-                .to_owned(),
-        ));
-    }
-    let request = CommandRequest {
-        protocol: ProtocolVersion::CURRENT,
-        command_id: cli.command_id.clone().unwrap_or_else(generated_command_id),
-        expected_sequence: cli.expected_sequence,
-        expected_revision: cli
-            .expected_revision
-            .clone()
-            .or_else(|| required_revision.map(str::to_owned)),
-        reason: cli.reason.clone(),
-        evidence: cli.evidence.clone(),
-        command,
-    };
-    request
-        .validate()
-        .map_err(|error| CliError::Invalid(error.to_string()))?;
-    Ok(request)
-}
-
 pub(crate) fn generated_command_id() -> String {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -347,73 +225,9 @@ async fn confirm(cli: &Cli, operation: &str) -> Result<(), CliError> {
 #[cfg(test)]
 mod tests {
     use clap::Parser as _;
-    use milkdrift_control_protocol::Command;
 
-    use super::{command_request, confirm};
+    use super::confirm;
     use crate::Cli;
-
-    #[test]
-    fn command_envelope_preserves_operator_owned_fields() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let cli = Cli::try_parse_from([
-            "milkdrift",
-            "--command-id",
-            "command-fixed",
-            "--reason",
-            "fixed reason",
-            "--expected-sequence",
-            "41",
-            "daemon",
-            "health",
-        ])?;
-        let request = command_request(
-            &cli,
-            Command::PauseRun {
-                run_id: "run-one".to_owned(),
-            },
-            None,
-        )?;
-        assert_eq!(request.command_id, "command-fixed");
-        assert_eq!(request.reason, "fixed reason");
-        assert_eq!(request.expected_sequence, Some(41));
-        assert!(request.expected_revision.is_none());
-        assert!(request.evidence.is_empty());
-        assert!(matches!(request.command, Command::PauseRun { run_id } if run_id == "run-one"));
-        Ok(())
-    }
-
-    #[test]
-    fn command_envelope_accepts_exact_revision_and_bounded_evidence()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let cli = Cli::try_parse_from([
-            "milkdrift",
-            "--command-id",
-            "command-fixed",
-            "--expected-revision",
-            "revision-one",
-            "--evidence",
-            "artifact=artifact-one",
-            "daemon",
-            "health",
-        ])?;
-        let request = command_request(
-            &cli,
-            Command::PauseRun {
-                run_id: "run-one".to_owned(),
-            },
-            None,
-        )?;
-        assert_eq!(request.expected_revision.as_deref(), Some("revision-one"));
-        assert_eq!(
-            request.evidence.first().ok_or("evidence absent")?.kind,
-            "artifact"
-        );
-        assert_eq!(
-            request.evidence.first().ok_or("evidence absent")?.id,
-            "artifact-one"
-        );
-        Ok(())
-    }
 
     #[tokio::test]
     async fn high_risk_json_mode_requires_yes() -> Result<(), Box<dyn std::error::Error>> {

@@ -2,10 +2,10 @@
 
 use divan::black_box;
 use milkdrift_evidence::{
-    EvidenceResult, ScenarioMeasurement, application_receipt_paths, artifact_range_read,
-    context_discovery_and_selection, context_materialization, daemon_owner_round_trip,
-    journal_append_batch, journal_append_one, local_process_stream_drain, model_stream_parsers,
-    peer_observation_paths, projection_rebuild, projection_snapshot_tail,
+    EvidenceResult, ScenarioMeasurement, artifact_range_read, daemon_owner_round_trip,
+    explicit_input_materialization, explicit_input_selection, local_process_stream_drain,
+    model_stream_parsers, peer_observation_paths, workflow_commit_batch, workflow_commit_one,
+    workflow_read_page, workflow_receipt_paths, workflow_snapshot_reopen,
 };
 
 fn main() {
@@ -28,28 +28,28 @@ fn measured(result: EvidenceResult<ScenarioMeasurement>) -> ScenarioMeasurement 
 }
 
 #[divan::bench(sample_count = 10, sample_size = 1)]
-fn persistence_journal_append_one() {
-    black_box(measured(journal_append_one()));
+fn persistence_workflow_commit_one() {
+    black_box(measured(workflow_commit_one()));
 }
 
 #[divan::bench(sample_count = 10, sample_size = 1)]
-fn persistence_journal_append_batch() {
-    black_box(measured(journal_append_batch()));
+fn persistence_workflow_commit_batch() {
+    black_box(measured(workflow_commit_batch()));
 }
 
 #[divan::bench(sample_count = 10, sample_size = 1)]
-fn runtime_projection_rebuild() {
-    black_box(measured(projection_rebuild()));
+fn runtime_workflow_read_page() {
+    black_box(measured(workflow_read_page()));
 }
 
 #[divan::bench(sample_count = 10, sample_size = 1)]
-fn runtime_projection_snapshot_tail() {
-    black_box(measured(projection_snapshot_tail()));
+fn runtime_workflow_snapshot_reopen() {
+    black_box(measured(workflow_snapshot_reopen()));
 }
 
 #[divan::bench(sample_count = 10, sample_size = 1)]
 fn persistence_application_receipts() {
-    black_box(measured(application_receipt_paths()));
+    black_box(measured(workflow_receipt_paths()));
 }
 
 #[divan::bench(sample_count = 10, sample_size = 1)]
@@ -59,12 +59,12 @@ fn persistence_peer_observations() {
 
 #[divan::bench(sample_count = 10, sample_size = 1)]
 fn context_metadata_selection() {
-    black_box(measured(context_discovery_and_selection()));
+    black_box(measured(explicit_input_selection()));
 }
 
 #[divan::bench(sample_count = 10, sample_size = 1)]
 fn context_selected_materialization() {
-    black_box(measured(context_materialization()));
+    black_box(measured(explicit_input_materialization()));
 }
 
 #[divan::bench(sample_count = 10, sample_size = 1)]

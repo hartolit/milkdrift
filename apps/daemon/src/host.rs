@@ -4,60 +4,36 @@ use std::{
     time::Duration,
 };
 
-use milkdrift_authority::{
-    AuthorityDecisionSnapshot, AuthorityOperation, GrantSetEvaluator, RequestedResourceFacts,
-    WorkflowRunScope,
-};
-use milkdrift_blueprint::{AuthorRef, BlueprintRevisionDocument, WorkflowId};
+use milkdrift_authority::GrantSetEvaluator;
 use milkdrift_capability::PeerId;
-use milkdrift_capability_host::{CapabilityHost, EffectWorkerHost};
-use milkdrift_capability_host::{CorePeerArtifactStore, PeerService};
-use milkdrift_control::{
-    ControlCommand, ControlCommandDocument, ControlId, ControlResult, ControlService,
-    OptimisticGuard, ProposalDigest, ProposalId, WorkflowProposalDocument,
+use milkdrift_capability_host::{
+    CapabilityHost, CorePeerArtifactStore, EffectWorkerHost, PeerService,
 };
-use milkdrift_control_protocol::{
-    ArtifactMetadataRead, CommandAccepted, CommandRequest, ContextManifestRead, ErrorCode,
-    HealthRead, ProposalDecision,
-};
+use milkdrift_control_protocol::{ArtifactMetadataRead, ErrorCode, HealthRead};
 use milkdrift_peer_http::PeerRegistry;
-use milkdrift_persistence::{
-    ArtifactReadAuthority, ArtifactStore, AttemptId, CorrelationKey, EvidenceId, EvidenceKind,
-    EvidenceReference, NodeExecutionId, Reason, ReconciliationDecisionId, RepeatDecisionId,
-    RevisionStore, RunQueryStore, RunSequence, SignalDeliveryMode, SignalId, SignalTypeId,
-    TimestampMillis,
-};
-use milkdrift_prompt_sequence::{PromptSequenceDocument, compile as compile_prompt_sequence};
+use milkdrift_persistence::TimestampMillis;
 use milkdrift_redb_store::RedbStore;
-use milkdrift_runtime::RuntimeService;
-use milkdrift_workspace::{ArtifactId, RunId, ScopeId, WorkspaceBudget, WorkspaceScope};
+use milkdrift_workspace::WorkspaceBudget;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{auth::ActorSession, auth::AuthRegistry, config::ShutdownConfig};
 
 mod artifacts;
-mod attempts;
 mod authorization;
 mod capabilities;
 mod clock;
-mod commands;
-mod definitions;
 mod health;
-mod layouts;
 mod maintenance;
 mod managed;
 mod peer_store;
 mod peers;
-mod proposals;
 mod queue;
 mod read_model;
-mod receipts;
 mod requests;
-mod results;
-mod runs;
 mod shutdown;
 mod startup;
+mod storage_ports;
 mod tasks;
 mod uploads;
 pub(crate) use tasks::TaskRequest;
@@ -66,16 +42,9 @@ use clock::DurableClock;
 use health::SharedHealth;
 use peers::{PeerRuntime, build_peer_runtime};
 use queue::OwnerRequest;
-use read_model::{
-    accepted_sequence, bounded, clock_unavailable, corruption, empty_attempt_read, internal,
-    invalid, map_resolve, not_found, parse_revision_id, public_attempt_usage,
-    public_authority_decision, public_capability_provenance, public_control,
-    public_execution_authority, public_operation_contract, public_persistence, snake_debug,
-    unauthorized,
-};
+use read_model::{clock_unavailable, internal};
 
 const OWNER_RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
-const APPLICATION_COMMAND_SCHEMA_VERSION: u32 = 1;
 const LEGACY_SIDECAR_FILE: &str = "control-state-v1.json";
 
 /// Daemon construction, owner-thread, or orderly-shutdown failure.
@@ -182,7 +151,6 @@ impl DaemonHost {
 }
 
 pub(crate) enum StreamAuthority {
-    Run(String),
     Capabilities,
     Health,
 }
@@ -217,9 +185,6 @@ struct Owner {
 struct WorkflowServices {
     tasks: Arc<milkdrift_runtime::TaskRuntime>,
     task_control: milkdrift_control::TaskControlService,
-    runtime: Arc<RuntimeService>,
-    control: Arc<ControlService>,
-    publications: Option<Arc<milkdrift_control::PublishedWorkflowService>>,
 }
 
 impl Owner {
@@ -236,86 +201,6 @@ impl Owner {
             .map(TimestampMillis::get)
             .map_err(|_| clock_unavailable())
     }
-
-    fn inspect_control(
-        &self,
-        session: &ActorSession,
-        command: ControlCommand,
-        expected_sequence: Option<u64>,
-        suffix: &str,
-    ) -> Result<ControlResult, PublicFailure> {
-        let now = self.now()?;
-        let seed = format!("{}:{suffix}:{now}", session.actor.as_str());
-        let digest = blake3::hash(seed.as_bytes());
-        let document = ControlCommandDocument::new(
-            ControlId::new(format!("query-{}", &digest.to_hex().as_str()[..32]))
-                .map_err(public_control)?,
-            session.context.clone(),
-            TimestampMillis::new(now),
-            OptimisticGuard {
-                expected_run_sequence: expected_sequence.map(RunSequence::new),
-                expected_revision: None,
-                expected_proposal_digest: None,
-            },
-            Reason::new("authenticated control query").map_err(public_persistence)?,
-            Vec::new(),
-            command,
-        )
-        .map_err(public_control)?;
-        self.workflow()?
-            .control
-            .execute(&document)
-            .map_err(public_control)
-    }
-}
-
-fn default_workspace_budget() -> Result<WorkspaceBudget, milkdrift_workspace::WorkspaceError> {
-    WorkspaceBudget::new(
-        10_000,
-        1_048_576,
-        64 * 1_048_576,
-        10_000,
-        64 * 1_048_576,
-        10 * 1_073_741_824,
-    )
-}
-
-fn evidence(request: &CommandRequest) -> Result<Vec<EvidenceReference>, PublicFailure> {
-    request
-        .evidence
-        .iter()
-        .map(|item| {
-            let kind = match item.kind.as_str() {
-                "authority_decision" => EvidenceKind::AuthorityDecision,
-                "worker_observation" => EvidenceKind::WorkerObservation,
-                "external_receipt" => EvidenceKind::ExternalReceipt,
-                "artifact" => EvidenceKind::Artifact,
-                "recovery_observation" => EvidenceKind::RecoveryObservation,
-                _ => return Err(invalid("unsupported evidence kind")),
-            };
-            Ok(EvidenceReference {
-                id: EvidenceId::new(item.id.clone()).map_err(public_persistence)?,
-                kind,
-            })
-        })
-        .collect()
-}
-
-fn internal_control_id(
-    session: &ActorSession,
-    request: &CommandRequest,
-    suffix: &str,
-) -> Result<ControlId, PublicFailure> {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"milkdrift.daemon-control-id.v1\0");
-    hasher.update(session.actor.as_str().as_bytes());
-    hasher.update(request.command_id.as_bytes());
-    hasher.update(suffix.as_bytes());
-    ControlId::new(format!(
-        "api-{}",
-        &hasher.finalize().to_hex().as_str()[..32]
-    ))
-    .map_err(public_control)
 }
 
 #[cfg(test)]

@@ -7,6 +7,7 @@ export interface ConnectionProfile {
 }
 
 const profileKey = 'milkdrift.connections.v1';
+export const maxConnections = 16;
 
 export function endpointUrl(value: string, pageProtocol = window.location.protocol): string {
   let url: URL;
@@ -32,7 +33,7 @@ export function loadProfiles(storage: Storage = window.localStorage): Connection
   try {
     const value: unknown = JSON.parse(storage.getItem(profileKey) ?? '[]');
     if (!Array.isArray(value)) return [];
-    return value.slice(0, 16).filter((item): item is ConnectionProfile =>
+    return value.slice(0, maxConnections).filter((item): item is ConnectionProfile =>
       item !== null && typeof item === 'object' &&
       typeof item.id === 'string' && typeof item.label === 'string' &&
       typeof item.endpoint === 'string' && typeof item.daemonId === 'string',
@@ -43,6 +44,7 @@ export function loadProfiles(storage: Storage = window.localStorage): Connection
 }
 
 export function saveProfiles(profiles: ConnectionProfile[], storage: Storage = window.localStorage): void {
+  if (profiles.length > maxConnections) throw new Error(`At most ${maxConnections} named daemon connections can be saved. Forget a connection before adding another.`);
   storage.setItem(profileKey, JSON.stringify(profiles.map(({ id, label, endpoint, daemonId }) =>
     ({ id, label, endpoint, daemonId }),
   )));

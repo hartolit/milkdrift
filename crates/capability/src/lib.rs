@@ -34,8 +34,7 @@ mod resolved;
 
 pub use admission::{
     AdmissionBound, AdmissionMonetaryBound, AdmissionUnit, InvocationAdmissionEnvelope,
-    InvocationCounts, MAX_PUBLICATION_DEPTH, NestedWorkUsage, PUBLISHED_ALLOWANCE_EXTENSION,
-    PublicationAncestor,
+    InvocationCounts, NestedWorkUsage,
 };
 pub use bounded::{BoundedJson, ContractError, MAX_DOCUMENT_BYTES};
 pub use descriptor::{
@@ -53,10 +52,10 @@ pub use identity::{
     ProviderProfileRef, SchemaId, TrustZone,
 };
 pub use invocation::{
-    ArtifactReference, CONTEXT_ITEM_INPUT_PREFIX, CONTEXT_MANIFEST_INPUT_NAME,
-    CancellationAcknowledgement, CancellationRequest, ErrorClass, InputReference, InvocationEvent,
-    InvocationEventKind, InvocationFailure, InvocationRequest, InvocationTerminal,
-    InvocationValueReference, MAX_DURABLE_REFERENCE_BYTES, TerminalStatus, UsageObservation,
+    ArtifactReference, CancellationAcknowledgement, CancellationRequest, ErrorClass,
+    InputReference, InvocationEvent, InvocationEventKind, InvocationFailure, InvocationRequest,
+    InvocationTerminal, InvocationValueReference, MAX_DURABLE_REFERENCE_BYTES, TerminalStatus,
+    UsageObservation,
 };
 pub use placement::PlacementRequirement;
 pub use resolved::ResolvedCapabilitySnapshot;

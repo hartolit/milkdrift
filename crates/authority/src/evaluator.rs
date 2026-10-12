@@ -239,13 +239,6 @@ impl AuthorityEvaluator for GrantSetEvaluator {
         {
             reasons.push(DecisionReasonCode::ArtifactScopeMismatch);
         }
-        if let (Some(revision), Some(owner)) = (
-            request.resources.revision.as_ref(),
-            request.resources.layout_owner.as_ref(),
-        ) && !grant.resources().layouts.matches(revision, owner)
-        {
-            reasons.push(DecisionReasonCode::LayoutScopeMismatch);
-        }
         if matches!(
             request.operation,
             crate::AuthorityOperation::InspectPeer

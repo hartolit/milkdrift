@@ -6,27 +6,23 @@ generations, execution permits, and workers. Start here when changing that conne
 an adapter. Operators configure existing adapters through the
 [daemon guide](../../docs/operations/daemon.md).
 
-Local workflow, direct client and serving-peer execution share exact-generation acquisition, preparation, and
-one-shot entry. Runtime commits local workflow entry and controller reservations; this crate's
+Ordinary task, direct client and serving-peer execution share exact-generation acquisition, preparation,
+and one-shot entry. Runtime atomically commits task entry and cumulative resource accounting; this crate's
 serving owner commits direct/remote acceptance and entry. Ordinary builds expose no `execute_exact`
 shortcut; test-support helpers exercise preparation without a durable owner. Public direct calls
-use the [independent execution recipe](../../examples/operator/README.md#independent-execution).
+use the [independent execution recipe](../../examples/operator/README.md#independent-execution-hosts).
 
 `PeerService::prepare_client_invocation` turns explicit client choices into a reviewable request
 using the current authorized catalog and durable clock. Clients need no snapshot/hash construction
 or private profile rules. This performs no adapter preparation or execution: submission and final
 entry still recheck their own authority and lifecycle boundaries.
 
-`DirectInputSelection` freezes only explicit inputs. Workflow context retains its required manifest,
-exact coordinates and continuation rules. An adapter opts into direct discovery only when it can
-consume that selection without workflow services; process and fresh model operations do so, while
-workflow control and remote registrations do not. Serving output names the real host invocation;
-the direct path creates no run, workflow account or duplicate local-runtime journal.
-
-Ordinary task dispatch retains its real workflow coordinates and carries its exact frozen inputs
-in `AdapterInputSelection::Task`. It uses the same bounded explicit-input materializer as direct
-work. Result publication uses the task's accepted artifact budget; it does not reconstruct an old
-graph run or consult a graph context manifest.
+`DirectInputSelection` freezes explicit inputs. Ordinary task dispatch retains its real workflow
+coordinates in `AdapterInputSelection::Task` and uses the same bounded materializer as direct work.
+The accepted request carries the exact input bytes or immutable artifact references; no adapter
+reconstructs a workflow history or causal manifest. Serving output names the real host invocation,
+while task publication uses its owning workflow's durable entry proof and frozen artifact allowance.
+Pending and committed output both consume that invocation's output ceiling.
 
 The daemon installs one durable native-directory claim store before admitting task paths. Host
 preparation resolves each declared directory to its physical path and identity, acquires its full
@@ -51,13 +47,13 @@ the [serving owner](src/serving.rs) supplies the remote durable acceptance bound
 ```text
 task requirement
   -> host: match current descriptors, evaluate authority, check health/capacity
-  -> runtime: persist selection and frozen context, claim the invocation effect
+  -> runtime: persist the task start, exact selection and frozen inputs
   -> runtime: recheck the exact attempt/lease and current authority
   -> host: acquire exact-generation permit, prepare local data, derive resource bounds
   -> runtime: recheck authority after preparation
-  -> runtime: commit entry decision and any controller reservation atomically
+  -> runtime: atomically commit final entry, managed holds and cumulative resource usage
   -> adapter: consume prepared entry, enter external work, report observations
-  -> runtime reporter: durably accept observations and update run state
+  -> runtime reporter: durably accept observations and update the owning task state
 ```
 
 Resolution returns a selection, not a held permit. The later claim can fail if capacity or the
@@ -75,8 +71,7 @@ generation. Declare its filesystem, network, secret, and budget requirements bef
 `admission_envelope` describes enforceable bounds for the exact request; an unavailable bound stays
 unknown. It runs before durable entry, so it must not start the external operation.
 Override `prepare` when local task checks and request construction can happen before that boundary.
-Return an owned `PreparedAdapterExecution`; its closure receives the final execution context and
-controller reservation. The default freezes the envelope and defers execution to `execute`.
+Return an owned `PreparedAdapterExecution`; its closure receives the final execution context. The default freezes the envelope and defers execution to `execute`.
 Preparation may use bounded authorized local reads, but must never contact a provider, create a
 remote session, or start another external effect. The host contains preparation panics and releases
 the same generation permit when preparation or final admission fails.

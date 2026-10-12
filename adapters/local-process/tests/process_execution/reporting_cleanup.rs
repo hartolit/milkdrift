@@ -88,7 +88,7 @@ fn inherited_idle_pipes_cannot_hold_invocation_cleanup() -> TestResult {
         let worker_host = host.clone();
         let worker_reporter = reporter.clone();
         let worker_request = request.clone();
-        let context = context()?;
+        let context = context(&request)?;
         let (sender, receiver) = mpsc::sync_channel(1);
         let worker = thread::spawn(move || {
             let result = worker_host.execute_exact_with_context(
@@ -337,7 +337,7 @@ fn reporting_rejection_with_inheritance(
     let worker_reporter = reporter.clone();
     let worker_host = host.clone();
     let worker_request = request.clone();
-    let context = context()?;
+    let context = context(&request)?;
     let (sender, receiver) = mpsc::sync_channel(1);
     let worker = thread::spawn(move || {
         let result = worker_host.execute_exact_with_context(
@@ -485,7 +485,7 @@ fn termination_paths_settle_the_child_and_keep_terminal_meaning() -> TestResult 
         let worker_adapter = adapter.clone();
         let worker_reporter = reporter.clone();
         let worker_request = request.clone();
-        let context = context()?;
+        let context = context(&request)?;
         let (sender, receiver) = mpsc::sync_channel(1);
         let worker = thread::spawn(move || {
             let result = worker_adapter.execute(

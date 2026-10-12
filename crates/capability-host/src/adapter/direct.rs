@@ -16,33 +16,19 @@ pub struct DirectInputSelection {
 
 impl DirectInputSelection {
     /// Selects only supplied inline values and exact immutable artifact references.
-    /// Workflow context and workspace-value references are refused, never silently omitted.
+    /// Workspace-value references are refused, never silently omitted.
     ///
     /// # Errors
-    /// Rejects workflow bindings, incomplete artifact metadata, byte overflow, or inputs exceeding
+    /// Rejects workspace bindings, incomplete artifact metadata, byte overflow, or inputs exceeding
     /// the allowance. Canonical encoding failures are also returned.
     pub fn new(
         request: &InvocationRequest,
         maximum_bytes: u64,
     ) -> Result<Self, InvocationDataError> {
-        if request.context_manifest().is_some() {
-            return Err(rejected(
-                "direct input cannot carry a workflow context manifest",
-            ));
-        }
         let mut artifacts = Vec::new();
         let mut selected = Vec::new();
         let mut bytes = 0_u64;
         for input in request.inputs() {
-            if input.name() == milkdrift_capability::CONTEXT_MANIFEST_INPUT_NAME
-                || input
-                    .name()
-                    .starts_with(milkdrift_capability::CONTEXT_ITEM_INPUT_PREFIX)
-            {
-                return Err(rejected(
-                    "direct input cannot use reserved workflow context bindings",
-                ));
-            }
             let (size, fact) = match input.value() {
                 InvocationValueReference::Inline { value } => {
                     let content = serde_json::to_vec(value.value())
@@ -108,15 +94,13 @@ impl DirectInputSelection {
     /// Checks the immutable request facts after the serving owner scopes invocation identities.
     ///
     /// # Errors
-    /// Rejects changes to the frozen capability, operation, profile, inputs, or extensions, and
-    /// refuses any added workflow context manifest.
+    /// Rejects changes to the frozen capability, operation, profile, inputs or extensions.
     pub fn validate_request(&self, request: &InvocationRequest) -> Result<(), InvocationDataError> {
         if self.request.capability() != request.capability()
             || self.request.operation() != request.operation()
             || self.request.provider_profile() != request.provider_profile()
             || self.request.inputs() != request.inputs()
             || self.request.extensions() != request.extensions()
-            || request.context_manifest().is_some()
         {
             return Err(rejected("request differs from its frozen direct selection"));
         }

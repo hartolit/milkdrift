@@ -16,7 +16,7 @@ claiming an installed or qualified dependency lock.
 
 The authoritative transport inventory is
 [the daemon router](../../../../../apps/daemon/src/http.rs), the closed
-[command enum](../../../../../crates/control-protocol/src/command.rs), the
+[command enum](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control-protocol/src/command.rs), the
 [read types](../../../../../crates/control-protocol/src/read.rs) and the owning handlers.
 [Control protocol constants](../../../../../crates/control-protocol/src/lib.rs) currently specify
 **2.20**, with exact major/minor negotiation; the version reply identifies the service, not the
@@ -33,7 +33,7 @@ is existing test-source evidence for an actual-daemon route, not a browser quali
 | Compose structured or advanced work | `construct_blueprint` over existing `BlueprintDraft.mutations`; validate/import blueprint routes | Generic public mutation input already exists. A broader GUI requires complete supported mutation forms and lossless round-trip handling; the absence of a convenience gesture is not proof of a missing runtime primitive. Daemon validation and identity remain authoritative. |
 | Keep an independent editable definition | `copy_blueprint` | Exact source inspection and destination import authority apply. Identity-bound governing agreements refuse copying; presenting every definition as freely copyable would be wrong. |
 | Supply and execute inputs | `POST /v1/artifact-inputs`, then `start_run` | Upload is bounded (524,288 decoded bytes in current protocol). Ordinary inputs are committed artifact identities. A generic large-file uploader or arbitrary server path is not currently supported. |
-| Recover a lost workflow-start response | Resubmit the exact command envelope under the original host/actor/grant | [Saved-run client source](../../../../../crates/control-client/src/saved_run.rs) captures authority before submission and checks it before replay. Browser persistence needs a bounded, private recovery representation; it must not create a second execution ledger. |
+| Recover a lost workflow-start response | Resubmit the exact command envelope under the original host/actor/grant | [Saved-run client source](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control-client/src/saved_run.rs) captures authority before submission and checks it before replay. Browser persistence needs a bounded, private recovery representation; it must not create a second execution ledger. |
 | See progress and accepted results | Run/result/node/attempt/timeline routes | `RunResultRead` distinguishes truncated view, restricted outputs and current action hints. Terminal output is separate from intermediate attempt output. Missing, denied and omitted information cannot be rendered as zero or complete. |
 | Pause, resume, cancel or signal | `pause_run`, `resume_run`, `cancel_run`, `signal_run` | Command acceptance is not proof that external work stopped. Signal identity/correlation is explicit. Closing the panel or aborting an HTTP read is a different operation. |
 | Change future work | `submit_proposal`, exact `decide_proposal`, exact `apply_proposal`, proposal impact reads | Proposed, approved and applied are separate states. `prepare_model_repair` is a narrow convenience, not a generic graph rewrite service. Display the exact base and affected future work before committing. |
@@ -48,9 +48,9 @@ is existing test-source evidence for an actual-daemon route, not a browser quali
 | Observe changes | Run, health and capability SSE routes | Run cursor durability differs from process-local health/capability cursors. Resynchronization is explicit; a complete empty capability snapshot replaces the old catalog. No global cross-daemon event feed exists. |
 
 The layout observation is deliberately traced end to end: the
-[layout type](../../../../../crates/control-protocol/src/layout.rs) documents sealing, but
-[receipt processing](../../../../../apps/daemon/src/host/receipts.rs) derives author/digest before
-the [layout owner](../../../../../apps/daemon/src/host/layouts.rs) validates and persists it. Reading
+[layout type](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control-protocol/src/layout.rs) documents sealing, but
+[receipt processing](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/src/host/receipts.rs) derives author/digest before
+the [layout owner](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/src/host/layouts.rs) validates and persists it. Reading
 only the type would have produced a false API-gap claim. This correction was reported during the
 investigation and is a useful check on all other purported gaps.
 

@@ -42,7 +42,7 @@ pub enum StorageHealthStatus {
 /// One bounded adapter-neutral component observation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StorageComponentHealth {
-    /// Stable component family, such as `journal` or `artifact_content`.
+    /// Stable component family, such as `tasks` or `artifact_content`.
     pub component: BoundedDetail,
     /// Component status.
     pub status: StorageHealthStatus,
@@ -65,15 +65,12 @@ pub struct StorageHealth {
 
 /// Closed durable-record family traversed by an integrity scan.
 ///
-/// The ordering is part of the cursor contract: revisions precede run events,
-/// which precede artifact metadata/content and derived-index consistency.
+/// Task snapshots precede artifact metadata/content and derived-index consistency.
 /// Adapter-specific table identities do not cross this boundary.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum IntegrityScanFamily {
-    /// Immutable workflow revision documents.
-    Revisions,
-    /// Append-only run-event envelopes and cumulative history-chain records.
-    RunEvents,
+    /// Runtime-owned task snapshots and frozen execution facts.
+    Tasks,
     /// Artifact metadata and, when requested, content bytes.
     Artifacts,
     /// Authoritative run heads and derived, verifiable discovery/accounting indexes.
@@ -142,7 +139,7 @@ pub struct IntegrityScanRequest {
     pub limit: PageSize,
     /// Whether artifact bytes should be rehashed, not merely metadata-checked.
     pub verify_artifact_content: bool,
-    /// Exclusive cursor returned by the prior call; absent starts at revisions.
+    /// Exclusive cursor returned by the prior call; absent starts at task snapshots.
     pub cursor: Option<IntegrityScanCursor>,
 }
 
@@ -199,12 +196,10 @@ mod tests {
 
     #[test]
     fn integrity_cursor_is_bounded_and_opaque() -> Result<(), PersistenceError> {
-        assert!(
-            IntegrityScanCursor::new(IntegrityScanFamily::Revisions, Vec::new(), false).is_err()
-        );
+        assert!(IntegrityScanCursor::new(IntegrityScanFamily::Tasks, Vec::new(), false).is_err());
         assert!(
             IntegrityScanCursor::new(
-                IntegrityScanFamily::RunEvents,
+                IntegrityScanFamily::Tasks,
                 vec![0; MAX_INTEGRITY_SCAN_CURSOR_KEY_BYTES + 1],
                 false,
             )

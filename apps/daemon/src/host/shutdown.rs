@@ -260,7 +260,7 @@ impl Owner {
         let started = std::time::Instant::now();
         let deadline = Duration::from_millis(self.shutdown.deadline_ms);
         if let Some(workflow) = &self.workflow {
-            workflow.runtime.begin_shutdown();
+            workflow.tasks.begin_shutdown();
         }
         let peer = self
             .peer_service
@@ -311,7 +311,7 @@ impl Owner {
         &mut self,
     ) -> Result<Option<(EffectWorkerHost, EffectShutdownMode)>, PublicFailure> {
         if let Some(workflow) = &self.workflow {
-            workflow.runtime.begin_shutdown();
+            workflow.tasks.begin_shutdown();
         }
         if self.recovery_controls || self.workflow.is_none() {
             return Ok(None);
@@ -342,7 +342,7 @@ impl Owner {
         info!(phase = "draining", "runtime owner closing admission");
         health.set_lifecycle(Lifecycle::Draining);
         if let Some(workflow) = &self.workflow {
-            workflow.runtime.begin_shutdown();
+            workflow.tasks.begin_shutdown();
         }
         if self.effect_workers.take().is_some() {
             health.failure("effect worker owner was not transferred before shutdown");

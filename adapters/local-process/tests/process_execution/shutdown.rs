@@ -71,7 +71,7 @@ fn cancellation_and_shutdown_signal_only_through_the_monitor() -> TestResult {
         let worker_adapter = adapter.clone();
         let worker_reporter = reporter.clone();
         let worker_request = request.clone();
-        let context = context()?;
+        let context = context(&request)?;
         let (finished, completion) = mpsc::sync_channel(1);
         let worker = thread::spawn(move || {
             let result = worker_adapter.execute(

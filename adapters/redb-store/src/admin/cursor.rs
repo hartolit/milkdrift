@@ -1,20 +1,6 @@
-use super::{
-    APPLICATION_COMMAND_RECEIPTS_COLD, APPLICATION_COMMAND_RECEIPTS_HOT,
-    APPLICATION_HOT_RECEIPTS_BY_COMPLETION, APPLICATION_LAYOUTS, APPLICATION_PROPOSALS,
-    ARTIFACT_ACCOUNTING, ARTIFACT_DELETE_GUARDS, ARTIFACT_DIGEST_RESERVATIONS, ARTIFACT_MANIFEST,
-    ARTIFACT_OWNERSHIP, ARTIFACT_PATHS, ARTIFACT_PUBLICATIONS, ARTIFACT_PUBLICATIONS_BY_AGE,
-    ARTIFACT_REFERENCES, ARTIFACT_RESERVATIONS, ARTIFACT_TEMP_MANIFEST, ARTIFACT_TEMP_OWNERS,
-    ARTIFACTS_BY_DIGEST, BoundedDetail, COMMAND_RESULTS, CONTROLLER_ACCOUNT_REVISIONS,
-    CONTROLLER_ACCOUNTS, CONTROLLER_ARTIFACT_CHARGES, CONTROLLER_RUN_BINDINGS,
-    CONTROLLER_TRANSITIONS, IntegrityScanCursor, IntegrityScanFamily, IntegrityScanRequest,
-    IntegrityScanResult, LEASE_ENTRIES, LEASE_INDEX, METADATA, NONTERMINAL_RUNS, PersistenceError,
-    REVISIONS, REVISIONS_BY_DIGEST, ROOT_SCOPES, RUN_HEADS, RUN_SUMMARIES, RUNNABLE_ENTRIES,
-    RUNNABLE_INDEX, RUNNABLE_RUN_HEADS, RedbStore, SCHEMA_VERSION_KEY, SCOPES, SECURITY_AUDIT,
-    SIGNAL_RECEIPTS, SNAPSHOT_LATEST, SNAPSHOTS, StorageComponentHealth, StorageHealthStatus,
-    TIMER_ENTRIES, TIMER_INDEX, VALUES, WORKSPACE_BUDGETS, WORKSPACE_USAGE, WORKSPACE_VALUE_HEADS,
-    error, integrity::scan_index_integrity,
-};
-const INTEGRITY_CURSOR_VERSION: u8 = 4;
+use super::integrity::scan_index_integrity;
+use super::*;
+const INTEGRITY_CURSOR_VERSION: u8 = 5;
 const INTEGRITY_CURSOR_PREFIX_BYTES: usize = 33;
 
 #[cfg(test)]
@@ -191,7 +177,7 @@ pub(crate) fn index_cursor_position(
             "index integrity cursor has no phase".to_owned(),
         ));
     };
-    if phase > 61 || key.is_empty() {
+    if phase > 63 || key.is_empty() {
         return Err(PersistenceError::InvalidCursor(
             "index integrity cursor has an unknown phase or empty key".to_owned(),
         ));
@@ -294,7 +280,6 @@ pub(crate) fn validate_integrity_cursor(
     request: &IntegrityScanRequest,
     read: &redb::ReadTransaction,
     revisions: &impl redb::ReadableTable<&'static str, &'static [u8]>,
-    events: &impl redb::ReadableTable<&'static [u8], &'static [u8]>,
     artifacts: &impl redb::ReadableTable<&'static str, &'static [u8]>,
 ) -> Result<(), PersistenceError> {
     let Some(cursor) = request.cursor.as_ref() else {
@@ -305,18 +290,17 @@ pub(crate) fn validate_integrity_cursor(
             "integrity cursor belongs to a different artifact-verification mode".to_owned(),
         ));
     }
-    let (cursor_anchor, cursor_key) = integrity_cursor_state(cursor)?;
+    let (cursor_anchor, _cursor_key) = integrity_cursor_state(cursor)?;
     if cursor_anchor != storage_anchor(read)? {
         return Err(PersistenceError::InvalidCursor(
             "integrity cursor belongs to a different storage schema".to_owned(),
         ));
     }
     let exists = match cursor.family() {
-        IntegrityScanFamily::Revisions => revisions
+        IntegrityScanFamily::Tasks => revisions
             .get(integrity_cursor_str(cursor, "revision")?)
             .map_err(error::redb)?
             .is_some(),
-        IntegrityScanFamily::RunEvents => events.get(cursor_key).map_err(error::redb)?.is_some(),
         IntegrityScanFamily::Artifacts => artifacts
             .get(integrity_cursor_str(cursor, "artifact")?)
             .map_err(error::redb)?
@@ -361,32 +345,35 @@ pub(crate) fn index_integrity_cursor_exists(
     };
     match phase {
         0 => read
-            .open_table(RUN_HEADS)
+            .open_table(TASK_RECEIPTS)
             .map_err(error::redb)?
             .get(string_key()?)
             .map_err(error::redb)
             .map(|row| row.is_some()),
         1 => read
-            .open_table(RUN_SUMMARIES)
+            .open_table(TASK_ACCOUNTING)
             .map_err(error::redb)?
             .get(string_key()?)
             .map_err(error::redb)
             .map(|row| row.is_some()),
         2 => read
-            .open_table(NONTERMINAL_RUNS)
+            .open_table(TASK_ACTION_OWNERS)
             .map_err(error::redb)?
             .get(string_key()?)
             .map_err(error::redb)
             .map(|row| row.is_some()),
-        3 => binary_cursor_exists(read, COMMAND_RESULTS, key),
-        4 => binary_cursor_exists(read, RUNNABLE_ENTRIES, key),
-        5 => binary_cursor_exists(read, RUNNABLE_INDEX, key),
-        6 => binary_cursor_exists(read, TIMER_ENTRIES, key),
-        7 => binary_cursor_exists(read, TIMER_INDEX, key),
-        8 => binary_cursor_exists(read, LEASE_ENTRIES, key),
-        9 => binary_cursor_exists(read, LEASE_INDEX, key),
-        10 => binary_cursor_exists(read, SCOPES, key),
-        11 => binary_cursor_exists(read, VALUES, key),
+        3 => read
+            .open_table(NATIVE_PATH_CLAIMS)
+            .map_err(error::redb)?
+            .get(string_key()?)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
+        4 => read
+            .open_table(TASK_OUTPUT_USAGE)
+            .map_err(error::redb)?
+            .get(string_key()?)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
         12 => read
             .open_table(WORKSPACE_USAGE)
             .map_err(error::redb)?
@@ -399,19 +386,18 @@ pub(crate) fn index_integrity_cursor_exists(
             .get(string_key()?)
             .map_err(error::redb)
             .map(|row| row.is_some()),
-        14 => read
-            .open_table(ROOT_SCOPES)
+        62 => read
+            .open_table(PEER_EXECUTIONS)
             .map_err(error::redb)?
             .get(string_key()?)
             .map_err(error::redb)
             .map(|row| row.is_some()),
-        15 => read
-            .open_table(REVISIONS)
+        63 => read
+            .open_table(PEER_EXECUTION_TOMBSTONES)
             .map_err(error::redb)?
             .get(string_key()?)
             .map_err(error::redb)
             .map(|row| row.is_some()),
-        16 => binary_cursor_exists(read, REVISIONS_BY_DIGEST, key),
         17 => read
             .open_table(ARTIFACT_MANIFEST)
             .map_err(error::redb)?
@@ -446,32 +432,6 @@ pub(crate) fn index_integrity_cursor_exists(
             .map(|row| row.is_some()),
         23 => read
             .open_table(ARTIFACT_TEMP_OWNERS)
-            .map_err(error::redb)?
-            .get(string_key()?)
-            .map_err(error::redb)
-            .map(|row| row.is_some()),
-        24 => read
-            .open_table(SIGNAL_RECEIPTS)
-            .map_err(error::redb)?
-            .get(key)
-            .map_err(error::redb)
-            .map(|row| row.is_some()),
-        25 => read
-            .open_table(RUNNABLE_RUN_HEADS)
-            .map_err(error::redb)?
-            .get(string_key()?)
-            .map_err(error::redb)
-            .map(|row| row.is_some()),
-        26 => binary_cursor_exists(read, WORKSPACE_VALUE_HEADS, key),
-        27 => read
-            .open_table(METADATA)
-            .map_err(error::redb)?
-            .get(string_key()?)
-            .map_err(error::redb)
-            .map(|row| row.is_some()),
-        28 => binary_cursor_exists(read, SNAPSHOTS, key),
-        29 => read
-            .open_table(SNAPSHOT_LATEST)
             .map_err(error::redb)?
             .get(string_key()?)
             .map_err(error::redb)
@@ -515,11 +475,6 @@ pub(crate) fn index_integrity_cursor_exists(
             .get(key)
             .map_err(error::redb)
             .map(|row| row.is_some()),
-        36 => binary_cursor_exists(read, APPLICATION_COMMAND_RECEIPTS_HOT, key),
-        37 => binary_cursor_exists(read, APPLICATION_COMMAND_RECEIPTS_COLD, key),
-        38 => binary_cursor_exists(read, APPLICATION_HOT_RECEIPTS_BY_COMPLETION, key),
-        39 => binary_cursor_exists(read, APPLICATION_LAYOUTS, key),
-        40 => binary_cursor_exists(read, APPLICATION_PROPOSALS, key),
         41 => {
             let sequence = u64::from_be_bytes(key.try_into().map_err(|_| {
                 PersistenceError::InvalidCursor(
@@ -532,36 +487,6 @@ pub(crate) fn index_integrity_cursor_exists(
                 .map_err(error::redb)
                 .map(|row| row.is_some())
         }
-        42 => read
-            .open_table(CONTROLLER_ACCOUNTS)
-            .map_err(error::redb)?
-            .get(string_key()?)
-            .map_err(error::redb)
-            .map(|row| row.is_some()),
-        43 => read
-            .open_table(CONTROLLER_RUN_BINDINGS)
-            .map_err(error::redb)?
-            .get(string_key()?)
-            .map_err(error::redb)
-            .map(|row| row.is_some()),
-        44 => read
-            .open_table(CONTROLLER_TRANSITIONS)
-            .map_err(error::redb)?
-            .get(string_key()?)
-            .map_err(error::redb)
-            .map(|row| row.is_some()),
-        45 => read
-            .open_table(CONTROLLER_ARTIFACT_CHARGES)
-            .map_err(error::redb)?
-            .get(string_key()?)
-            .map_err(error::redb)
-            .map(|row| row.is_some()),
-        46 => read
-            .open_table(CONTROLLER_ACCOUNT_REVISIONS)
-            .map_err(error::redb)?
-            .get(string_key()?)
-            .map_err(error::redb)
-            .map(|row| row.is_some()),
         47 => read
             .open_table(crate::schema::MANAGED_INSTALLATIONS)
             .map_err(error::redb)?
@@ -581,44 +506,8 @@ pub(crate) fn index_integrity_cursor_exists(
             .get(string_key()?)
             .map_err(error::redb)
             .map(|row| row.is_some()),
-        51 => read
-            .open_table(crate::schema::MANAGED_LOCAL_USES)
-            .map_err(error::redb)?
-            .get(string_key()?)
-            .map_err(error::redb)
-            .map(|row| row.is_some()),
-        52 => read
-            .open_table(crate::schema::MANAGED_LINKS)
-            .map_err(error::redb)?
-            .get(string_key()?)
-            .map_err(error::redb)
-            .map(|row| row.is_some()),
         53 => read
             .open_table(crate::schema::MANAGED_EVALUATIONS)
-            .map_err(error::redb)?
-            .get(string_key()?)
-            .map_err(error::redb)
-            .map(|row| row.is_some()),
-        54 => read
-            .open_table(crate::schema::PUBLISHED_METHODS)
-            .map_err(error::redb)?
-            .get(string_key()?)
-            .map_err(error::redb)
-            .map(|row| row.is_some()),
-        55 => read
-            .open_table(crate::schema::PUBLISHED_METHOD_HEADS)
-            .map_err(error::redb)?
-            .get(string_key()?)
-            .map_err(error::redb)
-            .map(|row| row.is_some()),
-        56 => read
-            .open_table(crate::schema::PUBLISHED_LOCAL_LINKS)
-            .map_err(error::redb)?
-            .get(string_key()?)
-            .map_err(error::redb)
-            .map(|row| row.is_some()),
-        57 => read
-            .open_table(crate::schema::PUBLISHED_LOCAL_PENDING)
             .map_err(error::redb)?
             .get(string_key()?)
             .map_err(error::redb)
@@ -635,15 +524,8 @@ pub(crate) fn index_integrity_cursor_exists(
             .get(string_key()?)
             .map_err(error::redb)
             .map(|row| row.is_some()),
-        60 => read
-            .open_table(crate::schema::PUBLISHED_ACTIVE_METHODS)
-            .map_err(error::redb)?
-            .get(string_key()?)
-            .map_err(error::redb)
-            .map(|row| row.is_some()),
-        61 => binary_cursor_exists(read, crate::schema::REVISIONS_BY_WORKFLOW, key),
         _ => Err(PersistenceError::InvalidCursor(
-            "index integrity cursor has an unknown phase".to_owned(),
+            "unknown task integrity phase".to_owned(),
         )),
     }
 }

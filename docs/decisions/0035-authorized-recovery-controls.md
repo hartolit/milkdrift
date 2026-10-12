@@ -42,6 +42,6 @@ manifest rewriting, schema migration, account reset or external-effect resolutio
 process exit. Restored-copy guards remain in force until the explicit single-generation activation
 decision. Control protocol 2.6 adds the health state; strict older response readers require updating.
 
-The [operating procedure](../operations/daemon.md#authorized-recovery-controls) explains the CLI
+The [operating procedure at the retained checkpoint](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/docs/operations/daemon.md#authorized-recovery-controls) explains the CLI
 sequence. Runtime legacy fixtures and an actual-daemon proposal/restart scenario verify the same
 generation's preserved history, fresh execution, authorization, approval and replay boundaries.

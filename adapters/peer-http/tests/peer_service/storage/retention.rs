@@ -176,7 +176,7 @@ fn archived_tombstones_reclaim_hot_capacity_and_preserve_replay_conflict_and_his
             expires_at_unix_ms: now().saturating_add(60_000),
         };
         assert!(matches!(
-            artifact_store.negotiate(&peer, &offer, 1_048_576, None)?,
+            artifact_store.negotiate(&peer, &offer, 1_048_576)?,
             ArtifactTransferDecision::Transfer { .. }
         ));
         assert_eq!(
@@ -295,7 +295,7 @@ fn archived_tombstones_reclaim_hot_capacity_and_preserve_replay_conflict_and_his
         },
         expires_at_unix_ms: now().saturating_add(60_000),
     };
-    artifact_store.negotiate(&peer, &retained_download, 1_048_576, None)?;
+    artifact_store.negotiate(&peer, &retained_download, 1_048_576)?;
     assert_eq!(
         artifact_store
             .read_chunk(&peer, &retained_download.transfer, 0, 1_048_576)?

@@ -52,9 +52,9 @@ This is not approval of packages outside the stated paths.
 
 The source entry points are [control](../../../../../crates/control/src/lib.rs),
 [workspace](../../../../../crates/workspace/src/lib.rs),
-[context discovery](../../../../../crates/runtime/src/context/source/discovery.rs),
+[context discovery](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/context/source/discovery.rs),
 [model](../../../../../crates/model/src/lib.rs),
-[learning requests](../../../../../crates/control/src/learning/request.rs), and
+[learning requests](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control/src/learning/request.rs), and
 [evidence composition](../../../../../tools/evidence/README.md). Their boundaries are not
 justified by their names. The comparisons below state which obligations would move if a boundary
 were removed.
@@ -78,9 +78,9 @@ There are three distinct implemented relationships.
    are durable, but this owner neither writes a plan nor chooses evidence for a planning model.
 
 These statements follow the actual
-[adapter input](../../../../../crates/control/src/adapter.rs),
-[proposal submission](../../../../../crates/control/src/service.rs), and
-[wrapper builder](../../../../../crates/control/src/controller/policy.rs), rather than the
+[adapter input](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control/src/adapter.rs),
+[proposal submission](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control/src/service.rs), and
+[wrapper builder](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control/src/controller/policy.rs), rather than the
 word “controller.” The closed [control command enum](../../../../../crates/control/src/command.rs)
 has inspection, proposal, approval, application, pause/resume, run creation and retained-work
 resolution; it has no goal-to-method request.
@@ -88,22 +88,22 @@ resolution; it has no goal-to-method request.
 A whole-workspace Rust search for `from_model_response` and
 `workflow_proposal_structured_output` resolves the possible hidden consumer. Apart from parser
 tests, the structured producer/consumer is the
-[Slotbook learning driver](../../../../../tools/evidence/src/bin/slotbook-evidence/learning/author/exercise/proposal.rs).
+[Slotbook learning driver](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/tools/evidence/src/bin/slotbook-evidence/learning/author/exercise/proposal.rs).
 The one production call to `from_model_response` is
-[daemon learning verification](../../../../../apps/daemon/src/host/commands/learning/proposal.rs).
+[daemon learning verification](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/src/host/commands/learning/proposal.rs).
 It authenticates a candidate **already supplied by the caller** against the model's retained
 response, manifest and declared run. It does not launch or continue the model operation. Source
 inspection found no production consumer that closes that missing orchestration.
 
 The demonstrations make the gap concrete. The
-[headless controller driver](../../../../../tools/evidence/src/bin/headless-cli-evidence/controller.rs)
+[headless controller driver](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/tools/evidence/src/bin/headless-cli-evidence/controller.rs)
 constructs the repair mutation, installs a decision node, submits it, obtains separate approval,
 applies it and releases waiting work. Its
-[model review prompt](../../../../../tools/evidence/src/bin/headless-cli-evidence/controller/review.rs)
+[model review prompt](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/tools/evidence/src/bin/headless-cli-evidence/controller/review.rs)
 tells the model that the intended fix changes `answer.txt` from 41 to 42 and asks for
 `approved_repair`. This proves useful execution/accounting and refusal relationships; it does not
 prove discovery of a method or independent orchestration. The
-[Slotbook source driver](../../../../../tools/evidence/src/bin/slotbook-evidence/develop/proposal.rs)
+[Slotbook source driver](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/tools/evidence/src/bin/slotbook-evidence/develop/proposal.rs)
 selects prior observations, builds/imports a model workflow, starts and polls it, downloads its
 response, maps source code into a known editable region and attaches authenticated provenance.
 The learning driver gives the full baseline and schema, then similarly constructs the workflow,
@@ -327,10 +327,10 @@ This initial scope comparison preceded U17. Its diagnosis of current restriction
 final U17 disposition below replaces its narrower assumptions about reviewer independence,
 predeclaration and knowledge being an executable method.
 
-The implemented [learning declaration](../../../../../crates/control/src/learning.rs) requires
+The implemented [learning declaration](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control/src/learning.rs) requires
 agreement/policy/verifier digests, exact protected check names, separate managed workspaces and
 targets per pair, accepted published invocations, a returned candidate artifact and a positive
-`minimum_repair_reduction`. [Daemon declaration](../../../../../apps/daemon/src/host/commands/learning.rs)
+`minimum_repair_reduction`. [Daemon declaration](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/src/host/commands/learning.rs)
 checks the resources are prepared at the declared generations and verifies their protection.
 The comparison counts failed candidate submissions, rejects any paired regression and preserves
 missing evidence as inconclusive. This is valuable for a protected application method. It rejects
@@ -421,8 +421,8 @@ declarations or conversion of old comparisons into the new ordinary-work profile
 ## Tests must challenge the choice
 
 Existing tests inspected here have useful independently justified assertions, but they are not
-whole-product proof. [Proposal contracts](../../../../../crates/control/tests/proposal_contracts.rs)
-reject malformed structured output. [Causal context](../../../../../crates/runtime/tests/causal_context.rs)
+whole-product proof. [Proposal contracts](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control/tests/proposal_contracts.rs)
+reject malformed structured output. [Causal context](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/tests/causal_context.rs)
 permutes candidate order, refuses required losses even after selection stops, redacts omissions,
 isolates siblings and commits a manifest before dispatch. The first of those proves deterministic
 selection, not that the selected evidence is the best evidence for reasoning. A legitimate
@@ -430,11 +430,11 @@ variation is a decisive old critique reachable through an explicit artifact whil
 irrelevant work exists; another is a join exposing one output while the sibling's private failed
 analysis must remain hidden.
 
-[Learning tests](../../../../../crates/control/tests/learning.rs) independently vary one paired
+[Learning tests](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control/tests/learning.rs) independently vary one paired
 regression, zero baseline rework, missing history/usage, different returned product, verifier and
 shared resources. They justify the existing finite profile. Their requirement for managed targets
 does not justify rejecting an ordinary brief-review method; that is the variation motivating the
-new profile. [Daemon learning verification](../../../../../apps/daemon/src/host/commands/learning/proposal.rs)
+new profile. [Daemon learning verification](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/src/host/commands/learning/proposal.rs)
 checks the actual response against the submitted mutation and rejects held-out context; this must
 remain on the production path after consolidation.
 
@@ -532,10 +532,10 @@ obligations and any changed agreement. These choices are fixed in an immutable
 | Control-owned session with exact runtime associations | Control owns accepted next-work decisions and bounded pending actions. Runtime owns every accepted work/model run and all task scheduling, attempts, effects and recovery. Persistence atomically validates account associations when a session action creates a run. | Adds a real application coordination record but does not duplicate task lifecycle. Can react to a paused or running work run using public owner facts; avoids forcing an artificial never-ending workflow around the user's methods. |
 
 The limitation of the first route is source-backed. Current
-[subworkflow driving](../../../../../crates/runtime/src/engine/structured/subworkflow.rs) starts
+[subworkflow driving](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/structured/subworkflow.rs) starts
 an exact pinned child from a parent execution and imports its outputs on terminal observation.
 A paused child remains active; it does not return a next-round result. Current
-[repeat driving](../../../../../crates/runtime/src/engine/structured/repeat.rs) consumes a fixed
+[repeat driving](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/structured/repeat.rs) consumes a fixed
 pinned body and its completion/condition. A planner revising its own root also observes a sequence
 that its own output then advances. A carefully designed future root method can solve these, but
 it needs exact new semantics; claiming it uses only current primitives hides the design work.
@@ -601,7 +601,7 @@ verification facts before `Conclude` can become completion.
 ### One cumulative account, with a real origin
 
 Do not manufacture a terminal-only controller run merely to obtain a session account. Current
-[account declarations](../../../../../crates/persistence/src/controller_account.rs) already
+[account declarations](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/persistence/src/controller_account.rs) already
 distinguish controller occurrences and published invocations, but retain a mandatory controller
 run and optional origin fields. Replace the new-write origin shape with a closed
 `ExecutionAccountOrigin::{ControllerOccurrence, PublishedInvocation, WorkSession}`. A session
@@ -868,12 +868,12 @@ making `LearningDeclaration`'s existing method/resource fields nullable would ob
 finite claims and weaken protected publication.
 
 The actual current selection owner confirms that this is more than renaming a comparison.
-`select` in [daemon learning](../../../../../apps/daemon/src/host/commands/learning.rs) requires
+`select` in [daemon learning](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/src/host/commands/learning.rs) requires
 one to eight exact run pages, resolves `selection.method`, requires an existing nonremoved managed
 installation and authorizes `resource.inspect` through capability administration. Supersession
 must preserve the workspace; changing the applicable method requires a retained `Promotion`
 receipt. Approval also accepts only `Promotion` with an eligible method comparison.
-[Promotion handling](../../../../../apps/daemon/src/host/commands/learning/promotion.rs) is actual
+[Promotion handling](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/src/host/commands/learning/promotion.rs) is actual
 publication through `PublishedWorkflowService`, with an exact service template/generation and
 separate publication authorization. Thus a legitimate research artifact with no run pages or
 managed installation cannot enter this current knowledge selection, and a knowledge-only approval
@@ -997,7 +997,7 @@ was made for this follow-up.
 
 ### What the actual reconciliation owner proves
 
-[ReconciliationMatrix and plan_reconciliation](../../../../../crates/runtime/src/reconciliation.rs)
+[ReconciliationMatrix and plan_reconciliation](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/reconciliation.rs)
 compare the exact old/new revision in one workflow lineage. They classify node configuration and
 dependency fingerprints against **each scoped occurrence**, not against a whole-definition
 equivalence certificate. A changed revision is expected to mean different future work. The owner
@@ -1013,35 +1013,35 @@ the selected policy; it does not demand that every old graph can first become an
 | W itself changes after entry | Policy matters: `FinishCurrentThenAdopt` can leave current work running under its old definition; safe cancellation/restart requires its actual safe-work conditions. Changed completed/uncertain side effects require the existing explicit authority/remediation route or refuse. A new source format cannot waive those conditions. |
 | A dependency change affects an already started descendant | It receives the specific `StartedDescendantDependencyChanged` classification and existing policy/authority treatment, not a blanket safe-edit result because only an edge was changed. |
 
-[reconciliation_history](../../../../../crates/runtime/src/engine/support.rs) reads current scoped
+[reconciliation_history](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/support.rs) reads current scoped
 executions and retained summaries, bounds their number, carries side-effect classification and
 recognizes active structured ownership. A Join whose branch is active is active even if its
 occurrence looks eligible. This matters to graph-to-program transitions: source appearance cannot
 decide that a structured lifetime is safe to remove.
 
-[Revision adoption/application](../../../../../crates/runtime/src/engine/reconciliation.rs) requires
+[Revision adoption/application](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/reconciliation.rs) requires
 an active non-draining run, no competing reconciliation, the exact current revision, accepted
 agreement checks and the plan's unchanged event frontier. Intervening events beyond that plan's
 own request/decision facts make it stale. Application persists the chosen actions and
 `ReconciliationApplied` before `RevisionPinned`.
-[RevisionPinned projection](../../../../../crates/runtime/src/projection/apply_lifecycle.rs) changes
+[RevisionPinned projection](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/projection/apply_lifecycle.rs) changes
 the run's future pin, records adoption and retires specified node epochs; it does not rewrite every
 existing occurrence's `revision`. The retained old source therefore remains necessary even after
 a valid future revision is adopted.
 
 The tests directly distinguish these cases; I read them, not reran them:
 
-- [prospective_revision_adoption_is_persisted_actionable_and_stale_safe](../../../../../crates/runtime/tests/structured_runtime/reconciliation.rs)
+- [prospective_revision_adoption_is_persisted_actionable_and_stale_safe](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/tests/structured_runtime/reconciliation.rs)
   changes an active wait with `FinishCurrentThenAdopt`, persists/applies the plan, and rejects a
   different plan made stale by a later pause.
 - `active_branch_frontier_does_not_capture_unowned_post_join_pending_work` in the same file removes
   an independent eligible node while a branch/attempt is active, then checks the branch's exact
   ownership and state survive. It does not require the whole enclosing graph to be replaced.
-- [removed_completed_history_is_inert_after_revision_adoption](../../../../../crates/runtime/tests/structured_runtime/reconciliation/retired_history.rs)
+- [removed_completed_history_is_inert_after_revision_adoption](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/tests/structured_runtime/reconciliation/retired_history.rs)
   accepts a revision omitting a completed read-only task while retaining its real history.
   `removed_side_effecting_history_requires_authority_and_cannot_fabricate_remediation` separately
   refuses invented remediation when its target is absent and exercises explicit authority.
-- [planner_keeps_every_scoped_occurrence_in_deterministic_execution_order](../../../../../crates/runtime/src/reconciliation/tests.rs)
+- [planner_keeps_every_scoped_occurrence_in_deterministic_execution_order](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/reconciliation/tests.rs)
   classifies pending, active, completed, completed-effect and uncertain occurrences independently.
   `dependency_edits_detect_started_descendants` shows even an edge-identity change can matter to
   an already started descendant. These forbid replacing exact dependency comparison with a loose
@@ -1054,7 +1054,7 @@ new lowerer correct, but they contradict treating live adaptability as expendabl
 
 ### Protected root repair is not inherited-child substitution
 
-[GoverningAgreement::validate_method](../../../../../crates/blueprint/src/agreement.rs) hashes
+[GoverningAgreement::validate_method](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/blueprint/src/agreement.rs) hashes
 protected interface/metadata/nodes and every edge crossing the editable boundary. Inside the
 declared ID-prefix region, nodes must be ordinary Tasks with allowed requirements and within
 the bounded node count. Internal edges between editable nodes can change. The original agreement
@@ -1062,7 +1062,7 @@ identity must remain equal during adoption; introducing/removing/replacing it re
 run. Accepted cumulative adaptation counts do not reset when source representation changes.
 
 The concrete positive test
-[governed_repair_auto_applies_through_control_and_replays_after_store_reopen](../../../../../crates/control/tests/control_service/agreements.rs)
+[governed_repair_auto_applies_through_control_and_replays_after_store_reopen](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control/tests/control_service/agreements.rs)
 replaces `repair.begin`, adds `repair.investigate`, rewires an internal edge, adds another internal
 edge and applies through normal control with the same agreement. It reopens the store and replays
 the exact request, checks the same revision/adoption count, rejects agreement removal and refuses
@@ -1148,7 +1148,7 @@ refusal without flattening. Generic native mutations remain the route for richer
 that reads/constructs the sole canonical graph is not another persisted authoring truth. Deleting
 the helper before its actual old-base consumers migrate would repeat the compatibility mistake.
 
-The current [copy command](../../../../../apps/daemon/src/host/commands/authoring.rs) already
+The current [copy command](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/src/host/commands/authoring.rs) already
 preserves every graph fact in an independent ungoverned definition with a new workflow identity,
 and records source provenance. It expressly refuses governed copies because the agreement is
 workflow-bound. Conversion-gating all editable copies would therefore remove a second actual
@@ -1239,13 +1239,13 @@ repair succeeds while preserving its active Wait and unchanged crossed topology.
 establish neither useful general nonnested graph execution nor a successful runtime repair.
 
 The Any failure has a narrower source explanation than “crossing graphs are unsupported.”
-[execution_branch_state](../../../../../crates/runtime/src/engine/support.rs) walks bounded scope
-ancestors, whereas [has_execution_cancellation_source](../../../../../crates/runtime/src/projection/helpers.rs)
-checks only the immediate branch owner. [Timer cancellation](../../../../../crates/runtime/src/projection/apply_timer.rs)
+[execution_branch_state](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/support.rs) walks bounded scope
+ancestors, whereas [has_execution_cancellation_source](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/projection/helpers.rs)
+checks only the immediate branch owner. [Timer cancellation](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/projection/apply_timer.rs)
 uses the latter for wait/retry events. P01 now assigns one private bounded query for accepted
 ancestor cancellation evidence shared by driver and validation, preserving other cancellation
 sources and refusing an unrelated sibling or mere inactivity. It does not invent old facts.
-[PlanTransition::push_event](../../../../../crates/runtime/src/engine/transition.rs) validates before
+[PlanTransition::push_event](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/transition.rs) validates before
 appending its prospective event; the two errors do not prove corrupt history was persisted.
 
 Keep original GraphNative validation/admission, with an exact diagnostic for the known stalled

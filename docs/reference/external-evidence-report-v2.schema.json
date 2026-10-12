@@ -1,0 +1,624 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://milkdrift.dev/schema/external-evidence-report-v2.json",
+  "title": "Milkdrift external interoperability evidence report v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at_unix_ms",
+    "platform",
+    "milkdrift",
+    "configuration_digest",
+    "qualifying",
+    "fixture_mode",
+    "process",
+    "model",
+    "validation",
+    "redactions",
+    "failure_reason"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "generated_at_unix_ms": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "platform": {
+      "$ref": "#/$defs/platform"
+    },
+    "milkdrift": {
+      "$ref": "#/$defs/milkdrift"
+    },
+    "configuration_digest": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^b3_[0-9a-f]{64}$",
+      "maxLength": 67
+    },
+    "qualifying": {
+      "type": "boolean"
+    },
+    "fixture_mode": {
+      "type": "boolean"
+    },
+    "process": {
+      "$ref": "#/$defs/scenario"
+    },
+    "model": {
+      "$ref": "#/$defs/scenario"
+    },
+    "validation": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "$ref": "#/$defs/validation"
+      }
+    },
+    "redactions": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "string",
+        "maxLength": 1024
+      }
+    },
+    "failure_reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 8192
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "qualifying": {
+            "const": true
+          }
+        },
+        "required": [
+          "qualifying"
+        ]
+      },
+      "then": {
+        "properties": {
+          "fixture_mode": {
+            "const": false
+          },
+          "milkdrift": {
+            "properties": {
+              "dirty_at_start": {
+                "const": false
+              }
+            },
+            "required": [
+              "dirty_at_start"
+            ]
+          },
+          "process": {
+            "properties": {
+              "qualifying": {
+                "const": true
+              },
+              "corrections": {
+                "minItems": 1
+              },
+              "profile": {
+                "required": [
+                  "executable_content_digest",
+                  "executable_size_bytes",
+                  "version_output",
+                  "profile_digest"
+                ],
+                "properties": {
+                  "executable_content_digest": {
+                    "pattern": "^b3_[0-9a-f]{64}$"
+                  },
+                  "executable_size_bytes": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "version_output": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "profile_digest": {
+                    "pattern": "^b3_[0-9a-f]{64}$"
+                  }
+                }
+              },
+              "facts": {
+                "required": [
+                  "repository_initial_commit",
+                  "repository_final_commit",
+                  "repository_initial_tree",
+                  "repository_final_tree",
+                  "dirty_diff_digest",
+                  "dirty_diff_bytes",
+                  "distinct_process_tasks",
+                  "process_tasks",
+                  "terminal_generation"
+                ],
+                "properties": {
+                  "repository_initial_commit": {
+                    "pattern": "^[0-9a-f]{40}$"
+                  },
+                  "repository_final_commit": {
+                    "pattern": "^[0-9a-f]{40}$"
+                  },
+                  "repository_initial_tree": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{40}$"
+                  },
+                  "repository_final_tree": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{40}$"
+                  },
+                  "dirty_diff_digest": {
+                    "type": "string",
+                    "pattern": "^b3_[0-9a-f]{64}$"
+                  },
+                  "dirty_diff_bytes": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "distinct_process_tasks": {
+                    "type": "integer",
+                    "minimum": 5
+                  },
+                  "process_tasks": {
+                    "type": "array",
+                    "minItems": 5,
+                    "maxItems": 4096
+                  },
+                  "terminal_generation": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            },
+            "required": [
+              "qualifying",
+              "corrections",
+              "profile",
+              "facts"
+            ]
+          },
+          "model": {
+            "properties": {
+              "qualifying": {
+                "const": true
+              },
+              "profile": {
+                "required": [
+                  "profile_digest",
+                  "profile_revision",
+                  "provider_protocol",
+                  "model_alias"
+                ],
+                "properties": {
+                  "profile_digest": {
+                    "pattern": "^b3_[0-9a-f]{64}$"
+                  },
+                  "profile_revision": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "provider_protocol": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "model_alias": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                }
+              },
+              "facts": {
+                "required": [
+                  "selected_inputs_digest",
+                  "finish_reason",
+                  "usage",
+                  "terminal",
+                  "uncertain",
+                  "task_id",
+                  "streaming",
+                  "selected_count",
+                  "unselected_count",
+                  "model_output_units"
+                ],
+                "properties": {
+                  "selected_inputs_digest": {
+                    "pattern": "^b3_[0-9a-f]{64}$"
+                  },
+                  "finish_reason": {
+                    "const": "stop"
+                  },
+                  "usage": {
+                    "type": "object",
+                    "required": [
+                      "input_units",
+                      "output_units"
+                    ],
+                    "properties": {
+                      "input_units": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "output_units": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    }
+                  },
+                  "terminal": {
+                    "const": "completed"
+                  },
+                  "uncertain": {
+                    "const": false
+                  },
+                  "task_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "streaming": {
+                    "const": false
+                  },
+                  "selected_count": {
+                    "const": 2
+                  },
+                  "unselected_count": {
+                    "const": 1
+                  },
+                  "model_output_units": {
+                    "const": 4096
+                  }
+                }
+              }
+            },
+            "required": [
+              "qualifying",
+              "profile",
+              "facts"
+            ]
+          },
+          "validation": {
+            "minItems": 1
+          },
+          "failure_reason": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "fixture_mode": {
+            "const": true
+          }
+        },
+        "required": [
+          "fixture_mode"
+        ]
+      },
+      "then": {
+        "properties": {
+          "qualifying": {
+            "const": false
+          },
+          "process": {
+            "properties": {
+              "qualifying": {
+                "const": false
+              }
+            },
+            "required": [
+              "qualifying"
+            ]
+          },
+          "model": {
+            "properties": {
+              "qualifying": {
+                "const": false
+              }
+            },
+            "required": [
+              "qualifying"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "os",
+        "architecture",
+        "build_target"
+      ],
+      "properties": {
+        "os": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "architecture": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "build_target": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        }
+      }
+    },
+    "milkdrift": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "starting_commit",
+        "starting_tree",
+        "workspace_version",
+        "dirty_at_start"
+      ],
+      "properties": {
+        "starting_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "starting_tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "workspace_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "dirty_at_start": {
+          "type": "boolean"
+        }
+      }
+    },
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "qualifying",
+        "outcome",
+        "profile",
+        "commands",
+        "workflows",
+        "tasks",
+        "corrections",
+        "artifacts",
+        "restart_boundaries",
+        "facts",
+        "failure_reason"
+      ],
+      "properties": {
+        "qualifying": {
+          "type": "boolean"
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "not_run",
+            "succeeded",
+            "failed"
+          ]
+        },
+        "profile": {
+          "type": "object",
+          "maxProperties": 64
+        },
+        "commands": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        "workflows": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        "tasks": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        "corrections": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        "artifacts": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "$ref": "#/$defs/artifact"
+          }
+        },
+        "restart_boundaries": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "$ref": "#/$defs/restart"
+          }
+        },
+        "facts": {
+          "type": "object",
+          "maxProperties": 64
+        },
+        "failure_reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 8192
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "qualifying": {
+                "const": true
+              }
+            },
+            "required": [
+              "qualifying"
+            ]
+          },
+          "then": {
+            "properties": {
+              "outcome": {
+                "const": "succeeded"
+              },
+              "commands": {
+                "minItems": 1
+              },
+              "workflows": {
+                "minItems": 1
+              },
+              "tasks": {
+                "minItems": 1
+              },
+              "artifacts": {
+                "minItems": 1
+              },
+              "restart_boundaries": {
+                "minItems": 1
+              },
+              "failure_reason": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_id",
+        "digest",
+        "size",
+        "content_type",
+        "role"
+      ],
+      "properties": {
+        "artifact_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "content_type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "role": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        }
+      }
+    },
+    "restart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "boundary",
+        "generation_before",
+        "generation_after",
+        "recovered_state",
+        "duplicate_tasks"
+      ],
+      "properties": {
+        "boundary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "generation_before": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "generation_after": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "recovered_state": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "duplicate_tasks": {
+          "type": "boolean"
+        }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "exit_status"
+      ],
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "exit_status": {
+          "type": "integer"
+        }
+      }
+    }
+  }
+}

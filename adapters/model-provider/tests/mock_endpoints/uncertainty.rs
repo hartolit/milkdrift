@@ -42,10 +42,9 @@ fn streaming_cancellation_is_cooperative_and_does_not_claim_remote_termination()
         &descriptor,
         &OperationId::new("model.generate")?,
     )?;
-    let revision = revision()?;
     let data = Arc::new(MockData::default());
-    let (manifest, context) = manifest(&data, &revision)?;
-    let request = request(&capability, &profile, manifest, task, Vec::new())?;
+    let request = request(&capability, &profile, task, Vec::new())?;
+    let context = AdapterExecutionContext::direct(DirectInputSelection::new(&request, 1_048_576)?);
     let invocation = request.invocation().clone();
     let adapter = Arc::new(ModelEndpointAdapter::new(
         capability,

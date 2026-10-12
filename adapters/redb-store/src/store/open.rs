@@ -30,9 +30,9 @@ impl RedbStore {
     /// Opens or creates a durable local store from explicit bounds and hooks.
     ///
     /// Validates the owned paths and exact schema, checks startup time against the
-    /// watermark, and restores configured application retention bounds. Older/future
+    /// watermark, and restores the configured security audit retention bound. Older/future
     /// schemas and unsafe paths fail; this operation performs no storage migration.
-    /// It may initialize storage or archive receipts before returning, so an error does
+    /// It may initialize storage or trim audit records before returning, so an error does
     /// not imply an untouched directory. Reopening uses those same durable records.
     ///
     /// Workflow recovery and full historical integrity scans are separate operations.
@@ -40,7 +40,7 @@ impl RedbStore {
     /// # Errors
     /// Refuses invalid bounds, unsafe paths, inspection-only clones, unsupported/corrupt
     /// storage and clock rollback. Returns filesystem, database, injected-clock/hook and
-    /// retention failures; earlier durable initialization or archival may already have committed.
+    /// retention failures; earlier durable initialization or audit trimming may already have committed.
     #[tracing::instrument(
         name = "milkdrift.redb_store.open",
         skip_all,
@@ -77,18 +77,15 @@ impl RedbStore {
             max_artifact_bytes: config.max_artifact_bytes,
             max_total_artifact_bytes: config.max_total_artifact_bytes,
             max_read_bytes: config.max_read_bytes,
-            hot_application_receipt_bound: config.hot_application_receipt_bound,
-            application_receipt_archive_batch_size: config.application_receipt_archive_batch_size,
             max_security_audit_records: config.max_security_audit_records,
             max_active_installations: config.max_active_installations,
             max_pending_evaluations: config.max_pending_evaluations,
-            max_active_publications: config.max_active_publications,
             faults: config.faults,
             clock: config.clock,
             artifact_serialization: Mutex::new(()),
         };
         require_accepted_clock(store.observe_clock(startup_observation)?)?;
-        store.reestablish_application_retention_bounds()?;
+        store.reestablish_audit_retention_bound()?;
         Ok(store)
     }
 
@@ -107,13 +104,10 @@ pub(crate) fn validate_config(config: &RedbStoreConfig) -> Result<(), Persistenc
             reason: "task history and receipt capacities must be nonzero".to_owned(),
         });
     }
-    if config.max_active_installations == 0
-        || config.max_pending_evaluations == 0
-        || config.max_active_publications == 0
-    {
+    if config.max_active_installations == 0 || config.max_pending_evaluations == 0 {
         return Err(PersistenceError::Bounds {
             location: "redb_store_config",
-            reason: "active installation, pending evaluation and active publication bounds must be nonzero".to_owned(),
+            reason: "active installation and pending evaluation bounds must be nonzero".to_owned(),
         });
     }
     if config.max_artifact_bytes > config.max_total_artifact_bytes {
@@ -128,15 +122,10 @@ pub(crate) fn validate_config(config: &RedbStoreConfig) -> Result<(), Persistenc
             reason: "verified read limit must be nonzero".to_owned(),
         });
     }
-    if config.hot_application_receipt_bound == 0
-        || config.application_receipt_archive_batch_size == 0
-        || config.application_receipt_archive_batch_size > config.hot_application_receipt_bound
-        || config.max_security_audit_records == 0
-    {
+    if config.max_security_audit_records == 0 {
         return Err(PersistenceError::Bounds {
-            location: "redb_store_config",
-            reason: "hot application receipt, archive batch, and security-audit bounds are invalid"
-                .to_owned(),
+            location: "security_audit",
+            reason: "security audit retention must be nonzero".to_owned(),
         });
     }
     Ok(())

@@ -42,8 +42,6 @@ impl CapabilityHost {
         Ok(Self {
             core: Arc::new(HostCore {
                 native_paths: std::sync::OnceLock::new(),
-                published: Mutex::new(None),
-                published_serving: Mutex::new(None),
                 config,
                 policy,
                 state: Mutex::new(RegistryState {
@@ -318,21 +316,18 @@ impl CapabilityHost {
                 continue;
             }
             authority_match = true;
-            if !authority.is_prospective()
-                && !observation_available(
-                    generation.observation.as_ref(),
-                    observed_at_unix_ms,
-                    self.core.config.observation_stale_after_ms,
-                )
-            {
+            if !observation_available(
+                generation.observation.as_ref(),
+                observed_at_unix_ms,
+                self.core.config.observation_stale_after_ms,
+            ) {
                 continue;
             }
             availability_match = true;
-            if !authority.is_prospective()
-                && (generation.active >= generation.permit_limit
-                    || generation.pending_limit.is_some_and(|limit| {
-                        generation.active.saturating_add(generation.pending) >= limit
-                    }))
+            if generation.active >= generation.permit_limit
+                || generation.pending_limit.is_some_and(|limit| {
+                    generation.active.saturating_add(generation.pending) >= limit
+                })
             {
                 continue;
             }
@@ -378,7 +373,7 @@ impl CapabilityHost {
                 ));
             }
             if !capacity_match {
-                return Err(ExecutorError::Overloaded(
+                return Err(ExecutorError::CapacityUnavailable(
                     "matching generations have no immediate permit".to_owned(),
                 ));
             }
@@ -468,7 +463,7 @@ impl CapabilityHost {
                     "matching generations are unavailable or stale".to_owned(),
                 ));
             }
-            return Err(ExecutorError::Overloaded(
+            return Err(ExecutorError::CapacityUnavailable(
                 "matching generations have no immediate permit".to_owned(),
             ));
         }

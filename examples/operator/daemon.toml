@@ -1,5 +1,5 @@
 # Maintained operator configuration. See README.md in this directory.
-schema_version = 13
+schema_version = 14
 role = "workflow_enabled"
 host_id = "host:local"
 data_root = "./data"
@@ -22,15 +22,14 @@ enabled = true
 [actors.authority]
 valid_from = 0
 valid_until = 4102444800000
-dangerous_allow_broad_authority = false
+dangerous_allow_broad_authority = true
 
 [actors.authority.resources]
 filesystem = []
 secrets = []
 
 [actors.authority.resources.workflow_run]
-type = "workflow"
-workflow = "operator-starter"
+type = "any"
 
 [actors.authority.resources.capability]
 type = "allow"
@@ -68,10 +67,9 @@ profiles = []
 destinations = []
 
 [actors.authority.resources.artifacts]
-type = "deny_all"
-
-[actors.authority.resources.layouts]
-type = "deny_all"
+type = "allow"
+identities = { type = "any" }
+sensitivities = ["public", "internal", "restricted"]
 
 [actors.authority.resources.peers]
 identities = []
@@ -99,11 +97,7 @@ concurrency = 4
 [runtime]
 request_queue = 128
 maintenance_interval_ms = 100
-maximum_tick_items = 128
 global_concurrency = 32
-per_run_concurrency = 8
-per_branch_concurrency = 4
-per_capability_concurrency = 8
 effect_threads = 4
 effect_queue = 64
 cancellation_queue = 32
@@ -121,6 +115,14 @@ mode = "disabled"
 deadline_ms = 10000
 effect_policy = "drain"
 
-[application_receipts]
-hot_receipt_bound = 10000
+
+[serving]
+browser_origins = ["http://127.0.0.1:5173", "http://127.0.0.1:4173"]
+worker_threads = 4
+maximum_global_active = 256
+maximum_dispatch_queue = 256
+maximum_hot_terminal_records = 10000
 archive_batch_size = 256
+observation_hot_retention_ms = 86400000
+recovery_page = 128
+poll_interval_ms = 100

@@ -55,44 +55,20 @@ macro_rules! identity_type {
     };
 }
 
-identity_type!(/// Identity and idempotency key of a requested command.
-    CommandId);
-identity_type!(/// Stable identity of an append-only event.
-    EventId);
 identity_type!(/// Stable identity of one semantic node execution.
     NodeExecutionId);
 identity_type!(/// Stable identity of one immutable execution attempt.
     AttemptId);
 identity_type!(/// Stable identity of a worker lease.
     LeaseId);
-identity_type!(/// Stable identity of an externally delivered signal.
-    SignalId);
-identity_type!(/// Namespaced semantic type of an external signal.
-    SignalTypeId);
-identity_type!(/// Optional bounded signal correlation identity.
-    CorrelationKey);
-identity_type!(/// Stable identity of a durable timer.
-    TimerId);
-identity_type!(/// Identity tying a revision-adoption request to its plans and decisions.
-    ReconciliationId);
-identity_type!(/// Stable identity of one immutable reconciliation plan.
-    ReconciliationPlanId);
-identity_type!(/// Decision idempotency identity, scoped by its owning plan or attempt.
-    ReconciliationDecisionId);
-identity_type!(/// Decision idempotency identity, scoped by its owning repeat execution.
-    RepeatDecisionId);
-identity_type!(/// Stable, non-secret identity of a worker/controller instance.
+identity_type!(/// Stable, non-secret identity of a worker instance.
     WorkerId);
 identity_type!(/// Stable identity of an artifact publication session.
     ArtifactPublicationId);
-identity_type!(/// Stable identity of an optional projection snapshot.
-    SnapshotId);
-identity_type!(/// Stable identity of an artifact/blob publication session.
-    PublicationId);
 identity_type!(/// Stable reference to supporting evidence.
     EvidenceId);
 
-/// The sole per-run aggregate sequence authority. Zero means an empty journal.
+/// Ordered durable sequence used by explicit model continuation evidence. Zero means no prior fact.
 #[derive(
     Clone, Copy, Debug, Default, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
 )]
@@ -100,12 +76,12 @@ identity_type!(/// Stable reference to supporting evidence.
 pub struct RunSequence(u64);
 
 impl RunSequence {
-    /// Empty-journal sequence.
+    /// No prior durable fact.
     pub const ZERO: Self = Self(0);
-    /// First event sequence.
+    /// First durable fact.
     pub const FIRST: Self = Self(1);
 
-    /// Constructs a sequence, including zero for an empty journal.
+    /// Constructs a sequence, including zero before the first fact.
     #[must_use]
     pub const fn new(value: u64) -> Self {
         Self(value)

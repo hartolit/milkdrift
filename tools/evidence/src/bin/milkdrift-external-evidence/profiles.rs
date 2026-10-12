@@ -21,7 +21,6 @@ pub(crate) struct AgentProfile {
     pub(crate) content_digest: String,
     pub(crate) size_bytes: u64,
     pub(crate) version_output: String,
-    pub(crate) output_names: Vec<String>,
     pub(crate) secret_refs: BTreeSet<String>,
 }
 
@@ -105,9 +104,7 @@ pub(crate) fn prepare_agent_profile(
         );
     }
     if !output_names.iter().any(|name| name == "diff") {
-        return Err(
-            "agent profile must publish the prompt-sequence required output named diff".to_owned(),
-        );
+        return Err("agent profile must publish the required task output named diff".to_owned());
     }
     let secret_refs = profile
         .get("environment")
@@ -125,7 +122,6 @@ pub(crate) fn prepare_agent_profile(
         content_digest: observed_digest,
         size_bytes: executable_size,
         version_output,
-        output_names,
         secret_refs,
     })
 }
@@ -193,6 +189,12 @@ pub(crate) fn generated_profiles(
                 true,
             ),
             ("verification_logs", "verification.log", "text/plain", true),
+            (
+                "verification_acceptance",
+                "verified.txt",
+                "text/plain",
+                false,
+            ),
         ],
         "read_only",
         true,
@@ -214,6 +216,12 @@ pub(crate) fn generated_profiles(
                 true,
             ),
             ("verification_logs", "verification.log", "text/plain", true),
+            (
+                "verification_acceptance",
+                "verified.txt",
+                "text/plain",
+                false,
+            ),
         ],
         "read_only",
         true,
@@ -226,7 +234,7 @@ pub(crate) fn generated_profiles(
         "evidence-reviewer",
         "review",
         Vec::new(),
-        vec![("milkdrift.context_manifest", "context/manifest.json")],
+        vec![("verification", "inputs/verification.json")],
         vec![
             ("review", "review.json", "application/json", true),
             (
@@ -412,9 +420,9 @@ fn base_profile(
             "outputs": outputs,
             "limits": {
                 "max_argv_entries":32,"max_argv_bytes":65536,"max_children_observed":32,
-                "max_files":64,"max_file_bytes":16777216,"max_total_materialized_bytes":33554432,
+                "max_files":64,"max_file_bytes":1048576,"max_total_materialized_bytes":2097152,
                 "max_path_bytes":4096,"max_directory_depth":32,"artifact_chunk_bytes":65536,
-                "max_output_files":16,"max_total_output_bytes":33554432,"wall_timeout_ms":300000,
+                "max_output_files":16,"max_total_output_bytes":2097152,"wall_timeout_ms":300000,
                 "graceful_termination_ms":2000,"forced_termination_ms":2000,"heartbeat_interval_ms":1000
             },
             "restart":"retain_uncertain",

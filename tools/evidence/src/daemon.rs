@@ -15,9 +15,8 @@ use futures_util::StreamExt as _;
 use milkdrift_control_client::{ClientError, ControlClient};
 use milkdrift_control_protocol::{ErrorCode, Observation};
 use milkdrift_daemon::{
-    ActorBindingConfig, ActorGrantConfig, AdapterConfig, ApplicationReceiptConfig,
-    AuthorityPresetConfig, DaemonConfig, PeerHostConfig, RuntimeHostConfig, SecretSourceConfig,
-    ShutdownConfig,
+    ActorBindingConfig, ActorGrantConfig, AdapterConfig, AuthorityPresetConfig, DaemonConfig,
+    PeerHostConfig, RuntimeHostConfig, SecretSourceConfig, ShutdownConfig,
 };
 use serde::Serialize;
 
@@ -260,10 +259,6 @@ fn configuration(
         adapters: AdapterConfig::default(),
         peers: PeerHostConfig::default(),
         shutdown: ShutdownConfig::default(),
-        application_receipts: ApplicationReceiptConfig {
-            hot_receipt_bound: 128,
-            archive_batch_size: 16,
-        },
         security_audit_record_bound: 256,
     };
     DaemonLaunch::write(

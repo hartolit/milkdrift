@@ -270,7 +270,7 @@ retained receipt and applicable authority. A single attractive “Learn” butto
 source or held-out evidence was given to the proposer.
 
 `learning` commands use the strict request owner in
-[learning/request.rs](../../../../../crates/control/src/learning/request.rs). `select_sources`
+[learning/request.rs](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control/src/learning/request.rs). `select_sources`
 accepts method, managed workspace, guidance artifact, at most 32 supplementary artifact identities,
 and exact permitted run pages; the owner resolves immutable references. The UI shows selected
 page ranges and known omissions before freezing selection. Mutable working notes can be exported

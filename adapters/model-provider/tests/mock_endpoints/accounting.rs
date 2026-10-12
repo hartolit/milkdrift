@@ -27,16 +27,9 @@ fn bounded_profile(address: &str, billing: Value) -> TestResult<EndpointProfile>
 }
 
 #[test]
-fn prepared_mapping_and_reported_usage_settle_the_supported_tariff_without_relabelling_provider_cost()
+fn prepared_mapping_and_reported_usage_fit_the_supported_tariff_without_relabelling_provider_cost()
 -> TestResult {
-    use milkdrift_capability::{
-        AdmissionMonetaryBound, CapabilityCategory, InvocationAdmissionEnvelope,
-    };
-    use milkdrift_persistence::{
-        AttemptUsage, ControllerAccountDeclaration, ControllerAccountState,
-        ControllerAdmissionOutcome, ControllerReservationId, ControllerResourceBudget,
-        CurrencyCode, MonetaryUsage,
-    };
+    use milkdrift_capability::{AdmissionMonetaryBound, InvocationAdmissionEnvelope};
     let (address,server)=serve(json!({"choices":[{"message":{"content":"complete"},"finish_reason":"stop"}],
         "usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5,"prompt_tokens_details":{"cached_tokens":1}}}).to_string(),"application/json")?;
     let profile = bounded_profile(
@@ -96,48 +89,12 @@ fn prepared_mapping_and_reported_usage_settle_the_supported_tariff_without_relab
             .ok_or("accounting reservation_envelope absent")?
             .clone(),
     )?;
-    let mut account = ControllerAccountState::establish(ControllerAccountDeclaration::new(
-        RunId::new("run-billed")?,
-        NodeExecutionId::new("execution-billed")?,
-        "policy:billed",
-        ControllerResourceBudget::new(
-            2,
-            Some(CurrencyCode::new("EUR")?),
-            65536,
-            128,
-            8_388_608,
-            1,
-            2,
-        )?,
-    )?)?;
-    let attempt = AttemptId::new("attempt-billed")?;
-    let reservation =
-        ControllerReservationId::for_attempt(account.declaration().account(), &attempt)?;
-    assert!(matches!(
-        account.admit(
-            reservation.clone(),
-            attempt,
-            CapabilityCategory::Model,
-            &envelope
-        )?,
-        ControllerAdmissionOutcome::Reserved { .. }
-    ));
-    account.settle_terminal(
-        &reservation,
-        Some(&AttemptUsage {
-            nested_work: None,
-            input_units: usage.input_units(),
-            output_units: usage.output_units(),
-            duration_ms: usage.duration_ms(),
-            cost: Some(MonetaryUsage {
-                micros: 1,
-                currency: CurrencyCode::new("EUR")?,
-            }),
-        }),
-    )?;
-    assert_eq!(account.settled().cost_micros(), 1);
-    assert!(account.blocked().is_none());
-    assert!(account.reservations().is_empty());
+    assert!(
+        matches!(envelope.input_units(), AdmissionBound::Bounded(maximum) if usage.input_units().is_some_and(|actual|actual<=*maximum))
+    );
+    assert!(
+        matches!(envelope.output_units(), AdmissionBound::Bounded(maximum) if usage.output_units().is_some_and(|actual|actual<=*maximum))
+    );
     assert_eq!(
         envelope.monetary_cost(),
         &AdmissionBound::Bounded(AdmissionMonetaryBound::new(1, "EUR")?)

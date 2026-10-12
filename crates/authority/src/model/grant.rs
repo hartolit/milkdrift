@@ -5,15 +5,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ActorRef, AuthorityError, GrantDigest, GrantId,
-    document::{AUTHORITY_GRANT_SCHEMA_VERSION_V4, canonical_json},
+    document::{AUTHORITY_GRANT_SCHEMA_VERSION_V5, canonical_json},
 };
 
 use super::{
     capability::CapabilityAuthorityScope,
     resource::{
         ArtifactAuthorityScope, AuthorityBudget, AuthorityOperation, BoundaryTimeMillis,
-        DaemonAuthorityScope, FilesystemScope, LayoutAuthorityScope, MAX_SCOPE_ITEMS, NetworkScope,
-        PeerAuthorityScope, ResourceScope, WorkflowRunScope, WorkspaceAuthorityScope,
+        DaemonAuthorityScope, FilesystemScope, MAX_SCOPE_ITEMS, NetworkScope, PeerAuthorityScope,
+        ResourceScope, WorkflowRunScope, WorkspaceAuthorityScope,
     },
 };
 
@@ -133,7 +133,7 @@ impl AuthorityGrant {
     pub fn digest(&self) -> Result<GrantDigest, AuthorityError> {
         Ok(GrantDigest::for_bytes(&self.to_canonical_json()?))
     }
-    /// Strictly decodes and validates one schema-v4 grant.
+    /// Strictly decodes and validates one schema-v5 grant.
     ///
     /// # Errors
     /// Rejects malformed/duplicate JSON, unsupported schema, unknown fields, excessive
@@ -154,11 +154,11 @@ impl AuthorityGrant {
             .ok_or_else(|| {
                 AuthorityError::InvalidContract("grant requires numeric schema_version".to_owned())
             })?;
-        if version != AUTHORITY_GRANT_SCHEMA_VERSION_V4 {
+        if version != AUTHORITY_GRANT_SCHEMA_VERSION_V5 {
             return Err(AuthorityError::UnsupportedVersion {
                 document: "authority_grant",
                 found: version,
-                supported: AUTHORITY_GRANT_SCHEMA_VERSION_V4,
+                supported: AUTHORITY_GRANT_SCHEMA_VERSION_V5,
             });
         }
         serde_json::from_value(value).map_err(|error| AuthorityError::Json(error.to_string()))
@@ -181,7 +181,7 @@ impl AuthorityGrantBuilder {
     pub fn new(identity: GrantId, revision: u64, actor: ActorRef) -> Self {
         Self {
             grant: AuthorityGrant {
-                schema_version: AUTHORITY_GRANT_SCHEMA_VERSION_V4,
+                schema_version: AUTHORITY_GRANT_SCHEMA_VERSION_V5,
                 identity,
                 revision,
                 actor,
@@ -193,7 +193,6 @@ impl AuthorityGrantBuilder {
                     network: NetworkScope::empty(),
                     secrets: BTreeSet::new(),
                     artifacts: ArtifactAuthorityScope::none(),
-                    layouts: LayoutAuthorityScope::none(),
                     peers: PeerAuthorityScope::none(),
                     daemon: DaemonAuthorityScope::default(),
                     workspace: WorkspaceAuthorityScope::none(),
@@ -254,11 +253,11 @@ impl AuthorityGrantBuilder {
     /// validity, invalid resource scopes or extensions, and excessive document bounds.
     pub fn build(self) -> Result<AuthorityGrant, AuthorityError> {
         let grant = self.grant;
-        if grant.schema_version != AUTHORITY_GRANT_SCHEMA_VERSION_V4 {
+        if grant.schema_version != AUTHORITY_GRANT_SCHEMA_VERSION_V5 {
             return Err(AuthorityError::UnsupportedVersion {
                 document: "authority_grant",
                 found: grant.schema_version,
-                supported: AUTHORITY_GRANT_SCHEMA_VERSION_V4,
+                supported: AUTHORITY_GRANT_SCHEMA_VERSION_V5,
             });
         }
         if grant.revision == 0

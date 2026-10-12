@@ -1,22 +1,13 @@
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
 use milkdrift_control_protocol::DaemonState;
-use milkdrift_persistence::{ApplicationReceiptStatus, TimestampMillis};
+use milkdrift_persistence::PeerExecutionStatus;
 
 use super::{Lifecycle, SharedHealth};
-use crate::config::{ApplicationReceiptConfig, StoragePlan};
 
 fn health() -> Arc<SharedHealth> {
     Arc::new(SharedHealth::new(
         4,
-        &StoragePlan {
-            data_root: PathBuf::from("unused-health-test-root"),
-            application_receipts: ApplicationReceiptConfig {
-                hot_receipt_bound: 8,
-                archive_batch_size: 2,
-            },
-            security_audit_record_bound: 1,
-        },
         None,
         milkdrift_control_protocol::HostRole::WorkflowEnabled,
     ))
@@ -38,22 +29,13 @@ fn coherent_updates_advance_generation_only_when_the_snapshot_changes() {
     health.set_lifecycle(Lifecycle::Ready);
     assert_eq!(health.snapshot().0, ready_generation);
 
-    health.receipt_status(ApplicationReceiptStatus {
-        hot_count: 3,
-        cold_count: 5,
-        hot_bound: 8,
-        archive_batch_size: 2,
-        archive_generation: 1,
-        last_archived_at: Some(TimestampMillis::new(42)),
+    health.peer_status(PeerExecutionStatus {
+        active: 3,
+        ..PeerExecutionStatus::default()
     });
-    let (receipt_generation, receipt) = health.snapshot();
-    assert_eq!(receipt_generation, ready_generation + 1);
-    assert_eq!(receipt.application_receipts.hot_count, 3);
-    assert_eq!(receipt.application_receipts.cold_count, 5);
-    assert_eq!(
-        receipt.application_receipts.last_archived_at_unix_ms,
-        Some(42)
-    );
+    let (generation, snapshot) = health.snapshot();
+    assert_eq!(generation, ready_generation + 1);
+    assert_eq!(snapshot.peer_executions.active_count, 3);
 }
 
 #[test]

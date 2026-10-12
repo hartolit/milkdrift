@@ -243,7 +243,6 @@ impl PeerService {
         let entered = match self
             .executions
             .mark_peer_entered(&PeerEntryRequest {
-                published_invocation: prepared.published_plan(),
                 owner: &record.caller,
                 execution: &record.execution,
                 worker: &claim.worker,
@@ -272,12 +271,6 @@ impl PeerService {
                     .map_err(ClaimedRunFailure::from);
             }
         };
-        if entered.published_invocation.is_some() {
-            prepared
-                .accept_published(&entered)
-                .map_err(|e| ServingError::Unavailable(e.to_string()))?;
-            return Ok(());
-        }
         let reporter = PeerStoreReporter {
             caller: entered.caller.clone(),
             execution: entered.execution.clone(),

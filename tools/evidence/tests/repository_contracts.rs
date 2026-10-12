@@ -21,23 +21,11 @@ struct CohesionException {
     rationale: &'static str,
 }
 
-const PRODUCTION_COHESION_EXCEPTIONS: &[CohesionException] = &[
-    CohesionException {
-        path: "adapters/local-process/src/config.rs",
-        ceiling: 1_006,
-        rationale: "profile decoding checks executable identity, substitution/input references, filesystem access, stream secrecy, and aggregate output bounds before registration",
-    },
-    CohesionException {
-        path: "adapters/model-provider/src/adapter.rs",
-        ceiling: 1_155,
-        rationale: "exact endpoint entry binds selected context materialization to bounded HTTP observations and refuses successful publication after incomplete provider responses",
-    },
-    CohesionException {
-        path: "crates/control/src/service.rs",
-        ceiling: 1_290,
-        rationale: "proposal submission and approval preserve candidate validation, actor authority, controller assessment, revision storage, and prospective runtime acceptance ordering",
-    },
-];
+const PRODUCTION_COHESION_EXCEPTIONS: &[CohesionException] = &[CohesionException {
+    path: "adapters/local-process/src/config.rs",
+    ceiling: 1_006,
+    rationale: "profile decoding checks executable identity, substitution/input references, filesystem access, stream secrecy, and aggregate output bounds before registration",
+}];
 
 fn root() -> TestResult<PathBuf> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -328,7 +316,7 @@ fn collect_files(
         if path.is_dir() {
             if !matches!(
                 path.file_name().and_then(|name| name.to_str()),
-                Some("target" | ".git")
+                Some("target" | ".git" | "node_modules" | "dist")
             ) {
                 collect_files(&path, files, selects)?;
             }

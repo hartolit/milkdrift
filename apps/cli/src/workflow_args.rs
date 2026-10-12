@@ -18,8 +18,12 @@ pub(crate) enum WorkflowCommand {
         #[arg(long)]
         cursor: Option<String>,
     },
-    /// Read a workflow's tasks, actual times and results.
-    Show { workflow: String },
+    /// Read one page of a workflow's task summaries and actual times.
+    Show {
+        workflow: String,
+        #[arg(long)]
+        cursor: Option<String>,
+    },
     /// Submit a typed JSON task request; the daemon allocates all identities.
     Create { file: PathBuf },
     /// Apply a typed generation-guarded change request to future work.

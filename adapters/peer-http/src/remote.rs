@@ -603,7 +603,7 @@ fn remap_request(
     request: &InvocationRequest,
     remote_capability: &CapabilityId,
 ) -> Result<InvocationRequest, milkdrift_capability::ContractError> {
-    let mut mapped = InvocationRequest::new(
+    let mapped = InvocationRequest::new(
         request.invocation().clone(),
         remote_capability.clone(),
         request.operation().clone(),
@@ -612,9 +612,6 @@ fn remap_request(
         request.inputs().to_vec(),
         request.extensions().clone(),
     )?;
-    if let Some(manifest) = request.context_manifest() {
-        mapped = mapped.with_context_manifest(manifest.clone())?;
-    }
     Ok(mapped)
 }
 
@@ -820,24 +817,11 @@ impl RemoteCapabilityAdapter {
         let context = invocation.context().ok_or_else(|| {
             AdapterError::rejected("remote execution requires exact durable run provenance")
         })?;
-        let controller_reservation = context.controller_reservation().map(ToString::to_string);
-        let artifact_controller = context
-            .controller_reservation()
-            .zip(context.workflow())
-            .map(|(reservation, workflow)| {
-                milkdrift_persistence::ControllerArtifactOwner::RemoteInvocationReservation {
-                    run: workflow.run().clone(),
-                    reservation: reservation.clone(),
-                }
-            });
-        let publication_ancestry = context.publication_ancestry().to_vec();
         let context = context.workflow().ok_or_else(|| {
             AdapterError::rejected("workflow delegation cannot carry direct origin")
         })?;
         let limits = self.request_limits()?;
         let delegation = DelegatedAuthorization {
-            publication_ancestry,
-            controller_reservation,
             reference: self.relationship.delegation.clone(),
             issuer_peer: self.client.local_peer().clone(),
             actor,
@@ -887,7 +871,6 @@ impl RemoteCapabilityAdapter {
                 return self.recover_archived_outputs(
                     &execution,
                     deadline,
-                    artifact_controller.as_ref(),
                     &mut imported,
                     &mut imported_bytes,
                     invocation.request().invocation(),
@@ -999,7 +982,6 @@ impl RemoteCapabilityAdapter {
                             deadline,
                             &mut imported,
                             &mut imported_bytes,
-                            artifact_controller.as_ref(),
                             reporter,
                         ) {
                             break 'observing report_uncertainty(
@@ -1019,7 +1001,6 @@ impl RemoteCapabilityAdapter {
                         break self.recover_archived_outputs(
                             &execution,
                             deadline,
-                            artifact_controller.as_ref(),
                             &mut imported,
                             &mut imported_bytes,
                             invocation.request().invocation(),

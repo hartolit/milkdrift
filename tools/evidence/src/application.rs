@@ -22,9 +22,9 @@ use std::{
 use crate::EvidenceResult;
 use milkdrift_control_client::{BearerCredential, ClientConfig, ControlClient};
 use milkdrift_daemon::{
-    ActorBindingConfig, ActorGrantConfig, AdapterConfig, ApplicationReceiptConfig,
-    AuthorityPresetConfig, DaemonConfig, ModelProfileConfig, PeerHostConfig, RuntimeHostConfig,
-    SecretSourceConfig, ShutdownConfig, ShutdownEffectPolicy,
+    ActorBindingConfig, ActorGrantConfig, AdapterConfig, AuthorityPresetConfig, DaemonConfig,
+    ModelProfileConfig, PeerHostConfig, RuntimeHostConfig, SecretSourceConfig, ShutdownConfig,
+    ShutdownEffectPolicy,
 };
 use serde_json::{Value, json};
 use url::Url;
@@ -697,12 +697,12 @@ pub fn wait_for_readiness(runner: &CliRunner, daemon: &mut OwnedChild) -> Eviden
     }
 }
 
-/// Polls actual CLI run state until an independent scenario predicate holds.
+/// Polls actual CLI workflow state until an independent scenario predicate holds.
 ///
 /// # Errors
 /// Refuses an unrepresentable deadline or a failed/malformed CLI observation. When the predicate
 /// remains false until expiry, returns the last bounded observation and finite failure diagnostics.
-pub fn wait_for_run<F>(
+pub fn wait_for_workflow<F>(
     runner: &CliRunner,
     run: &str,
     timeout: Duration,
@@ -713,12 +713,12 @@ where
 {
     let deadline = Instant::now()
         .checked_add(timeout)
-        .ok_or("run observation deadline overflow")?;
+        .ok_or("workflow observation deadline overflow")?;
     loop {
-        let output = match runner.run_until(&["run", "show", run], None, deadline) {
+        let output = match runner.run_until(&["workflow", "show", run], None, deadline) {
             Ok(output) => output,
             Err(error) => {
-                return Err(format!("{error}; {}", runner.run_diagnostics(run, None)).into());
+                return Err(format!("{error}; {}", runner.workflow_diagnostics(run, None)).into());
             }
         };
         if output.status.success() {
@@ -729,10 +729,10 @@ where
         }
         if Instant::now() >= deadline {
             return Err(format!(
-                "run did not reach its bounded expected state within {} ms; last={}; {}",
+                "workflow did not reach its bounded expected state within {} ms; last={}; {}",
                 timeout.as_millis(),
                 diagnostics::output_summary(&output),
-                runner.run_diagnostics(run, None)
+                runner.workflow_diagnostics(run, None)
             )
             .into());
         }
@@ -744,18 +744,9 @@ where
     }
 }
 
-/// Requires the CLI failed-terminal exit within a hard deadline.
-///
+/// Starts an owned daemon child from an explicit configuration.
 /// # Errors
-/// Returns bounded CLI execution failure or a mismatch with the failed-terminal exit/envelope.
-pub fn wait_for_failed_exit(runner: &CliRunner, run: &str) -> EvidenceResult {
-    let output = runner.run(&["--timeout-secs", "5", "run", "wait", run], None)?;
-    assert_error(&output, 8, "failed_terminal", None)
-}
-/// Starts the product daemon with private diagnostics and owned cleanup.
-///
-/// # Errors
-/// Propagates daemon process creation failure; readiness is a separate caller observation.
+/// Returns process launch or private output setup failures.
 pub fn start_daemon(executable: &Path, config: &Path) -> EvidenceResult<OwnedChild> {
     OwnedChild::spawn(
         ProcessCommand::new(executable)
@@ -832,10 +823,6 @@ pub fn write_config(
         shutdown: ShutdownConfig {
             deadline_ms: 1_000,
             effect_policy: ShutdownEffectPolicy::Retain,
-        },
-        application_receipts: ApplicationReceiptConfig {
-            hot_receipt_bound: 1_000,
-            archive_batch_size: 64,
         },
         security_audit_record_bound: 1_000,
     };
@@ -1102,10 +1089,10 @@ mod tests {
             token_file: PathBuf::from("unused-credential"),
             forbidden_storage_path: PathBuf::from("unused-store"),
         };
-        let error = wait_for_run(&runner, "unused-run", Duration::MAX, |_| true)
+        let error = wait_for_workflow(&runner, "unused-run", Duration::MAX, |_| true)
             .err()
             .ok_or("unrepresentable observation deadline accepted")?;
-        assert_eq!(error.to_string(), "run observation deadline overflow");
+        assert_eq!(error.to_string(), "workflow observation deadline overflow");
         Ok(())
     }
 

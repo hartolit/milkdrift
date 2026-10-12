@@ -40,13 +40,13 @@ async fn drain(
 ) -> TestResult {
     host.dispatch(false, move |owner| {
         let capability = CapabilityId::new(capability)
-            .map_err(|error| crate::host::invalid(&error.to_string()))?;
+            .map_err(|error| crate::host::read_model::invalid(&error.to_string()))?;
         if finish {
             owner.capability_host.finish_drain(&capability, generation)
         } else {
             owner.capability_host.begin_drain(&capability, generation)
         }
-        .map_err(|error| crate::host::invalid(&error.to_string()))
+        .map_err(|error| crate::host::read_model::invalid(&error.to_string()))
     })
     .await
     .map_err(|error| error.message.into())
@@ -64,9 +64,11 @@ async fn register_replacement(host: &DaemonHost, root: &std::path::Path) -> Test
     let artifacts = root.join("data/execution");
     let secrets = host.auth.resolver();
     host.dispatch(false, move |owner| {
-        let invalid = |error: String| crate::host::invalid(&error);
+        let invalid = |error: String| crate::host::read_model::invalid(&error);
         let data = milkdrift_capability_host::StoreInvocationDataAccess::new(
-            owner.store.clone(),
+            Arc::new(super::super::storage_ports::AdapterStorage::new(
+                &owner.store,
+            )),
             artifacts,
             milkdrift_persistence::ArtifactReadAuthority::Authorized {
                 actor: milkdrift_authority::ActorRef::new("service:daemon-runtime")
@@ -135,13 +137,15 @@ async fn capability_stream_removal_converges_with_fresh_and_reconnected_clients(
         )?]))?
         .build();
     config.actors.push(narrow_actor);
-    config
-        .adapters
-        .model_profiles
-        .push(crate::ModelProfileConfig {
-            capability_id: "model:retained".into(),
-            profile,
-        });
+    for capability in ["model:retained", "model:retired"] {
+        config
+            .adapters
+            .model_profiles
+            .push(crate::ModelProfileConfig {
+                capability_id: capability.into(),
+                profile: profile.clone(),
+            });
+    }
     let host = DaemonHost::start(config.validate(root.path())?)?;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let endpoint = url::Url::parse(&format!("http://{}/", listener.local_addr()?))?;
@@ -169,34 +173,22 @@ async fn capability_stream_removal_converges_with_fresh_and_reconnected_clients(
         let narrow_initial = narrow.capabilities().await?;
         assert_eq!(narrow_initial.len(), 1);
         let narrow_cursor = converge(&mut narrow_live, &mut narrow_view, &narrow_initial).await?;
-        let control_generation = initial
+        let retired_generation = initial
             .iter()
-            .find(|value| value.capability_id == "milkdrift-workflow-control")
-            .ok_or("control absent")?
+            .find(|value| value.capability_id == "model:retired")
+            .ok_or("retired model absent")?
             .generation;
-        drain(
-            &host,
-            "milkdrift-workflow-control",
-            control_generation,
-            false,
-        )
-        .await?;
+        drain(&host, "model:retired", retired_generation, false).await?;
         let draining = client.capabilities().await?;
         assert_eq!(draining.len(), 2);
-        let draining_control = draining
+        let draining_model = draining
             .iter()
-            .find(|value| value.capability_id == "milkdrift-workflow-control")
-            .ok_or("control absent")?;
-        assert!(draining_control.draining);
-        assert!(!draining_control.current);
+            .find(|value| value.capability_id == "model:retired")
+            .ok_or("retired model absent")?;
+        assert!(draining_model.draining);
+        assert!(!draining_model.current);
         let before_removal = converge(&mut live, &mut view, &draining).await?;
-        drain(
-            &host,
-            "milkdrift-workflow-control",
-            control_generation,
-            true,
-        )
-        .await?;
+        drain(&host, "model:retired", retired_generation, true).await?;
         let current = client.capabilities().await?;
         assert_eq!(current.len(), 1);
         assert_eq!(

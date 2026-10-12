@@ -100,7 +100,7 @@ impl<'ast> Visit<'ast> for Structure {
     fn visit_item_struct(&mut self, item: &'ast syn::ItemStruct) {
         let name = item.ident.to_string();
         self.types.push(name.clone());
-        if ["Selection", "BlueprintRevision", "BoundedJson"].contains(&name.as_str()) {
+        if ["Selection", "BoundedJson"].contains(&name.as_str()) {
             for field in &item.fields {
                 if matches!(field.vis, Visibility::Public(_)) {
                     self.private_field_violations
@@ -191,15 +191,9 @@ fn structure(source: &str) -> TestResult<Structure> {
 fn private_constant(owner: &str, name: &str) -> bool {
     match owner {
         "authority" => name == "AUTHORITY_GRANT_SCHEMA_VERSION",
-        "blueprint" => name == "BLUEPRINT_SCHEMA_VERSION",
         "capability" => name.contains("SCHEMA_VERSION") || name == "MAX_JSON_DEPTH",
-        "control-protocol" => name.starts_with("PROTOCOL_") || name == "LAYOUT_SCHEMA_VERSION",
-        "model" => [
-            "MODEL_CONTRACT_SCHEMA_VERSION",
-            "CONTEXT_MANIFEST_SCHEMA_VERSION",
-        ]
-        .contains(&name),
-        "prompt-sequence" => name == "PROMPT_SEQUENCE_SCHEMA_VERSION",
+        "control-protocol" => name.starts_with("PROTOCOL_"),
+        "model" => name == "MODEL_CONTRACT_SCHEMA_VERSION",
         "local-process" => name == "PROCESS_PROFILE_SCHEMA_VERSION",
         "model-provider" => name == "MODEL_ENDPOINT_PROFILE_SCHEMA_VERSION",
         _ => false,
@@ -346,7 +340,6 @@ fn syntax_checks_explicit_exports_private_values_and_canonical_owners() -> TestR
         assert!(syntax.errors.is_empty(), "{relative}: {:?}", syntax.errors);
         if [
             "crates/authority/src/selection.rs",
-            "crates/blueprint/src/revision.rs",
             "crates/capability/src/bounded.rs",
         ]
         .contains(&relative.as_str())
@@ -355,15 +348,6 @@ fn syntax_checks_explicit_exports_private_values_and_canonical_owners() -> TestR
                 syntax.private_field_violations.is_empty(),
                 "{relative}: {:?}",
                 syntax.private_field_violations
-            );
-        }
-        if relative == "crates/blueprint/src/revision.rs" {
-            assert!(
-                !syntax
-                    .public_items
-                    .iter()
-                    .any(|name| name == "from_verified_parts" || name == "publish"),
-                "raw revision construction became external"
             );
         }
         if relative.starts_with("crates/contracts/src/") {
@@ -453,22 +437,18 @@ fn syntax_checks_explicit_exports_private_values_and_canonical_owners() -> TestR
             );
         }
     }
-    for (path, removed) in [
-        (
-            "crates/runtime/src/engine.rs",
-            &["effect_tick", "drive_once"][..],
-        ),
-        (
-            "crates/runtime/src/engine/effects.rs",
-            &["effect_tick", "drive_once"][..],
-        ),
-        ("crates/runtime/src/engine/scheduling.rs", &["tick"][..]),
-        (
-            "crates/persistence/src/journal/query.rs",
-            &["nonterminal_runs", "runnable"][..],
-        ),
-        ("crates/runtime/src/executor.rs", &["execute_streaming"][..]),
+    for retired in [
+        "crates/runtime/src/engine.rs",
+        "crates/runtime/src/engine",
+        "crates/persistence/src/journal",
+        "crates/blueprint/src/revision.rs",
     ] {
+        assert!(
+            !repository.join(retired).exists(),
+            "retired owner remains: {retired}"
+        );
+    }
+    for (path, removed) in [("crates/runtime/src/executor.rs", &["execute_streaming"][..])] {
         let found = structure(&read(repository.join(path))?)?;
         assert!(
             !found
@@ -493,7 +473,6 @@ fn syntax_checks_explicit_exports_private_values_and_canonical_owners() -> TestR
     );
     for (path, name) in [
         ("crates/capability/src/bounded.rs", "BoundedJson"),
-        ("crates/blueprint/src/model/contract.rs", "SchemaRef"),
         ("crates/capability/src/descriptor.rs", "SchemaContract"),
     ] {
         assert!(
@@ -503,10 +482,7 @@ fn syntax_checks_explicit_exports_private_values_and_canonical_owners() -> TestR
                 .any(|found| found == name)
         );
     }
-    for consumer in [
-        "crates/blueprint/src/model/contract.rs",
-        "crates/capability/src/descriptor.rs",
-    ] {
+    for consumer in ["crates/capability/src/descriptor.rs"] {
         assert!(
             structure(&read(repository.join(consumer))?)?
                 .macros

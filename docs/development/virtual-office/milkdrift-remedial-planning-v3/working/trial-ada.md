@@ -38,11 +38,11 @@ These differences determine what the caller can inspect, adapt and cancel, and w
 recover the operation. A UI connection or visual expansion cannot add such rights.
 
 Source inspection establishes that
-[PinnedSubworkflow](../../../../../crates/blueprint/src/model/structured.rs) contains an exact
+[PinnedSubworkflow](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/blueprint/src/model/structured.rs) contains an exact
 workflow, revision and interface, while
-[NodeKind](../../../../../crates/blueprint/src/model/node.rs) puts that reference in a distinct
+[NodeKind](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/blueprint/src/model/node.rs) puts that reference in a distinct
 subworkflow variant. The runtime has its
-[structured child owner](../../../../../crates/runtime/src/engine/structured/subworkflow.rs).
+[structured child owner](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/structured/subworkflow.rs).
 I inspected the type and located the runtime paths; I have not independently traced all child
 recovery and authority behavior, so I do not treat it as an executed pass.
 

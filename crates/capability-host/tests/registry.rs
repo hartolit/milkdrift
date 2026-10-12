@@ -508,7 +508,7 @@ fn permits_cancel_exact_owner_and_release_after_panic_and_completion() -> TestRe
             &request(&snapshot, "invocation-overload")?,
             &CountingReporter::default()
         ),
-        Err(ExecutorError::Overloaded(_))
+        Err(ExecutorError::CapacityUnavailable(_))
     ));
     host.begin_drain(descriptor.identity(), descriptor.descriptor_revision())?;
     assert!(host.resolve_at(&requirement, 150).is_err());

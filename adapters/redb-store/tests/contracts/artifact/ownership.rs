@@ -154,7 +154,6 @@ fn serving_output_and_transfer_have_distinct_durable_owners_without_runs()
         WorkspaceUsage::EMPTY,
     )?;
     assert_eq!(publication.owner(), &owner);
-    assert!(publication.controller_owner().is_none());
     let transfer = BeginArtifactPublication::for_transfer(
         ArtifactPublicationId::new("import-publication")?,
         host,
@@ -162,7 +161,6 @@ fn serving_output_and_transfer_have_distinct_durable_owners_without_runs()
         artifact_metadata("import-output", bytes, ArtifactSensitivity::Restricted)?,
         budget,
         WorkspaceUsage::EMPTY,
-        None,
     )?;
     let store = RedbStore::open(directory.path())?;
     for request in [&publication, &transfer] {
@@ -191,12 +189,8 @@ fn serving_output_and_transfer_have_distinct_durable_owners_without_runs()
         );
         assert!(reopened.is_committed(request.metadata().reference())?);
     }
-    let runs = reopened.run_summaries(&RunSummaryPageQuery {
-        filter: RunSummaryFilter::default(),
-        cursor: None,
-        limit: PageSize::new(16)?,
-    })?;
-    assert!(runs.runs.is_empty() && runs.next.is_none());
+    let workflows = reopened.workflows(None, 16)?;
+    assert!(workflows.items.is_empty() && workflows.next.is_none());
     let mut cursor = None;
     for _ in 0..1_000 {
         let page = reopened.scan_integrity(IntegrityScanRequest {

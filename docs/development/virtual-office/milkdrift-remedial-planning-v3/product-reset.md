@@ -104,11 +104,11 @@ nested-cancellation inconsistency remains a real finding there; it is not automa
 task of a new product. Tested behavior does not establish a requirement to carry its mechanism forward.
 
 Elin's source reread distinguishes concrete similarities from differences: existing
-[task configuration](../../../../crates/blueprint/src/model/node.rs) and
-[dispatch](../../../../crates/runtime/src/engine/dispatch.rs) already separate declared inputs from
-their later values. [Pinned subworkflow configuration](../../../../crates/blueprint/src/model/structured.rs)
-and [execution](../../../../crates/runtime/src/engine/structured/subworkflow.rs) instead select an exact
-revision and create a child run, while [copy](../../../../apps/daemon/src/host/commands/authoring.rs)
+[task configuration](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/blueprint/src/model/node.rs) and
+[dispatch](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/dispatch.rs) already separate declared inputs from
+their later values. [Pinned subworkflow configuration](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/blueprint/src/model/structured.rs)
+and [execution](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/structured/subworkflow.rs) instead select an exact
+revision and create a child run, while [copy](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/src/host/commands/authoring.rs)
 creates a separate workflow. Neither establishes the newly described deferred local materialization.
 [Peer HTTP access](../../../../apps/daemon/src/http/peers.rs) and
 [serving authority](../../../../crates/capability-host/src/serving/client_authority.rs) distinguish actors;

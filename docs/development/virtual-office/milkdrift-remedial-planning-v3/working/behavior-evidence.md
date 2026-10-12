@@ -60,7 +60,7 @@ Useful tests in `apps/daemon/tests/control_plane/roles.rs`:
 - `serving_installation_identity_cannot_change_on_restart`: changing `host_id` refuses reopen.
 
 **Inference.** S07 and S22 require a client reference qualified by the responding host identity,
-not just a name, URL or peer label. [SavedRunRequest](../../../../../crates/control-client/src/saved_run.rs)
+not just a name, URL or peer label. [SavedRunRequest](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control-client/src/saved_run.rs)
 already binds a start to `AuthorityRead` and refuses submission when the current host, actor or
 exact grant differs. That is one existing defense against replaying a saved request at a replaced
 endpoint. It does not provide a complete multi-connection draft/cache model. No three-connection

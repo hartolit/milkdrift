@@ -1,7 +1,6 @@
 //! An escaped pipe holder cannot keep the daemon's owned workers/store alive.
 
 use super::support::*;
-use milkdrift_control_protocol::ResolveAction;
 use milkdrift_daemon::ShutdownEffectPolicy;
 use serde_json::json;
 
@@ -45,36 +44,12 @@ async fn inherited_pipes_settle_drain_cancel_and_retain_without_duplicate_entry(
         };
         let plan = config.validate(directory.path())?;
         let daemon = start(plan.clone(), CONTROLLER_TOKEN).await?;
-        let imported = daemon
-            .client
-            .submit(&request(
-                "cleanup-import",
-                None,
-                Command::ImportBlueprint {
-                    document: process_blueprint()?,
-                },
-            ))
-            .await?;
-        let revision = imported
-            .value
-            .pointer("/revision_id")
-            .ok_or("fixture field /revision_id absent")?
-            .as_str()
-            .ok_or("missing revision")?
-            .to_owned();
-        daemon
-            .client
-            .submit(&request(
-                "cleanup-start",
-                None,
-                Command::StartRun {
-                    inputs: Vec::new(),
-                    run_id: "run-cleanup".to_owned(),
-                    workflow_id: "daemon-process".to_owned(),
-                    revision_id: revision,
-                },
-            ))
-            .await?;
+        let request = create_request("cleanup-start", true);
+        let accepted = daemon.client.create_workflow(&request).await?;
+        let task_id = accepted
+            .aliases
+            .get("inspect")
+            .ok_or("cleanup alias absent")?;
         let ready_deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         while cleanup::read_pids(&pids).len() < 2 {
             assert!(
@@ -125,52 +100,50 @@ async fn inherited_pipes_settle_drain_cancel_and_retain_without_duplicate_entry(
         // Reopening the same store also proves the old owner and effect workers
         // released it. The unresolved non-idempotent attempt must never re-enter.
         let restarted = start(plan, CONTROLLER_TOKEN).await?;
-        let timeline = restarted
+        let task = restarted
             .client
-            .timeline(
-                "run-cleanup",
-                &PageRequest {
-                    cursor: None,
-                    limit: 100,
-                },
-            )
+            .task(&accepted.workflow_id, task_id)
             .await?;
-        let attempt_id = timeline
-            .items
-            .iter()
-            .find_map(|entry| entry.attempt_id.clone())
-            .ok_or("missing attempt")?;
-        let attempt = restarted.client.attempt("run-cleanup", &attempt_id).await?;
-        assert!(attempt.uncertain);
-        assert!(attempt.outputs.is_empty());
-        let detail = attempt
-            .terminal_detail
+        assert_eq!(task.state, TaskStateDto::Uncertain);
+        assert!(
+            task.result
+                .as_ref()
+                .is_none_or(|result| result.artifacts.is_empty())
+        );
+        let detail = task
+            .reason
             .as_deref()
             .ok_or("missing cleanup explanation")?;
         assert!(detail.contains("I/O workers joined"), "{detail}");
         assert!(detail.contains("stdout EOF=false"), "{detail}");
         assert!(detail.contains("stderr EOF=false"), "{detail}");
+        let workflow = restarted.client.workflow(&accepted.workflow_id).await?;
         let retry = restarted
             .client
-            .submit(&request(
-                "cleanup-retry",
-                None,
-                Command::ResolveWork {
-                    run_id: "run-cleanup".to_owned(),
-                    attempt_id: attempt_id.clone(),
-                    decision_id: "unsafe-retry".to_owned(),
-                    action: ResolveAction::Retry,
-                    remediation_node: None,
+            .change_workflow(
+                &accepted.workflow_id,
+                &ChangeWorkflowRequest {
+                    request_id: "cleanup-unsafe-retry".into(),
+                    expected_generation: workflow.generation,
+                    changes: vec![TaskChangeDto::Revise {
+                        task: task_id.clone(),
+                        expected_version: task.version,
+                        definition: task.definition.clone(),
+                    }],
                 },
-            ))
+            )
             .await;
         assert!(
             retry.is_err(),
-            "unknown non-idempotent work must refuse retry"
+            "entered uncertain work must refuse in-place retry"
         );
+        assert_eq!(restarted.client.create_workflow(&request).await?, accepted);
         assert_eq!(
-            restarted.client.attempt("run-cleanup", &attempt_id).await?,
-            attempt
+            restarted
+                .client
+                .task(&accepted.workflow_id, task_id)
+                .await?,
+            task
         );
         restarted.stop().await?;
         assert_eq!(cleanup::read_pids(&pids), entered);

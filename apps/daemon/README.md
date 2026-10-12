@@ -1,100 +1,65 @@
 # Daemon
 
-`milkdrift-daemon` runs workflows and retains their accepted history in one data root. Operators
-configure it once, then use the [CLI](../cli/README.md) or
-[control client](../../crates/control-client/README.md) to submit work and inspect results. It
-starts the configured external capability adapters; configured owned model services use external systemd supervision; attached model servers retain their existing owner.
+`milkdrift-daemon` owns ordinary workflows, task execution and retained results in one data root.
+Configure it once, then connect through the [CLI](../cli/README.md), standalone
+[Svelte client](../web/README.md), or [Rust control client](../../crates/control-client/README.md).
+A client can submit work, disappear and later rediscover it. The daemon starts configured external
+capability adapters; it contains no inference engine. Attached model servers retain their owner,
+and configured owned model services use the maintained resource supervisor.
 
-Configuration explicitly selects `workflow_enabled` or `execution_only`. Execution-only startup
-constructs common storage, authority and capability owners without runtime, control or workflow
-workers. It refuses active workflow obligations and reports absent workflow operations explicitly.
-Closed history remains available through offline storage inspection. Both roles expose authenticated
-direct discovery, upload, invocation, bounded observations, cancellation and downloads through the
-[independent execution recipe](../../examples/operator/README.md#independent-execution).
-Managed service setup is separately assigned under
-[resource ownership](../../docs/decisions/0039-managed-resource-ownership.md).
+Configuration explicitly selects `workflow_enabled` or `execution_only`. Both roles expose
+independent discovery, upload, invocation, observations, cancellation and download. The execution-only
+role has no ordinary task scheduler and refuses startup over active task obligations. Settled
+workflow history remains in storage. Independent host and
+[managed resource](../../docs/decisions/0039-managed-resource-ownership.md) protections apply in both roles.
 
-Use the [fresh-directory operator recipe](../../examples/operator/README.md) to build the binary,
-prepare a private credential, check `daemon.toml`, start a terminal-only workflow, and restart it.
-[Daemon operations](../../docs/operations/daemon.md) owns startup, retention, shutdown, and backup.
+Use the [operator recipe](../../examples/operator/README.md) to choose a new private data root,
+prepare credentials, check configuration and start the binary. Existing stores and services should
+be preserved during an incompatible format change. [Daemon operations](../../docs/operations/daemon.md)
+owns startup, shutdown, retention and offline administration; [authority configuration](../../docs/operations/authority.md)
+owns credential scopes. The `storage-admin` executable path opens the offline store owner without
+starting adapters or workers.
 
-`milkdrift-daemon --config ./daemon.toml --recovery` opens authenticated repair controls with
-execution disabled. It uses existing proposal approval and prospective reconciliation, reports
-live but not ready, and starts no adapters or workers. Normal restart validates repaired state
-before dispatch. See [authorized recovery controls](../../docs/operations/daemon.md#authorized-recovery-controls).
-[Authority configuration](../../docs/operations/authority.md) explains which operations and
-resources each credential grants. Process, model, and peer setup remain in their linked guides.
+## Follow ordinary work
 
-The executable's explicit `storage-admin` path provides offline inspection, backup and restore.
-It bypasses configuration, credentials and runtime recovery, composing the redb offline owner
-with pure historical diagnostics. Follow the
-[storage operations procedure](../../docs/operations/daemon.md#offline-storage-administration)
-to inspect a blocked generation or preserve a stopped one without dispatching work.
+The HTTP layer authenticates a bearer credential, validates protocol framing and sends a typed
+call to the bounded daemon owner queue. Task creation records exact acceptance and allocates IDs.
+Scheduling freezes ready task definitions, selected input bytes, capability generation and authority
+before dispatching external work on fixed workers. Durable observations return through the same
+storage owner. Socket handling never waits inside external process or model execution.
 
-## Follow a request
+A submission receipt and a completed result are different facts. Lost replies can be recovered
+through the request receipt or exact replay. Changed reuse conflicts. Missing inputs leave a task
+queued without an invented start time. A requested stop stays distinct from proof that the task
+stopped. Possible external entry without terminal evidence remains uncertain and is not automatically
+repeated. Edits and explicitly adopted corrections change future obligations while preserving history.
 
-The HTTP layer authenticates the bearer credential and decodes a protocol request. It sends a
-typed call to one bounded owner thread, which checks authority and delegates to the runtime,
-control service, or storage owner. Results return through that same call. External processes,
-model requests, and peer work run on fixed workers so they do not occupy the socket reactor.
+Task list and workflow reads use bounded summaries and explicit cursors. A selected task exposes
+its accepted instructions and frozen facts separately. Text previews report truncation; immutable
+artifacts retain the complete content. Artifact grants can restrict result contents while lifecycle
+metadata remains readable. Task SSE invalidates the caller's snapshot; it never replaces task state
+or receipt storage.
 
-```text
-HTTP request → authentication → owner queue
-                                    |
-                                    v
-                      authority and command/read owner → HTTP reply
-                                    |
-                                    v
-                         scheduling → effect workers
-                                                  |
-                                                  v
-                                         durable observations
-```
-
-Command acceptance and task completion are different observations. If a command reply is lost,
-its retained receipt permits exact replay; changing the request under its old ID conflicts.
-If external work loses its result after entry, the runtime can retain uncertainty. Replaying a
-command receipt does not resolve that uncertainty or invoke the external capability again.
+Browser access is disabled unless `serving.browser_origins` names exact allowed origins. The
+[web client setup](../web/README.md) describes memory-only bearer credentials, installation binding,
+independent static hosting and trusted HTTPS for phones/LAN access.
 
 ## Change the host
 
-Begin at `DaemonConfig::load`, which validates and compiles configuration into a `DaemonPlan`.
-`DaemonHost::start` opens storage with admission closed, recovers active work, registers adapters,
-and starts workers before returning ready. `serve` connects a listener and shutdown future to
-that host. A caller embedding the library must arrange orderly shutdown; dropping a socket is
-not the completion of the host's lifecycle.
+`DaemonConfig::load` validates and compiles configuration before `DaemonHost::start` opens the store,
+registers capabilities, recovers durable tasks and starts workers. `serve` connects a listener to
+that host. Library callers must arrange shutdown; dropping an HTTP connection is not host shutdown.
+Startup failure attempts bounded rollback, and failed cleanup remains explicit. Shutdown closes
+admission before joining workers and retains uncertainty when terminal evidence cannot be established.
 
-Startup failure attempts bounded rollback and includes unconfirmed cleanup in the returned error.
-If the last library caller disappears, the owner closes worker admission and attempts shutdown
-before releasing storage; retained work remains uncertain when that deadline expires. Ordinary
-shutdown reports peer disconnect failures after attempting every registry. Input upload errors
-also identify unconfirmed publication aborts, preserving the original error and the exact upload
-identity for retry or startup orphan recovery.
+`config` and `auth` own configuration and rotating credentials. `http` owns routes and framing.
+The host request/queue modules serialize durable task, authority and independent execution calls.
+Startup, maintenance and shutdown keep scheduling and final writes inside the store's lifetime.
+Peer and resource modules retain their own capability boundaries. See the
+[architecture](../../docs/architecture.md) for the responsibility map.
 
-The private modules divide that operation:
-
-- `config` compiles operator choices; `auth` maps rotating credential sources to exact grants.
-- `http` owns routing, framing, response bounds, and stream polling.
-- `host/queue` and `host/requests` serialize durable calls. Command families, receipts, layouts,
-  and read projections delegate to the domain that owns their facts.
-- `host/startup`, `maintenance`, `clock`, and `shutdown` keep recovery, scheduling, retention,
-  and final worker writes within the host lifecycle. Health reports operational state rather
-  than replacing journal evidence.
-- `host/peers` and `peer_store` connect peer workers to the same storage owner without extending
-  its lifetime through router handles.
-
-The [architecture](../../docs/architecture.md) owns the full responsibility map. Explicit
-[controller activation](../../docs/operations/daemon.md#controller-activation) installs the
-accounted lifecycle before recovery; ordinary startup remains disabled by default. The non-default
-`controller-qualification` feature also permits the isolated development configuration.
-The `control_plane`, `configuration_cli`, and `two_daemon_peer` tests check public request,
-configuration, recovery, authority, and peer behavior. The focused `control_plane` filter
-`independent_client::` launches the actual binary and drives scoped discovery, workflow authoring
-and corrections, revision comparison, input upload,
-start, restart/replay, result download and copy through JSON requests. The
+The `control_plane`, configuration and peer integration suites exercise actual public operations.
+The independent JSON cases prove upload, task admission, prospective edit, exact replay, restart
+rediscovery and immutable download without private runtime access. The
 [verification policy](../../docs/development/workflow.md#choose-verification-for-the-change)
-selects the required checks for a change.
-
-The optional [managed Linux setup](../../docs/operations/managed-linux.md) composes the shared resource
-owner and Linux adapter in both roles. `managed-bootstrap` generates private configuration; lifecycle
-authority remains in the authenticated API and ordinary capability path after startup.
+selects the focused checks and full gate for each assignment.

@@ -31,8 +31,7 @@ pub(super) fn page(
                 return Err("integrity cursor belongs to another source or hash mode".into());
             }
             let family = match cursor.family {
-                0 => IntegrityScanFamily::Revisions,
-                1 => IntegrityScanFamily::RunEvents,
+                0 => IntegrityScanFamily::Tasks,
                 2 => IntegrityScanFamily::Artifacts,
                 3 => IntegrityScanFamily::Indexes,
                 _ => return Err("invalid integrity family".into()),
@@ -55,8 +54,7 @@ pub(super) fn page(
             serde_json::to_string(&Cursor {
                 source: store.database_digest().into(),
                 family: match cursor.family() {
-                    IntegrityScanFamily::Revisions => 0,
-                    IntegrityScanFamily::RunEvents => 1,
+                    IntegrityScanFamily::Tasks => 0,
                     IntegrityScanFamily::Artifacts => 2,
                     IntegrityScanFamily::Indexes => 3,
                 },

@@ -1,65 +1,30 @@
-//! Loopback-only integration coverage for the durable daemon control plane.
+//! Loopback-only integration tests of ordinary tasks and retained independent serving.
 
-#[path = "control_plane/artifact_visibility.rs"]
-mod artifact_visibility;
-#[path = "control_plane/authoring.rs"]
-mod authoring;
-#[path = "control_plane/authoring_cli.rs"]
-mod authoring_cli;
 #[path = "control_plane/binary.rs"]
 mod binary;
-#[path = "control_plane/comparison.rs"]
-mod comparison;
-#[path = "control_plane/control_workflows.rs"]
-mod control_workflows;
-#[path = "control_plane/copy_authority.rs"]
-mod copy_authority;
 #[path = "control_plane/diagnostics.rs"]
 mod diagnostics;
 #[path = "control_plane/direct.rs"]
 mod direct;
 #[path = "control_plane/direct_preparation.rs"]
 mod direct_preparation;
-#[path = "control_plane/discovery.rs"]
-mod discovery;
-#[path = "control_plane/durability.rs"]
-mod durability;
 #[path = "control_plane/independent_client.rs"]
 mod independent_client;
-#[path = "control_plane/inputs.rs"]
-mod inputs;
-#[path = "control_plane/inputs_cli.rs"]
-mod inputs_cli;
-#[path = "control_plane/learning.rs"]
-mod learning;
+#[path = "control_plane/model.rs"]
+mod model;
 #[path = "control_plane/operations.rs"]
 mod operations;
 #[path = "support/process.rs"]
 mod process;
 #[path = "control_plane/process_cleanup.rs"]
 mod process_cleanup;
-#[path = "control_plane/repair.rs"]
-mod repair;
 #[path = "control_plane/resources.rs"]
 mod resources;
-#[path = "control_plane/result_bounds.rs"]
-mod result_bounds;
-#[path = "control_plane/results.rs"]
-mod results;
-#[path = "control_plane/reuse.rs"]
-mod reuse;
 #[path = "control_plane/roles.rs"]
 mod roles;
 #[path = "control_plane/streams.rs"]
 mod streams;
 #[path = "control_plane/support.rs"]
 mod support;
-#[path = "control_plane/upload_identities.rs"]
-mod upload_identities;
-#[path = "control_plane/url_identities.rs"]
-mod url_identities;
-
-#[path = "control_plane/published.rs"]
-mod published;
-#[path = "control_plane/published_inputs.rs"]
-mod published_inputs;
+#[path = "control_plane/tasks.rs"]
+mod tasks;

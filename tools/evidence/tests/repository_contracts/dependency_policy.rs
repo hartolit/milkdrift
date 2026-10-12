@@ -10,7 +10,7 @@ use super::{
 
 fn internal_edges(owner: &str) -> Option<&'static str> {
     Some(match owner.strip_prefix("milkdrift-")? {
-        "contracts" | "slotbook" => "",
+        "contracts" => "",
         "capability" | "control-protocol" => "contracts",
         "blueprint" | "workspace" => "capability contracts",
         "authority" => "blueprint capability contracts workspace",
@@ -23,15 +23,12 @@ fn internal_edges(owner: &str) -> Option<&'static str> {
         "control" => {
             "authority blueprint capability capability-host contracts model persistence runtime workspace"
         }
-        "prompt-sequence" => {
-            "authority blueprint capability contracts control persistence workspace"
-        }
         "peer-protocol" => "authority capability contracts workspace",
         "control-client" => "capability control-protocol peer-protocol",
         "cli" => {
             // Workspace contributes validated identity contracts for local upload preflight.
             // Runtime services and concrete stores/adapters remain forbidden to clients.
-            "authority blueprint capability control-client control-protocol peer-protocol prompt-sequence workspace"
+            "authority blueprint capability control-client control-protocol peer-protocol workspace"
         }
         "local-process" => "authority capability capability-host contracts workspace",
         "model-provider" => "authority capability capability-host contracts model workspace",
@@ -46,10 +43,10 @@ fn internal_edges(owner: &str) -> Option<&'static str> {
             "authority blueprint capability capability-host contracts peer-protocol persistence runtime workspace"
         }
         "daemon" => {
-            "authority blueprint capability capability-host contracts control control-protocol local-process local-secret managed-linux model model-provider peer-http peer-protocol persistence prompt-sequence redb-store runtime workspace"
+            "authority blueprint capability capability-host contracts control control-protocol local-process local-secret managed-linux model model-provider peer-http peer-protocol persistence redb-store runtime workspace"
         }
         "evidence" => {
-            "authority blueprint capability capability-host contracts control control-client control-protocol daemon local-process managed-linux model model-provider peer-protocol persistence prompt-sequence redb-store runtime workspace"
+            "authority blueprint capability capability-host contracts control control-client control-protocol daemon local-process managed-linux model model-provider peer-protocol persistence redb-store runtime workspace"
         }
         _ => return None,
     })

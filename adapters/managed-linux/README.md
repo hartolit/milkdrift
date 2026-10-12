@@ -24,6 +24,7 @@ Start with [managed operations](../../docs/operations/managed-linux.md) and the
 readers and the semantic/persistence boundary; `linux_mechanism` is an explicitly gated real-host
 lane. Deterministic fake-platform results do not qualify OS enforcement, Vulkan or reboot recovery.
 
-The [adaptive Slotbook example](../../examples/adaptive-slotbook/README.md) composes both recipes
-through the CLI. A passed finite HTTP evaluation is distinct from publication intent, verified
-service state, workflow success and general application correctness.
+Independent resource evaluation and publication remain available through the CLI. A passed finite
+HTTP evaluation is distinct from publication intent, verified service state, task success and
+general application correctness. The retired workflow-backed method engine is not required for
+these managed-resource guards.

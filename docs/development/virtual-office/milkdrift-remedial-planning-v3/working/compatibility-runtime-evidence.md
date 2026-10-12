@@ -50,7 +50,7 @@ Join or terminal event is inserted. Test ordinary nested Any, crossed Any, signa
 unrelated-scope refusal. This is a selected future correction, not a production fix made here.
 
 `PlanTransition::push_event` in
-[transition.rs](../../../../../crates/runtime/src/engine/transition.rs) applies the proposed event to
+[transition.rs](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/transition.rs) applies the proposed event to
 the candidate projection before pushing it into the events to commit. The crossed-Any error is a
 planned-event consistency failure; it is not evidence that an invalid cancellation event was retained
 in the journal. No separate store-corruption/recovery qualification was performed by this diagnostic.

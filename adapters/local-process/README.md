@@ -7,7 +7,7 @@ advertises the resulting generation to the [capability host](../../crates/capabi
 
 ## Configure and follow an invocation
 
-Begin with the [ordinary process example](../../examples/operator/README.md#one-byte-pinned-local-process)
+Begin with the [ordinary process example](../../examples/operator/README.md#configure-the-host-and-account)
 and the [profile guide](../../docs/guides/local-process.md). `ProcessProfileDocument::from_json`
 reads the strict profile; `LocalProcessAdapter::new` verifies the executable and canonical host
 paths before producing `descriptor()`. The daemon uses this path in
@@ -85,7 +85,8 @@ A missing stdout/stderr EOF becomes `process_io_incomplete` with `Uncertain` sta
 parent exited successfully or cancellation was requested. The terminal observation separates
 parent exit, owned termination, local joins, EOF, captured byte counts, and observed overflow.
 Its explanation survives restart and is exposed as the attempt's `terminal_detail`; the ordinary
-uncertain-work rules retain unresolved controller reservations and refuse unsafe duplicate retry.
+uncertain-work rules retain native path claims, managed holds and accepted resource charges, and
+refuse unsafe duplicate retry.
 Incomplete captures and declared files are not published as successful outputs. Complete output
 continues to use the configured capture/truncation policy. Closing local pipes does not prove
 that an escaped descendant or its external effects stopped.

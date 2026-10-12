@@ -3,11 +3,7 @@
 use super::{ArtifactContentRead, DaemonHost, PublicFailure, StreamAuthority};
 use crate::auth::ActorSession;
 use milkdrift_authority::{AuthorityOperation, RequestedResourceFacts};
-use milkdrift_control_protocol::{
-    ArtifactMetadataRead, AttemptRead, CapabilityRead, CommandAccepted, CommandRequest, Cursor,
-    LayoutDocument, NodeRead, Page, ProposalRead, RevisionDiffRead, RevisionRead,
-    RevisionSummary as PublicRevisionSummary, RunRead, TimelineEntry,
-};
+use milkdrift_control_protocol::{ArtifactMetadataRead, CapabilityRead};
 use std::collections::BTreeSet;
 
 impl DaemonHost {
@@ -184,12 +180,6 @@ impl DaemonHost {
     ) -> Result<String, PublicFailure> {
         self.dispatch(false, move |owner| {
             let decision = match stream {
-                StreamAuthority::Run(run) => owner.authorize_run_read(
-                    &session,
-                    &run,
-                    AuthorityOperation::InspectTimeline,
-                    "stream:run",
-                )?,
                 StreamAuthority::Capabilities => {
                     owner.authorize(
                         &session,
@@ -226,152 +216,6 @@ impl DaemonHost {
         .await
     }
 
-    pub(crate) async fn command(
-        &self,
-        session: ActorSession,
-        request: CommandRequest,
-    ) -> Result<CommandAccepted, PublicFailure> {
-        self.dispatch(false, move |owner| {
-            super::receipts::execute(owner, &session, request)
-        })
-        .await
-    }
-
-    pub(crate) async fn revision(
-        &self,
-        session: ActorSession,
-        revision: String,
-    ) -> Result<RevisionRead, PublicFailure> {
-        self.dispatch(false, move |owner| owner.revision(&session, &revision))
-            .await
-    }
-
-    pub(crate) async fn revisions(
-        &self,
-        session: ActorSession,
-        workflow: Option<String>,
-        cursor: Option<Cursor>,
-        limit: u32,
-    ) -> Result<Page<PublicRevisionSummary>, PublicFailure> {
-        self.dispatch(false, move |owner| {
-            owner.revisions(&session, workflow.as_deref(), cursor.as_ref(), limit)
-        })
-        .await
-    }
-
-    pub(crate) async fn revision_diff(
-        &self,
-        session: ActorSession,
-        from: String,
-        to: String,
-    ) -> Result<RevisionDiffRead, PublicFailure> {
-        self.dispatch(false, move |owner| {
-            owner.revision_diff(&session, &from, &to)
-        })
-        .await
-    }
-
-    pub(crate) async fn run(
-        &self,
-        session: ActorSession,
-        run: String,
-    ) -> Result<RunRead, PublicFailure> {
-        self.dispatch(false, move |owner| owner.run_read(&session, &run))
-            .await
-    }
-
-    pub(crate) async fn run_result(
-        &self,
-        session: ActorSession,
-        run: String,
-    ) -> Result<milkdrift_control_protocol::RunResultRead, PublicFailure> {
-        self.dispatch(false, move |owner| owner.run_result(&session, &run))
-            .await
-    }
-
-    pub(crate) async fn node(
-        &self,
-        session: ActorSession,
-        run: String,
-        execution: String,
-    ) -> Result<NodeRead, PublicFailure> {
-        self.dispatch(false, move |owner| {
-            owner.node_read(&session, &run, &execution)
-        })
-        .await
-    }
-
-    pub(crate) async fn attempt(
-        &self,
-        session: ActorSession,
-        run: String,
-        attempt: String,
-    ) -> Result<AttemptRead, PublicFailure> {
-        self.dispatch(false, move |owner| {
-            owner.attempt_read(&session, &run, &attempt)
-        })
-        .await
-    }
-
-    pub(crate) async fn runs(
-        &self,
-        session: ActorSession,
-        state: Option<String>,
-        workflow: Option<String>,
-        cursor: Option<Cursor>,
-        limit: u32,
-    ) -> Result<Page<RunRead>, PublicFailure> {
-        self.dispatch(false, move |owner| {
-            owner.runs(
-                &session,
-                state.as_deref(),
-                workflow.as_deref(),
-                cursor.as_ref(),
-                limit,
-            )
-        })
-        .await
-    }
-
-    pub(crate) async fn timeline(
-        &self,
-        session: ActorSession,
-        run: String,
-        cursor: Option<Cursor>,
-        limit: u32,
-    ) -> Result<Page<TimelineEntry>, PublicFailure> {
-        self.dispatch(false, move |owner| {
-            owner.timeline(&session, &run, cursor.as_ref(), limit)
-        })
-        .await
-    }
-
-    pub(crate) async fn proposals(
-        &self,
-        session: ActorSession,
-        run: String,
-        cursor: Option<Cursor>,
-        limit: u32,
-    ) -> Result<Page<ProposalRead>, PublicFailure> {
-        self.dispatch(false, move |owner| {
-            super::proposals::page(owner, &session, &run, cursor.as_ref(), limit)
-        })
-        .await
-    }
-
-    pub(crate) async fn proposal(
-        &self,
-        session: ActorSession,
-        run: String,
-        proposal: String,
-        revision: String,
-    ) -> Result<ProposalRead, PublicFailure> {
-        self.dispatch(false, move |owner| {
-            super::proposals::exact(owner, &session, &run, &proposal, &revision)
-        })
-        .await
-    }
-
     pub(crate) async fn capabilities(
         &self,
         session: ActorSession,
@@ -401,18 +245,6 @@ impl DaemonHost {
     ) -> Result<ArtifactContentRead, PublicFailure> {
         self.dispatch(false, move |owner| {
             owner.artifact_range(&session, &artifact, offset, maximum, &evidence)
-        })
-        .await
-    }
-
-    pub(crate) async fn layout(
-        &self,
-        session: ActorSession,
-        workflow: String,
-        revision: String,
-    ) -> Result<LayoutDocument, PublicFailure> {
-        self.dispatch(false, move |owner| {
-            super::layouts::read(owner, &session, &workflow, &revision)
         })
         .await
     }

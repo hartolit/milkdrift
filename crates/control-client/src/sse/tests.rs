@@ -1,10 +1,7 @@
 use super::*;
 use crate::{BearerCredential, ClientConfig, ControlClient};
 use futures_util::StreamExt as _;
-use milkdrift_control_protocol::{
-    Cursor, Observation, ProtocolError, ProtocolVersion, TimelineCategory, TimelineEntry,
-};
-use serde_json::Value;
+use milkdrift_control_protocol::{Cursor, Observation, ProtocolError, ProtocolVersion};
 use std::{
     sync::{
         Arc,
@@ -22,7 +19,7 @@ async fn capability_snapshot_reconnect_preserves_replacement_and_empty_set() -> 
     first.feed = "capability-health".into();
     first.cursor = Cursor::new(&first.feed, 1)?;
     first.observation = milkdrift_control_protocol::decode_json(include_bytes!(
-        "../../../control-protocol/tests/fixtures/capability-snapshot-v2.20.json"
+        "../../../control-protocol/tests/fixtures/capability-snapshot-v3.0.json"
     ))?;
     let mut empty = first.clone();
     empty.cursor = Cursor::new(&empty.feed, 2)?;
@@ -66,21 +63,10 @@ async fn capability_snapshot_reconnect_preserves_replacement_and_empty_set() -> 
 fn observation(position: u64) -> TestResult<ObservationEnvelope> {
     Ok(ObservationEnvelope {
         protocol: ProtocolVersion::CURRENT,
-        cursor: Cursor::new("run:test", position)?,
+        cursor: Cursor::new("capability-health", position)?,
         observed_at_ms: position,
-        feed: "run:test".into(),
-        observation: Observation::Timeline(TimelineEntry {
-            sequence: position,
-            timestamp_ms: position,
-            category: TimelineCategory::Lifecycle,
-            actor: "human:test".into(),
-            run_id: "test".into(),
-            node_id: None,
-            attempt_id: None,
-            revision_id: None,
-            summary: "Ændring 日本語 🦀".into(),
-            detail: Value::Null,
-        }),
+        feed: "capability-health".into(),
+        observation: Observation::CapabilitySnapshot(vec![]),
     })
 }
 
@@ -188,11 +174,9 @@ fn incomplete_eof_never_dispatches_and_refusals_keep_the_valid_prefix() -> TestR
         );
         assert_eq!(accepted, vec![first.clone()]);
     }
-    for minor in [
-        0,
-        ProtocolVersion::CURRENT.minor - 1,
-        ProtocolVersion::CURRENT.minor + 1,
-    ] {
+    for minor in
+        (0..ProtocolVersion::CURRENT.minor).chain([ProtocolVersion::CURRENT.minor + 1, u16::MAX])
+    {
         let mut unsupported = observation(2)?;
         unsupported.protocol.minor = minor;
         assert!(matches!(
@@ -304,7 +288,7 @@ async fn subscription_reconnects_after_incomplete_eof_without_advancing_cursor()
         frame(&closing, "\n")?
     );
     let (client, count, task) = fixture(vec![first, second]).await?;
-    let mut stream = client.subscribe("v1/runs/test/stream", None);
+    let mut stream = client.subscribe("v1/stream/capabilities", None);
     for expected in [&a, &b] {
         assert_eq!(stream.next().await.ok_or("ended")??, *expected);
     }
@@ -320,9 +304,9 @@ async fn subscription_reconnects_after_incomplete_eof_without_advancing_cursor()
     assert_eq!(
         paths,
         vec![
-            "GET /v1/runs/test/stream HTTP/1.1".to_owned(),
+            "GET /v1/stream/capabilities HTTP/1.1".to_owned(),
             format!(
-                "GET /v1/runs/test/stream?cursor={} HTTP/1.1",
+                "GET /v1/stream/capabilities?cursor={} HTTP/1.1",
                 b.cursor.as_str()
             )
         ]
@@ -344,7 +328,7 @@ async fn subscription_stops_on_malformed_or_foreign_events_without_reconnecting(
     ] {
         let (client, count, task) =
             fixture(vec![format!("{}{}", frame(&accepted, "\r\n")?, bad)]).await?;
-        let mut stream = client.subscribe("v1/runs/test/stream", None);
+        let mut stream = client.subscribe("v1/stream/capabilities", None);
         assert_eq!(stream.next().await.ok_or("first")??.cursor, accepted.cursor);
         assert!(stream.next().await.ok_or("refusal")?.is_err());
         assert!(stream.next().await.is_none());

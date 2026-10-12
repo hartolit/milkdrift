@@ -6,27 +6,13 @@ const MAX_CLAIMS: u64 = 4096;
 
 impl NativePathClaimStore for RedbStore {
     fn claim_native_paths(&self, claim: &NativePathClaim) -> Result<(), PersistenceError> {
-        if claim.owner.is_empty()
-            || claim.owner.len() > 512
-            || claim.roots.is_empty()
-            || claim.roots.len() > 32
-            || claim.roots.iter().any(|root| {
-                !root.physical.is_absolute()
-                    || root.identity.is_empty()
-                    || root.identity.len() > 512
-                    || root.physical.to_str().is_none_or(|path| path.len() > 4096)
-                    || root.requested.to_str().is_none_or(|path| path.len() > 4096)
-            })
-        {
-            return Err(PersistenceError::InvalidDocument(
-                "native path claim has invalid owner, roots or identities".to_owned(),
-            ));
-        }
+        validate_claim(&claim.owner, claim)?;
         let bytes = json::encode(claim, "native path claim")?;
         let write = self.database().begin_write().map_err(error::redb)?;
         let mut table = write.open_table(NATIVE_PATH_CLAIMS).map_err(error::redb)?;
         if let Some(value) = table.get(claim.owner.as_str()).map_err(error::redb)? {
             let existing: NativePathClaim = json::decode(value.value(), "native path claim")?;
+            validate_claim(&claim.owner, &existing)?;
             return if existing == *claim {
                 Ok(())
             } else {
@@ -44,12 +30,14 @@ impl NativePathClaimStore for RedbStore {
             });
         }
         for row in table.iter().map_err(error::redb)? {
-            let (_, value) = row.map_err(error::redb)?;
+            let (key, value) = row.map_err(error::redb)?;
             let existing: NativePathClaim = json::decode(value.value(), "native path claim")?;
+            validate_claim(key.value(), &existing)?;
             if claim.roots.iter().any(|root| {
                 existing.roots.iter().any(|other| {
                     (root.write || other.write)
-                        && (root.physical.starts_with(&other.physical)
+                        && (root.identity == other.identity
+                            || root.physical.starts_with(&other.physical)
                             || other.physical.starts_with(&root.physical))
                 })
             }) {
@@ -71,7 +59,11 @@ impl NativePathClaimStore for RedbStore {
         table
             .get(owner)
             .map_err(error::redb)?
-            .map(|bytes| json::decode(bytes.value(), "native path claim"))
+            .map(|bytes| {
+                let claim = json::decode(bytes.value(), "native path claim")?;
+                validate_claim(owner, &claim)?;
+                Ok(claim)
+            })
             .transpose()
     }
 
@@ -86,4 +78,33 @@ impl NativePathClaimStore for RedbStore {
         }
         write.commit().map_err(error::redb)
     }
+}
+
+pub(crate) fn validate_claim(key: &str, claim: &NativePathClaim) -> Result<(), PersistenceError> {
+    if key != claim.owner
+        || claim.owner.is_empty()
+        || claim.owner.len() > 512
+        || claim.owner.chars().any(char::is_control)
+        || claim.roots.is_empty()
+        || claim.roots.len() > 32
+        || claim.roots.iter().any(|root| {
+            !root.physical.is_absolute()
+                || !root.requested.is_absolute()
+                || root.identity.is_empty()
+                || root.identity.len() > 512
+                || root.physical.components().any(|component| {
+                    matches!(
+                        component,
+                        std::path::Component::ParentDir | std::path::Component::CurDir
+                    )
+                })
+                || root.physical.to_str().is_none_or(|path| path.len() > 4096)
+                || root.requested.to_str().is_none_or(|path| path.len() > 4096)
+        })
+    {
+        return Err(PersistenceError::InvalidDocument(
+            "native path claim has invalid owner, canonical roots or identities".into(),
+        ));
+    }
+    Ok(())
 }

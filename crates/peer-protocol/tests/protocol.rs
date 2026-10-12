@@ -157,8 +157,6 @@ fn request_with_artifact_limit(
         limits.clone(),
         15_000,
         DelegatedAuthorization {
-            publication_ancestry: Vec::new(),
-            controller_reservation: None,
             reference: DelegationRef::new(format!("delegation-{suffix}"))?,
             issuer_peer: PeerId::new("peer-a")?,
             actor: ActorRef::new("peer:peer-a")?,
@@ -186,7 +184,7 @@ fn request_with_artifact_limit(
 #[test]
 fn version_negotiation_fails_closed_on_unknown_major() -> TestResult {
     let local = ProtocolVersionRange::default();
-    assert_eq!(local.negotiate(local)?, ProtocolVersion::V1_5);
+    assert_eq!(local.negotiate(local)?, ProtocolVersion::V1_6);
     let unknown = ProtocolVersionRange::new(
         ProtocolVersion { major: 2, minor: 0 },
         ProtocolVersion { major: 2, minor: 1 },
@@ -253,7 +251,9 @@ fn decoder_rejects_bounds_duplicates_and_every_non_current_version() -> TestResu
         )
         .is_err()
     );
-    for minor in [0_u16, 1, 2, 3, 4, 6, u16::MAX] {
+    for minor in (0..milkdrift_peer_protocol::PROTOCOL_MINOR_V1)
+        .chain([milkdrift_peer_protocol::PROTOCOL_MINOR_V1 + 1, u16::MAX])
+    {
         let bytes = format!(
             "{{\"protocol\":{{\"major\":1,\"minor\":{minor}}},\"message\":null,\"extensions\":{{}}}}"
         );
@@ -325,8 +325,6 @@ fn invocation_digest_binds_catalog_selection_delegation_and_request() -> TestRes
     let peer_a = PeerId::new("peer-a")?;
     let peer_b = PeerId::new("peer-b")?;
     let delegation = DelegatedAuthorization {
-        publication_ancestry: Vec::new(),
-        controller_reservation: None,
         reference: DelegationRef::new("delegation-1")?,
         issuer_peer: peer_a,
         actor: ActorRef::new("peer:peer-a")?,
@@ -449,37 +447,19 @@ fn observation_pages_refuse_sequence_overflow_without_rejecting_the_last_sequenc
 }
 
 #[test]
-fn delegated_publication_depth_ceiling_is_retained_and_cannot_be_omitted() -> TestResult {
-    use milkdrift_capability::PublicationAncestor;
-    let request = request_with_artifact_limit("depth", Some(1), 1024)?;
-    let milkdrift_peer_protocol::ServingAuthorization::Peer(mut delegation) = request.authorization
+fn retired_publication_metadata_is_refused() -> TestResult {
+    let request = request_with_artifact_limit("retired", Some(1), 1024)?;
+    let milkdrift_peer_protocol::ServingAuthorization::Peer(delegation) = request.authorization
     else {
         return Err("expected peer delegation".into());
     };
-    let ancestor = PublicationAncestor::new(CapabilityId::new("method:outer")?, 1, 1)?;
-    delegation.publication_ancestry.push(ancestor.clone());
-    delegation.validate()?;
-    let mut value = serde_json::to_value(&delegation)?;
-    let decoded: DelegatedAuthorization = serde_json::from_value(value.clone())?;
-    decoded.validate()?;
-    assert_eq!(decoded.publication_ancestry, vec![ancestor]);
-    value
-        .pointer_mut("/publication_ancestry/0")
-        .ok_or("missing ancestor")?
-        .as_object_mut()
-        .ok_or("ancestor object")?
-        .remove("maximum_depth");
-    assert!(serde_json::from_value::<DelegatedAuthorization>(value).is_err());
-    delegation
-        .publication_ancestry
-        .push(PublicationAncestor::new(
-            CapabilityId::new("method:inner")?,
-            1,
-            32,
-        )?);
-    assert!(
-        delegation.validate().is_err(),
-        "a permissive descendant cannot widen the retained ceiling"
-    );
+    for name in ["publication_ancestry", "controller_reservation"] {
+        let mut value = serde_json::to_value(&delegation)?;
+        value
+            .as_object_mut()
+            .ok_or("delegation")?
+            .insert(name.into(), serde_json::Value::Null);
+        assert!(serde_json::from_value::<DelegatedAuthorization>(value).is_err());
+    }
     Ok(())
 }

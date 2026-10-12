@@ -169,7 +169,7 @@ impl CapabilityHost {
                 .pending_limit
                 .is_some_and(|limit| generation.active.saturating_add(generation.pending) >= limit)
         {
-            return Err(ExecutorError::Overloaded(format!(
+            return Err(ExecutorError::CapacityUnavailable(format!(
                 "{}/{}",
                 key.capability, key.revision
             )));
@@ -193,43 +193,6 @@ impl CapabilityHost {
 }
 
 impl TaskExecutor for CapabilityHost {
-    fn published_serving_entry_allowed(
-        &self,
-        plan: &milkdrift_persistence::published::PublishedInvocationPlan,
-    ) -> Result<bool, ExecutorError> {
-        let owner = self
-            .core
-            .published_serving
-            .lock()
-            .map_err(|_| {
-                ExecutorError::Unavailable("published serving owner lock unavailable".to_owned())
-            })?
-            .as_ref()
-            .and_then(std::sync::Weak::upgrade)
-            .ok_or_else(|| {
-                ExecutorError::Unavailable("published serving owner is unavailable".to_owned())
-            })?;
-        owner
-            .published_entry_allowed(plan)
-            .map_err(|error| ExecutorError::Unavailable(error.to_string()))
-    }
-
-    fn continue_published(
-        &self,
-        plan: &milkdrift_persistence::published::PublishedInvocationPlan,
-        cancel: bool,
-        next_sequence: u64,
-    ) -> Result<Option<InvocationEvent>, ExecutorError> {
-        self.continue_published_invocation(plan, cancel, next_sequence)
-    }
-
-    fn complete_published(
-        &self,
-        plan: &milkdrift_persistence::published::PublishedInvocationPlan,
-    ) -> Result<(), ExecutorError> {
-        self.release_published_invocation(plan)
-    }
-
     fn resolve(
         &self,
         _requirement: &CapabilityRequirement,
@@ -264,29 +227,21 @@ impl TaskExecutor for CapabilityHost {
                 })?
                 .acquire(dispatch.attempt().as_str(), dispatch.native_path_claims())?;
         }
-        let context = AdapterExecutionContext::from_dispatch(dispatch, None)
+        let context = AdapterExecutionContext::from_dispatch(dispatch)
             .map_err(|error| ExecutorError::InvalidDispatch(error.to_string()))?;
         let prepared =
             self.prepare_invocation(dispatch.resolution(), dispatch.request(), Some(&context))?;
-        if let Some(plan) = prepared.published_plan() {
-            return Ok(PreparedExecution::published(
-                dispatch,
-                prepared.envelope().clone(),
-                plan.clone(),
-                move || prepared.accept_published(),
-            ));
-        }
-        Ok(PreparedExecution::new_with_controller_reservation(
+        Ok(PreparedExecution::new(
             dispatch,
             prepared.envelope().clone(),
-            move |dispatch, reservation, reporter| {
-                if dispatch.is_task() {
+            move |dispatch, reporter| {
+                if dispatch.is_task() && !dispatch.native_path_claims().is_empty() {
                     if let Some(claims) = claims {
                         claims.revalidate(dispatch.attempt().as_str())?;
                     }
                 }
                 let bridge = ReporterBridge { reporter };
-                let context = AdapterExecutionContext::from_dispatch(dispatch, reservation)
+                let context = AdapterExecutionContext::from_dispatch(dispatch)
                     .map_err(|error| ExecutorError::InvalidDispatch(error.to_string()))?;
                 prepared.enter(Some(&context), &bridge)
             },
@@ -318,28 +273,6 @@ pub(crate) struct PreparedHostInvocation {
 }
 
 impl PreparedHostInvocation {
-    pub(crate) fn accept_published(mut self) -> Result<(), ExecutorError> {
-        if self.prepared.published_plan().is_none() {
-            return Err(ExecutorError::InvalidDispatch(
-                "prepared work has no continuation".to_owned(),
-            ));
-        }
-        let host = CapabilityHost {
-            core: self.permit.core.clone(),
-        };
-        host.transfer_published_invocation(self.prepared.published_plan().ok_or_else(|| {
-            ExecutorError::InvalidDispatch("prepared continuation absent".to_owned())
-        })?)?;
-        self.permit.transferred = true;
-        Ok(())
-    }
-
-    pub(crate) fn published_plan(
-        &self,
-    ) -> Option<&milkdrift_persistence::published::PublishedInvocationPlan> {
-        self.prepared.published_plan()
-    }
-
     pub(crate) fn envelope(&self) -> &milkdrift_capability::InvocationAdmissionEnvelope {
         self.prepared.envelope()
     }

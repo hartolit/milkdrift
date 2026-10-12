@@ -313,9 +313,10 @@ impl PeerWorkerConfig {
 
 fn validate_current_protocol_range(versions: ProtocolVersionRange) -> Result<(), ServingError> {
     if versions != ProtocolVersionRange::default() {
-        return Err(ServingError::Configuration(
-            "peer protocol configuration must select exactly v1.5".to_owned(),
-        ));
+        return Err(ServingError::Configuration(format!(
+            "peer protocol configuration must select exactly v1.{}",
+            milkdrift_peer_protocol::PROTOCOL_MINOR_V1
+        )));
     }
     Ok(())
 }

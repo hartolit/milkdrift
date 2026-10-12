@@ -2,12 +2,10 @@
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use milkdrift_control_protocol::{
-    ApplicationReceiptHealthRead, DaemonState, HealthRead, PeerExecutionHealthRead,
-};
-use milkdrift_persistence::{ApplicationReceiptStatus, PeerExecutionStatus, TimestampMillis};
+use milkdrift_control_protocol::{DaemonState, HealthRead, PeerExecutionHealthRead};
+use milkdrift_persistence::PeerExecutionStatus;
 
-use crate::config::{ServingHostConfig, StoragePlan};
+use crate::config::ServingHostConfig;
 
 use super::read_model::bounded;
 
@@ -30,42 +28,6 @@ impl Lifecycle {
             Self::Draining => DaemonState::Draining,
             Self::Stopped => DaemonState::Stopped,
             Self::Failed => DaemonState::Failed,
-        }
-    }
-}
-
-struct ReceiptHealth {
-    status: ApplicationReceiptStatus,
-    archival_degraded: bool,
-    last_archival_failure: Option<String>,
-}
-
-impl ReceiptHealth {
-    fn new(storage: &StoragePlan) -> Self {
-        Self {
-            status: ApplicationReceiptStatus {
-                hot_count: 0,
-                cold_count: 0,
-                hot_bound: storage.application_receipts.hot_receipt_bound,
-                archive_batch_size: storage.application_receipts.archive_batch_size,
-                archive_generation: 0,
-                last_archived_at: None,
-            },
-            archival_degraded: false,
-            last_archival_failure: None,
-        }
-    }
-
-    fn read(&self) -> ApplicationReceiptHealthRead {
-        ApplicationReceiptHealthRead {
-            hot_count: self.status.hot_count,
-            hot_bound: self.status.hot_bound,
-            archive_batch_size: self.status.archive_batch_size,
-            cold_count: self.status.cold_count,
-            archive_generation: self.status.archive_generation,
-            last_archived_at_unix_ms: self.status.last_archived_at.map(TimestampMillis::get),
-            archival_degraded: self.archival_degraded,
-            last_archival_failure: self.last_archival_failure.clone(),
         }
     }
 }
@@ -125,7 +87,6 @@ struct HealthState {
     request_queue_capacity: u32,
     active_effects: u32,
     last_failure: Option<String>,
-    application_receipts: ReceiptHealth,
     peer_executions: PeerHealth,
 }
 
@@ -141,7 +102,6 @@ impl HealthState {
             request_queue_capacity: self.request_queue_capacity,
             active_effects: self.active_effects,
             last_failure: self.last_failure.clone(),
-            application_receipts: self.application_receipts.read(),
             peer_executions: self.peer_executions.read(),
         }
     }
@@ -160,7 +120,6 @@ pub(super) struct SharedHealth {
 impl SharedHealth {
     pub(super) fn new(
         request_queue_capacity: u32,
-        storage: &StoragePlan,
         serving: Option<&ServingHostConfig>,
         role: milkdrift_control_protocol::HostRole,
     ) -> Self {
@@ -174,7 +133,6 @@ impl SharedHealth {
                     request_queue_capacity,
                     active_effects: 0,
                     last_failure: None,
-                    application_receipts: ReceiptHealth::new(storage),
                     peer_executions: PeerHealth::new(serving),
                 },
             }),
@@ -211,30 +169,6 @@ impl SharedHealth {
     pub(super) fn failure(&self, message: &str) {
         let message = bounded(message);
         self.update(|state| replace_if_changed(&mut state.last_failure, Some(message)));
-    }
-
-    pub(super) fn receipt_status(&self, status: ApplicationReceiptStatus) {
-        self.update(|state| {
-            let changed = state.application_receipts.status != status
-                || state.application_receipts.archival_degraded
-                || state.application_receipts.last_archival_failure.is_some();
-            state.application_receipts.status = status;
-            state.application_receipts.archival_degraded = false;
-            state.application_receipts.last_archival_failure = None;
-            changed
-        });
-    }
-
-    pub(super) fn receipt_failure(&self) {
-        self.update(|state| {
-            let failure = "application receipt archival/storage operation failed".to_owned();
-            let changed = !state.application_receipts.archival_degraded
-                || state.application_receipts.last_archival_failure.as_deref()
-                    != Some(failure.as_str());
-            state.application_receipts.archival_degraded = true;
-            state.application_receipts.last_archival_failure = Some(failure);
-            changed
-        });
     }
 
     pub(super) fn peer_status(&self, status: PeerExecutionStatus) {

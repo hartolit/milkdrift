@@ -221,7 +221,7 @@ fn artifact_clock_failure_rejects_chunks_without_publishing_bytes() -> TestResul
     let core = Arc::new(RedbStore::open(root.path())?);
     let transfer = CorePeerArtifactStore::new(core.clone(), 1_048_576, 2_097_152, clock.clone())?;
     assert!(matches!(
-        transfer.negotiate(&peer, &offer, 1_048_576, None)?,
+        transfer.negotiate(&peer, &offer, 1_048_576)?,
         ArtifactTransferDecision::Transfer { next_offset: 0, .. }
     ));
 
@@ -286,16 +286,11 @@ fn core_artifact_transfer_preserves_metadata_provenance_resumes_and_reads_outbou
         CorePeerArtifactStore::new(core.clone(), 1_048_576, 2_097_152, system_peer_clock())?;
     assert!(
         transfer
-            .negotiate(
-                &peer,
-                &offer,
-                u64::try_from(bytes.len())?.saturating_sub(1),
-                None
-            )
+            .negotiate(&peer, &offer, u64::try_from(bytes.len())?.saturating_sub(1))
             .is_err()
     );
     assert!(matches!(
-        transfer.negotiate(&peer, &offer, 1_048_576, None)?,
+        transfer.negotiate(&peer, &offer, 1_048_576)?,
         ArtifactTransferDecision::Transfer { next_offset: 0, .. }
     ));
     // Aborting an absent key in another caller's namespace is an idempotent no-op.
@@ -319,7 +314,7 @@ fn core_artifact_transfer_preserves_metadata_provenance_resumes_and_reads_outbou
     let transfer =
         CorePeerArtifactStore::new(core.clone(), 1_048_576, 2_097_152, system_peer_clock())?;
     assert!(matches!(
-        transfer.negotiate(&peer, &offer, 1_048_576, None)?,
+        transfer.negotiate(&peer, &offer, 1_048_576)?,
         ArtifactTransferDecision::Transfer { next_offset: 8, .. }
     ));
     assert_eq!(
@@ -349,7 +344,7 @@ fn core_artifact_transfer_preserves_metadata_provenance_resumes_and_reads_outbou
     );
     assert!(metadata.provenance().causes().is_empty());
     assert_eq!(
-        transfer.negotiate(&peer, &offer, 1_048_576, None)?,
+        transfer.negotiate(&peer, &offer, 1_048_576)?,
         ArtifactTransferDecision::AlreadyPresent
     );
 
@@ -364,7 +359,7 @@ fn core_artifact_transfer_preserves_metadata_provenance_resumes_and_reads_outbou
         binding: milkdrift_peer_protocol::ArtifactTransferBinding::Execution { execution },
         expires_at_unix_ms: now().saturating_add(60_000),
     };
-    transfer.negotiate(&peer, &download, 1_048_576, None)?;
+    transfer.negotiate(&peer, &download, 1_048_576)?;
     let read = transfer.read_chunk(&peer, &download.transfer, 0, 1_048_576)?;
     assert_eq!(read.bytes, bytes);
     assert!(read.final_chunk);
@@ -390,7 +385,7 @@ fn core_artifact_transfer_preserves_metadata_provenance_resumes_and_reads_outbou
         },
         expires_at_unix_ms: now().saturating_add(60_000),
     };
-    transfer.negotiate(&peer, &corrupt_offer, 1_048_576, None)?;
+    transfer.negotiate(&peer, &corrupt_offer, 1_048_576)?;
     assert!(
         transfer
             .write_chunk(
@@ -445,7 +440,7 @@ fn empty_peer_output_commits_exactly_and_rejects_a_false_empty_digest() -> TestR
     };
     for _ in 0..2 {
         assert_eq!(
-            transfer.negotiate(&peer, &offer, 1024, None)?,
+            transfer.negotiate(&peer, &offer, 1024)?,
             ArtifactTransferDecision::AlreadyPresent
         );
     }
@@ -463,7 +458,7 @@ fn empty_peer_output_commits_exactly_and_rejects_a_false_empty_digest() -> TestR
         MediaType::new("text/plain")?,
         0,
     );
-    assert!(transfer.negotiate(&peer, &offer, 1024, None).is_err());
+    assert!(transfer.negotiate(&peer, &offer, 1024).is_err());
     assert!(core.metadata(offer.artifact.artifact())?.is_none());
     Ok(())
 }
@@ -539,12 +534,13 @@ fn entered_peer_execution_owns_output_budget_and_metadata_requires_live_download
     let origin = accepted_origin
         .workflow()
         .ok_or("workflow origin missing")?;
-    let context = AdapterExecutionContext::new(
+    let context = AdapterExecutionContext::originated(
         milkdrift_workspace::RunId::new(&origin.run)?,
         serde_json::from_value(serde_json::Value::String(origin.revision.clone()))?,
         milkdrift_blueprint::NodeId::new(&origin.node)?,
         milkdrift_persistence::NodeExecutionId::new(&origin.execution)?,
         milkdrift_persistence::AttemptId::new(&origin.attempt)?,
+        milkdrift_capability_host::DirectInputSelection::new(&request.request, 1_048_576)?,
     );
     assert!(
         milkdrift_capability_host::conformance::entered_serving_context(context.clone(), &claimed)

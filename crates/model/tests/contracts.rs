@@ -2,15 +2,11 @@
 
 use std::collections::BTreeMap;
 
-use milkdrift_blueprint::{NodeId, RevisionId, TaskContextPolicy};
 use milkdrift_capability::{BoundedJson, ExtensionKey};
 use milkdrift_model::{
-    ContentPart, ContextManifest, ContextManifestDocument, ContextTotals, Message, MessageRole,
-    ModelResponse, ModelResponseDocument, ModelTaskRequest, ModelTaskRequestDocument,
-    SessionSelection, ToolCall, ToolDefinition, Usage,
+    ContentPart, Message, MessageRole, ModelResponse, ModelResponseDocument, ModelTaskRequest,
+    ModelTaskRequestDocument, SessionSelection, ToolCall, ToolDefinition, Usage,
 };
-use milkdrift_persistence::{AttemptId, NodeExecutionId};
-use milkdrift_workspace::RunId;
 use serde_json::json;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -67,39 +63,6 @@ fn model_task_document_is_canonical_and_rejects_hostile_shape() -> TestResult {
         "[".repeat(60) + &"]".repeat(60)
     );
     assert!(ModelTaskRequestDocument::from_json(deep.as_bytes()).is_err());
-    Ok(())
-}
-
-#[test]
-fn context_manifest_has_exact_golden_bytes_and_verified_digest() -> TestResult {
-    let policy = TaskContextPolicy::default();
-    let revision: RevisionId = serde_json::from_value(json!(format!("rev_{}", "0".repeat(64))))?;
-    let manifest = ContextManifest::new(
-        RunId::new("run-model-contract")?,
-        revision,
-        NodeId::new("model")?,
-        NodeExecutionId::new("execution-model")?,
-        AttemptId::new("attempt-model")?,
-        1,
-        policy.digest()?,
-        Vec::new(),
-        Vec::new(),
-        ContextTotals::default(),
-        policy.budget(),
-    )?;
-    let document = ContextManifestDocument::new(manifest);
-    let bytes = document.to_canonical_json()?;
-    assert_eq!(
-        bytes,
-        include_bytes!("fixtures/context-manifest-v2.json").trim_ascii_end()
-    );
-    assert_eq!(ContextManifestDocument::from_json(&bytes)?, document);
-    let mut tampered: serde_json::Value = serde_json::from_slice(&bytes)?;
-    *tampered
-        .pointer_mut("/manifest/digest")
-        .ok_or("missing manifest digest")? =
-        json!("b3_0000000000000000000000000000000000000000000000000000000000000000");
-    assert!(ContextManifestDocument::from_json(&serde_json::to_vec(&tampered)?).is_err());
     Ok(())
 }
 

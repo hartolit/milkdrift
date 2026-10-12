@@ -11,8 +11,8 @@ use crate::{
 
 /// Schema version implemented by the first capability contract format.
 pub(crate) const SCHEMA_VERSION_V1: u32 = 1;
-/// Invocation request schema adding an explicit frozen context-manifest reference.
-const INVOCATION_REQUEST_SCHEMA_VERSION_V2: u32 = 2;
+/// Invocation request schema containing only explicitly named inputs.
+const INVOCATION_REQUEST_SCHEMA_VERSION_V3: u32 = 3;
 /// Current snapshot envelope, freezing locality, authenticated peer and trust zones.
 pub(crate) const RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V3: u32 = 3;
 
@@ -145,7 +145,7 @@ document!(
     descriptor,
     "capability descriptor"
 );
-/// Versioned portable invocation request with explicit context binding in v2.
+/// Versioned portable invocation request with explicit named inputs in v3.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct InvocationRequestDocument {
@@ -154,11 +154,11 @@ pub struct InvocationRequestDocument {
 }
 
 impl InvocationRequestDocument {
-    /// Wraps a request in the current v2 envelope.
+    /// Wraps a request in the current v3 envelope.
     #[must_use]
     pub const fn new(request: InvocationRequest) -> Self {
         Self {
-            schema_version: INVOCATION_REQUEST_SCHEMA_VERSION_V2,
+            schema_version: INVOCATION_REQUEST_SCHEMA_VERSION_V3,
             request,
         }
     }
@@ -183,11 +183,11 @@ impl InvocationRequestDocument {
         canonical_json_bytes(self)
     }
 
-    /// Reads v2 and deliberately migrates unambiguous context-free v1 requests.
+    /// Reads the current v3 request contract; obsolete development formats are refused.
     ///
     /// # Errors
     /// Rejects malformed/duplicate JSON, excess bounds, unknown fields, unsupported
-    /// versions, invalid request facts and v1 input that would ambiguously bind context.
+    /// versions and invalid request facts.
     pub fn from_json(bytes: &[u8]) -> Result<Self, ContractError> {
         if bytes.len() > MAX_DOCUMENT_BYTES {
             return Err(ContractError::Bounds {
@@ -204,14 +204,11 @@ impl InvocationRequestDocument {
             .ok_or_else(|| {
                 ContractError::InvalidContract("missing numeric schema_version".to_owned())
             })?;
-        if !matches!(
-            version,
-            SCHEMA_VERSION_V1 | INVOCATION_REQUEST_SCHEMA_VERSION_V2
-        ) {
+        if version != INVOCATION_REQUEST_SCHEMA_VERSION_V3 {
             return Err(ContractError::UnsupportedVersion {
                 document: "invocation request",
                 found: version,
-                supported: INVOCATION_REQUEST_SCHEMA_VERSION_V2,
+                supported: INVOCATION_REQUEST_SCHEMA_VERSION_V3,
             });
         }
         #[derive(Deserialize)]
@@ -238,10 +235,7 @@ impl<'de> Deserialize<'de> for InvocationRequestDocument {
             request: InvocationRequest,
         }
         let wire = Wire::deserialize(deserializer)?;
-        if !matches!(
-            wire.schema_version,
-            SCHEMA_VERSION_V1 | INVOCATION_REQUEST_SCHEMA_VERSION_V2
-        ) {
+        if wire.schema_version != INVOCATION_REQUEST_SCHEMA_VERSION_V3 {
             return Err(serde::de::Error::custom(
                 "unsupported invocation request schema version",
             ));

@@ -25,11 +25,9 @@ use std::{fmt, pin::Pin, time::Duration};
 
 use futures_util::{Stream, StreamExt};
 use milkdrift_control_protocol::{
-    ArtifactMetadataRead, AuthorityRead, CapabilityRead, CommandAccepted, CommandRequest, Cursor,
-    ErrorEnvelope, HealthRead, LayoutDocument, ObservationEnvelope, Page, PageRequest, PeerRead,
-    ProposalRead, ProtocolError, ProtocolVersion, ResponseEnvelope, RevisionDiffRead, RevisionRead,
-    RevisionSummary, RunRead, TimelineEntry, VersionRequest, VersionResponse, decode_json,
-    encode_json,
+    ArtifactMetadataRead, AuthorityRead, CapabilityRead, Cursor, ErrorEnvelope, HealthRead,
+    ObservationEnvelope, PeerRead, ProtocolError, ProtocolVersion, ResponseEnvelope,
+    VersionRequest, VersionResponse, decode_json,
 };
 use reqwest::{Method, StatusCode, header};
 use serde::de::DeserializeOwned;
@@ -37,10 +35,8 @@ use thiserror::Error;
 use url::Url;
 
 mod invocation;
-mod saved_run;
 mod sse;
 mod tasks;
-pub use saved_run::SavedRunRequest;
 
 /// Default maximum artifact range materialized by one client call.
 pub const DEFAULT_MAX_ARTIFACT_RANGE_BYTES: usize = 8 * 1024 * 1024;
@@ -273,172 +269,6 @@ impl ControlClient {
         self.safe_get("v1/readiness").await
     }
 
-    /// Submits one exact idempotent command. The client does not retry it implicitly.
-    ///
-    /// # Errors
-    /// Refuses invalid or oversized commands and reports daemon, transport, or response errors.
-    /// A lost reply can follow durable acceptance; recover with the exact saved request.
-    pub async fn submit(&self, request: &CommandRequest) -> Result<CommandAccepted, ClientError> {
-        request.validate()?;
-        let body = encode_json(request)?;
-        let url = self.url("v1/commands")?;
-        let response = self
-            .authorized(
-                self.http
-                    .request(Method::POST, url)
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .body(body),
-            )
-            .send()
-            .await
-            .map_err(|error| {
-                if error.is_timeout() {
-                    ClientError::Timeout
-                } else {
-                    redacted_transport(error)
-                }
-            })?;
-        decode_response(response).await
-    }
-
-    /// Reads one immutable revision.
-    ///
-    /// # Errors
-    /// Refuses an unsafe revision identity or reports failure to read its authorized projection.
-    pub async fn revision(&self, revision: &str) -> Result<RevisionRead, ClientError> {
-        self.safe_get(&format!("v1/revisions/{}", path_segment(revision)?))
-            .await
-    }
-
-    /// Lists one bounded revision page.
-    ///
-    /// # Errors
-    /// Refuses invalid page bounds or workflow filters, and reports daemon refusal or an
-    /// unreadable response. An expired cursor requires a fresh authorized listing.
-    pub async fn revisions(
-        &self,
-        workflow: Option<&str>,
-        page: &PageRequest,
-    ) -> Result<Page<RevisionSummary>, ClientError> {
-        page.validate()?;
-        let mut path = format!("v1/revisions?limit={}", page.limit);
-        push_query(&mut path, "workflow", workflow)?;
-        push_cursor(&mut path, page.cursor.as_ref());
-        self.safe_get(&path).await
-    }
-
-    /// Compares two semantic revisions through a bounded structured diff.
-    ///
-    /// # Errors
-    /// Refuses unsafe revision identities or reports failure to obtain the authorized diff.
-    pub async fn revision_diff(
-        &self,
-        from: &str,
-        to: &str,
-    ) -> Result<RevisionDiffRead, ClientError> {
-        self.safe_get(&format!(
-            "v1/revisions/{}/diff/{}",
-            path_segment(from)?,
-            path_segment(to)?
-        ))
-        .await
-    }
-
-    /// Reads one compact current run.
-    ///
-    /// # Errors
-    /// Refuses an unsafe run identity or reports failure to obtain its authorized current state.
-    pub async fn run(&self, run: &str) -> Result<RunRead, ClientError> {
-        self.safe_get(&format!("v1/runs/{}", path_segment(run)?))
-            .await
-    }
-
-    /// Lists one bounded run page with optional stable filters.
-    ///
-    /// # Errors
-    /// Refuses invalid page bounds or filters, and reports daemon refusal or an unreadable
-    /// page. A refused continuation must be replaced with a fresh authorized listing.
-    pub async fn runs(
-        &self,
-        state: Option<&str>,
-        workflow: Option<&str>,
-        page: &PageRequest,
-    ) -> Result<Page<RunRead>, ClientError> {
-        page.validate()?;
-        let mut path = format!("v1/runs?limit={}", page.limit);
-        push_query(&mut path, "state", state)?;
-        push_query(&mut path, "workflow", workflow)?;
-        push_cursor(&mut path, page.cursor.as_ref());
-        self.safe_get(&path).await
-    }
-
-    /// Reads one exact node execution from a current run projection.
-    ///
-    /// # Errors
-    /// Refuses unsafe run/execution identities or reports failure to read the authorized node.
-    pub async fn node(
-        &self,
-        run: &str,
-        execution: &str,
-    ) -> Result<milkdrift_control_protocol::NodeRead, ClientError> {
-        self.safe_get(&format!(
-            "v1/runs/{}/nodes/{}",
-            path_segment(run)?,
-            path_segment(execution)?
-        ))
-        .await
-    }
-
-    /// Reads one exact current or historical attempt with authorized context provenance.
-    ///
-    /// # Errors
-    /// Refuses unsafe run/attempt identities or reports failure to read authorized attempt evidence.
-    pub async fn attempt(
-        &self,
-        run: &str,
-        attempt: &str,
-    ) -> Result<milkdrift_control_protocol::AttemptRead, ClientError> {
-        self.safe_get(&format!(
-            "v1/runs/{}/attempts/{}",
-            path_segment(run)?,
-            path_segment(attempt)?
-        ))
-        .await
-    }
-
-    /// Reads current progress, terminal outputs and currently permitted control actions.
-    /// Output previews and attempt evidence are separately authorized by the daemon.
-    ///
-    /// # Errors
-    /// Refuses an unsafe run identity or reports failure to read the authorized result projection.
-    pub async fn run_result(
-        &self,
-        run: &str,
-    ) -> Result<milkdrift_control_protocol::RunResultRead, ClientError> {
-        self.safe_get(&format!("v1/runs/{}/result", path_segment(run)?))
-            .await
-    }
-
-    /// Reads one bounded projected timeline page.
-    ///
-    /// # Errors
-    /// Refuses invalid page bounds or an unsafe run identity, and reports daemon cursor/access
-    /// refusal or failure to decode the bounded timeline response.
-    pub async fn timeline(
-        &self,
-        run: &str,
-        page: &PageRequest,
-    ) -> Result<Page<TimelineEntry>, ClientError> {
-        page.validate()?;
-        let mut path = format!(
-            "v1/runs/{}/timeline?limit={}",
-            path_segment(run)?,
-            page.limit
-        );
-        push_cursor(&mut path, page.cursor.as_ref());
-        self.safe_get(&path).await
-    }
-
     /// Lists capability generation observations visible to the actor.
     ///
     /// # Errors
@@ -484,46 +314,6 @@ impl ControlClient {
             None,
             false,
         )
-        .await
-    }
-
-    /// Lists one bounded proposal page for an exact run.
-    ///
-    /// # Errors
-    /// Refuses invalid page bounds or an unsafe run identity, and reports access/cursor
-    /// refusal or failure to decode the bounded proposal page.
-    pub async fn proposals(
-        &self,
-        run: &str,
-        page: &PageRequest,
-    ) -> Result<Page<ProposalRead>, ClientError> {
-        page.validate()?;
-        let mut path = format!(
-            "v1/runs/{}/proposals?limit={}",
-            path_segment(run)?,
-            page.limit
-        );
-        push_cursor(&mut path, page.cursor.as_ref());
-        self.safe_get(&path).await
-    }
-
-    /// Reads one exact proposal/reconciliation status.
-    ///
-    /// # Errors
-    /// Refuses unsafe run, proposal, or revision identities, and reports failure to read
-    /// the exact authorized proposal status.
-    pub async fn proposal(
-        &self,
-        run: &str,
-        proposal: &str,
-        proposed_revision: &str,
-    ) -> Result<ProposalRead, ClientError> {
-        self.safe_get(&format!(
-            "v1/runs/{}/proposals/{}?revision={}",
-            path_segment(run)?,
-            path_segment(proposal)?,
-            path_segment(proposed_revision)?
-        ))
         .await
     }
 
@@ -637,23 +427,6 @@ impl ControlClient {
             content_type,
             bytes,
         })
-    }
-
-    /// Reads layout independently from semantic revision identity.
-    ///
-    /// # Errors
-    /// Refuses unsafe workflow/revision identities or reports failure to read the authorized layout.
-    pub async fn layout(
-        &self,
-        workflow: &str,
-        revision: &str,
-    ) -> Result<LayoutDocument, ClientError> {
-        self.safe_get(&format!(
-            "v1/layouts/{}/{}",
-            path_segment(workflow)?,
-            path_segment(revision)?
-        ))
-        .await
     }
 
     /// Opens an SSE feed and reconnects with the latest observed cursor.
@@ -931,29 +704,9 @@ fn observation_route(path: &str) -> Result<(String, String), ClientError> {
     if path == "v1/stream/capabilities" {
         return Ok((path.into(), "capability-health".into()));
     }
-    if let Some(run) = path
-        .strip_prefix("v1/runs/")
-        .and_then(|path| path.strip_suffix("/stream"))
-    {
-        return Ok((
-            format!("v1/runs/{}/stream", path_segment(run)?),
-            format!("run:{run}"),
-        ));
-    }
     Err(ClientError::Configuration(
         "unsupported observation feed".to_owned(),
     ))
-}
-
-fn push_query(path: &mut String, name: &str, value: Option<&str>) -> Result<(), ClientError> {
-    if let Some(value) = value {
-        let value = path_segment(value)?;
-        path.push('&');
-        path.push_str(name);
-        path.push('=');
-        path.push_str(&value);
-    }
-    Ok(())
 }
 
 fn push_cursor(path: &mut String, cursor: Option<&Cursor>) {
@@ -993,18 +746,10 @@ mod tests {
             ("team:._-9", "team:._-9"),
         ] {
             assert_eq!(path_segment(raw)?, encoded);
-            let path = format!("v1/runs/{raw}/stream");
-            let (route, feed) = observation_route(&path)?;
-            assert_eq!(feed, format!("run:{raw}"));
             assert_eq!(
-                endpoint.join(&route)?.path(),
-                format!("/prefix/v1/runs/{encoded}/stream")
+                endpoint.join(&format!("v1/workflows/{encoded}"))?.path(),
+                format!("/prefix/v1/workflows/{encoded}")
             );
-            let cursor = Cursor::new(&feed, 7)?;
-            assert_eq!(cursor.position_for(&feed)?, 7);
-            if raw != encoded {
-                assert!(cursor.position_for(&format!("run:{encoded}")).is_err());
-            }
         }
         for invalid in ["", ".", "..", "a?x=1", "a#fragment", "a&b", "a\n"] {
             assert!(path_segment(invalid).is_err());

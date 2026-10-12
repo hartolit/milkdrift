@@ -1,6 +1,6 @@
 //! Stable failure categories, redaction and process exits.
 use milkdrift_control_client::{ClientError, status_class};
-use milkdrift_control_protocol::{ErrorCode, RunRead};
+use milkdrift_control_protocol::ErrorCode;
 use serde_json::{Value, json};
 use std::io::Write as _;
 
@@ -12,8 +12,6 @@ pub(crate) enum CliError {
     Client(#[from] ClientError),
     #[error("resource not found: {0}")]
     NotFound(String),
-    #[error("run terminal outcome did not satisfy the requested success condition")]
-    FailedTask(Box<RunRead>),
     #[error("invocation was refused or did not complete successfully")]
     InvocationFailed(Box<Value>),
     #[error("internal CLI failure: {0}")]
@@ -46,7 +44,7 @@ pub(crate) fn exit_code(error: &CliError) -> u8 {
         CliError::Internal(_)
         | CliError::OutputCleanup { .. }
         | CliError::OutputPublished { .. } => 9,
-        CliError::FailedTask(_) | CliError::InvocationFailed(_) => 8,
+        CliError::InvocationFailed(_) => 8,
         CliError::Deadline => 10,
         CliError::Cancelled => 130,
         CliError::Client(client) => match status_class(client).map(|status| status.as_u16()) {
@@ -87,10 +85,6 @@ fn emit_error(
             "input rejected; check command help and the document contract",
         ),
         CliError::NotFound(_) => ("not_found", "resource not found"),
-        CliError::FailedTask(_) => (
-            "failed_terminal",
-            "run terminal outcome did not satisfy the requested success condition",
-        ),
         CliError::InvocationFailed(_) => (
             "invocation_failed",
             "invocation was refused or did not complete successfully; inspect retained evidence",
@@ -125,7 +119,7 @@ fn emit_error(
             }
             ErrorCode::Conflict => (
                 "conflict",
-                "exact command, revision, sequence or runtime policy conflict",
+                "exact request, generation or runtime policy conflict",
             ),
             ErrorCode::Uncertain => (
                 "uncertain",
@@ -165,9 +159,6 @@ fn emit_error(
         _ => Some(false),
     };
     let value = match error {
-        CliError::FailedTask(run) => {
-            serde_json::to_value(run).map_err(|error| CliError::Internal(error.to_string()))?
-        }
         CliError::InvocationFailed(value) => (**value).clone(),
         _ => Value::Null,
     };

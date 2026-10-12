@@ -24,13 +24,8 @@ fn default_limit() -> u16 {
     50
 }
 
-async fn execute(
-    state: &AppState,
-    headers: &HeaderMap,
-    operation: TaskRequest,
-) -> Result<Response, ApiError> {
-    let (request_id, session) = authenticate(state, headers)?;
-    let expected = headers
+fn expected_daemon(headers: &HeaderMap, request_id: &str) -> Result<Option<String>, ApiError> {
+    headers
         .get("x-milkdrift-daemon")
         .map(|value| value.to_str().map(str::to_owned))
         .transpose()
@@ -40,9 +35,18 @@ async fn execute(
                 ErrorCode::InvalidInput,
                 "invalid daemon identity header",
                 false,
-                Some(request_id.clone()),
+                Some(request_id.to_owned()),
             )
-        })?;
+        })
+}
+
+async fn execute(
+    state: &AppState,
+    headers: &HeaderMap,
+    operation: TaskRequest,
+) -> Result<Response, ApiError> {
+    let (request_id, session) = authenticate(state, headers)?;
+    let expected = expected_daemon(headers, &request_id)?;
     let value = state
         .host
         .task_request(session, expected, operation)
@@ -73,12 +77,27 @@ pub(super) async fn list(
     )
     .await
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct WorkflowQuery {
+    cursor: Option<String>,
+}
+
 pub(super) async fn workflow(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(workflow): Path<String>,
+    Query(query): Query<WorkflowQuery>,
 ) -> Result<Response, ApiError> {
-    execute(&state, &headers, TaskRequest::Workflow(workflow)).await
+    execute(
+        &state,
+        &headers,
+        TaskRequest::Workflow {
+            workflow,
+            cursor: query.cursor,
+        },
+    )
+    .await
 }
 pub(super) async fn task(
     State(state): State<AppState>,
@@ -101,6 +120,15 @@ pub(super) async fn receipt(
 ) -> Result<Response, ApiError> {
     execute(&state, &headers, TaskRequest::Receipt(request)).await
 }
+// Canonicalize the public request before defaults, aliases or uploads are resolved.
+// Receipt identity must distinguish omitted fields and different uploaded identities.
+fn canonical_request(body: &[u8], operation: &str) -> Result<Vec<u8>, ApiError> {
+    let value: serde_json::Value =
+        decode_json(body).map_err(|error| protocol_error(error, operation.into()))?;
+    milkdrift_control_protocol::encode_json(&value)
+        .map_err(|error| protocol_error(error, operation.into()))
+}
+
 pub(super) async fn create(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -108,7 +136,16 @@ pub(super) async fn create(
 ) -> Result<Response, ApiError> {
     let request =
         decode_json(&body).map_err(|error| protocol_error(error, "task-create".into()))?;
-    execute(&state, &headers, TaskRequest::Create(request)).await
+    let canonical_request = canonical_request(&body, "task-create")?;
+    execute(
+        &state,
+        &headers,
+        TaskRequest::Create {
+            request,
+            canonical_request,
+        },
+    )
+    .await
 }
 pub(super) async fn change(
     State(state): State<AppState>,
@@ -118,7 +155,17 @@ pub(super) async fn change(
 ) -> Result<Response, ApiError> {
     let request =
         decode_json(&body).map_err(|error| protocol_error(error, "task-change".into()))?;
-    execute(&state, &headers, TaskRequest::Change { workflow, request }).await
+    let canonical_request = canonical_request(&body, "task-change")?;
+    execute(
+        &state,
+        &headers,
+        TaskRequest::Change {
+            workflow,
+            request,
+            canonical_request,
+        },
+    )
+    .await
 }
 pub(super) async fn upload(
     State(state): State<AppState>,
@@ -136,20 +183,17 @@ pub(super) async fn result_content(
     Path((workflow, task)): Path<(String, String)>,
 ) -> Result<Response, ApiError> {
     let (request_id, session) = authenticate(&state, &headers)?;
-    let expected = headers
-        .get("x-milkdrift-daemon")
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_owned);
+    let expected = expected_daemon(&headers, &request_id)?;
     let result = state
         .host
-        .task_request(session, expected, TaskRequest::Result { workflow, task })
+        .task_request(
+            session,
+            expected,
+            TaskRequest::ResultContent { workflow, task },
+        )
         .await
         .map_err(|error| owner_error(error, request_id))?;
-    let text = result
-        .get("text")
-        .and_then(|value| value.as_str())
-        .unwrap_or_default()
-        .to_owned();
+    let text = result.as_str().unwrap_or_default().to_owned();
     let mut response = Response::new(Body::from(text));
     response.headers_mut().insert(
         header::CONTENT_TYPE,
@@ -168,10 +212,7 @@ pub(super) async fn stream(
     let (request_id, session) = authenticate(&state, &headers)?;
     let bearer = super::bearer_header(&headers)
         .ok_or_else(|| ApiError::unauthenticated(request_id.clone()))?;
-    let expected = headers
-        .get("x-milkdrift-daemon")
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_owned);
+    let expected = expected_daemon(&headers, &request_id)?;
     let handshake = state
         .host
         .task_request(session.clone(), expected.clone(), TaskRequest::Session)
@@ -255,7 +296,6 @@ pub(super) async fn stream(
             yield Ok::<Event, std::convert::Infallible>(Event::default().event("resync_required").id(cursor).data("{}"));
             return;
         }
-        let mut previous = None;
         // Each connection has finite observation lifetime; the client reconnects with its cursor.
         for _ in 0..1800 {
             let Some(current_session) = state.host.authenticate_header(Some(&bearer)) else {
@@ -266,17 +306,9 @@ pub(super) async fn stream(
                 yield Ok(Event::default().event("forbidden").data("{\"message\":\"Authority changed; reconnect\"}"));
                 return;
             }
-            match state.host.task_request(current_session, expected.clone(), TaskRequest::List { search: String::new(), cursor: None, limit: 50 }).await {
-                Ok(snapshot) => {
-                    let bytes = match serde_json::to_vec(&snapshot) { Ok(bytes) => bytes, Err(_) => return };
-                    let digest = blake3::hash(&bytes);
-                    if previous != Some(digest) {
-                        previous = Some(digest);
-                        yield Ok(Event::default().event("workflow_changed").id(cursor.clone()).data("{}"));
-                    }
-                }
-                Err(_) => { yield Ok(Event::default().event("forbidden").data("{\"message\":\"Workflow observation unavailable\"}")); return; }
-            }
+            // This is an invalidation hint, not a durable event log. Refreshing the visible
+            // page and selected workflow also observes work outside the first discovery page.
+            yield Ok(Event::default().event("workflow_changed").id(cursor.clone()).data("{}"));
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
     };

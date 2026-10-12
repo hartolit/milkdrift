@@ -108,6 +108,7 @@ export class DaemonClient {
       });
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') throw error;
+      if (error instanceof Error && error.name === 'TimeoutError') throw new Error('The daemon did not reply within 30 seconds. You can reconnect or look up an uncertain submission; the task may still have been accepted.', { cause: error });
       throw new Error('The daemon could not be reached. Check its address, HTTPS certificate and allowed browser origin. A submitted request may still have been accepted.', { cause: error });
     }
     if (!response.ok) {
@@ -128,13 +129,13 @@ export class DaemonClient {
     const response = await this.#fetch(path, {
       method: body === undefined ? 'GET' : 'POST',
       body: body === undefined ? undefined : JSON.stringify(body),
-      signal,
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
     });
     return decodeResponse<T>(await response.json());
   }
 
   async download(path: string): Promise<Blob> {
-    return (await this.#fetch(path)).blob();
+    return (await this.#fetch(path, { signal: AbortSignal.timeout(30_000) })).blob();
   }
 
   async stream(path: string, onEvent: (event: StreamEvent) => Promise<void>, signal: AbortSignal, cursor?: string): Promise<void> {

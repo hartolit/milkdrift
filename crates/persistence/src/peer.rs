@@ -95,11 +95,6 @@ pub struct PeerCancellationRecord {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum PeerExecutionPhase {
-    /// A durable internal workflow association owns progress; no execution worker is held.
-    AwaitingWorkflow {
-        /// Exact entry decision retained while the child executes.
-        evidence: PeerEntryEvidence,
-    },
     /// Accepted work is indexed in the durable dispatch queue.
     DispatchAvailable {
         /// Time this generation became available.
@@ -149,7 +144,6 @@ impl PeerExecutionPhase {
             Self::DispatchAvailable { .. }
                 | Self::DispatchClaimed { .. }
                 | Self::Entered { .. }
-                | Self::AwaitingWorkflow { .. }
                 | Self::CancellationRequested { .. }
         )
     }
@@ -160,10 +154,7 @@ impl PeerExecutionPhase {
         match self {
             Self::DispatchClaimed { claim } | Self::Entered { claim, .. } => Some(claim),
             Self::CancellationRequested { claim, .. } => claim.as_ref(),
-            Self::AwaitingWorkflow { .. }
-            | Self::DispatchAvailable { .. }
-            | Self::Terminal { .. }
-            | Self::Uncertain { .. } => None,
+            Self::DispatchAvailable { .. } | Self::Terminal { .. } | Self::Uncertain { .. } => None,
         }
     }
 
@@ -171,7 +162,7 @@ impl PeerExecutionPhase {
     #[must_use]
     pub const fn entry_evidence(&self) -> Option<&PeerEntryEvidence> {
         match self {
-            Self::Entered { evidence, .. } | Self::AwaitingWorkflow { evidence } => Some(evidence),
+            Self::Entered { evidence, .. } => Some(evidence),
             Self::CancellationRequested { evidence, .. } => evidence.as_ref(),
             Self::DispatchAvailable { .. }
             | Self::DispatchClaimed { .. }
@@ -201,8 +192,6 @@ pub struct PeerExecutionAccounting {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PeerExecutionRecord {
-    /// Saved before child creation, retained through public result publication and archival.
-    pub published_invocation: Option<crate::published::PublishedInvocationPlan>,
     /// Record schema.
     pub schema_version: u32,
     /// Authenticated submitting peer.
@@ -298,8 +287,6 @@ impl PeerArchivedDisposition {
 pub struct PeerExecutionTombstone {
     /// Bounded named output facts retained while progress history is compacted.
     pub output_observations: Vec<PeerObservation>,
-    /// Exact permanent child and command association, even after detailed observations retire.
-    pub published_invocation: Option<crate::published::PublishedInvocationPlan>,
     /// Tombstone document schema.
     pub schema_version: u32,
     /// Authenticated submitting peer.
@@ -466,8 +453,6 @@ pub enum PeerEntryOutcome {
 
 /// Complete facts needed by one atomic adapter-entry transaction.
 pub struct PeerEntryRequest<'a> {
-    /// Optional workflow association to save atomically with final entry and worker release.
-    pub published_invocation: Option<&'a crate::published::PublishedInvocationPlan>,
     /// Authenticated execution owner.
     pub owner: &'a milkdrift_peer_protocol::ServingCaller,
     /// Stable remote execution identity.
@@ -587,8 +572,8 @@ pub struct PeerRetentionPage {
 ///
 /// Implementations own atomic admission/accounting, dispatch indexes, append-only
 /// observations, recovery and explicit retention. They expose no database transaction types.
-/// The serving peer's acceptance is separate from the origin runtime's journal: a local
-/// run command cannot atomically establish a remote outcome.
+/// The serving peer's acceptance is separate from the origin runtime's task state: a local
+/// task command cannot atomically establish a remote outcome.
 ///
 /// Lookup and admission must consult both hot records and tombstones. Exact canonical
 /// requests replay; changed requests conflict for the store generation. After a lost

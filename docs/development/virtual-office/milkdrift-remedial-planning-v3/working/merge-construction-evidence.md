@@ -18,7 +18,7 @@ separate-terminals: accepted rev_f5ff07cabdb4c2e27e1a5a38a33c5d4ed176761a80d7dab
 shared-continuation: refused Validation(ValidationError { diagnostics: [Diagnostic { code: AmbiguousControlFlow, location: "nodes.done-a.control_inputs", message: "only a join may receive multiple control edges", operation_index: Some(8), context: {} }] })
 ```
 
-This confirms the [topology validator](../../../../../crates/blueprint/src/validation.rs) refuses
+This confirms the [topology validator](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/blueprint/src/validation.rs) refuses
 the ordinary direct convergence. It does not prove the broader runtime cannot express the outcome
 through an explicit child-workflow construction. That alternative has its own identity, context,
 authority and live-edit consequences. This is an expression limitation for the proposed operator

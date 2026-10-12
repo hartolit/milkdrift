@@ -9,7 +9,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     path::{Component, Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use milkdrift_capability::{
@@ -17,14 +17,12 @@ use milkdrift_capability::{
     InvocationValueReference,
 };
 use milkdrift_persistence::{
-    ArtifactPublicationId, ArtifactReadAuthority, ArtifactReadRequest, BeginArtifactOutcome,
-    BeginArtifactPublication, EventPageQuery, MAX_ARTIFACT_CHUNK_BYTES, PageSize, RunEventKind,
+    ArtifactPublicationId, ArtifactReadAuthority, ArtifactReadRequest, ArtifactStore,
+    BeginArtifactOutcome, BeginArtifactPublication, MAX_ARTIFACT_CHUNK_BYTES,
 };
-use milkdrift_runtime::RuntimeStore;
 use milkdrift_workspace::{
     ArtifactId, ArtifactMetadata, ArtifactProvenance, ArtifactReference, ArtifactRetention,
-    ArtifactSensitivity, CausalId, CausalReference, ContentDigest, MediaType, WorkspaceValue,
-    WorkspaceValueReference,
+    ArtifactSensitivity, CausalId, CausalReference, ContentDigest, MediaType,
 };
 use tempfile::TempDir;
 use thiserror::Error;
@@ -154,8 +152,8 @@ pub trait MaterializedExecution: Send {
 /// Input and artifact port shared by process and model adapters.
 ///
 /// Implementations verify durable references before returning bytes and preserve invocation
-/// provenance when publishing. Callers own selection authorization and aggregate output accounting
-/// across calls; one publication method cannot account for an adapter's whole output set.
+/// provenance when publishing. Callers supply authorized frozen selections; the durable store
+/// enforces cumulative output accounting across publications for the same invocation.
 pub trait InvocationDataAccess: Send + Sync {
     /// Reads and verifies one exact invocation input through the host-owned ports.
     ///
@@ -173,7 +171,7 @@ pub trait InvocationDataAccess: Send + Sync {
         ))
     }
 
-    /// Resolve a selected artifact-valued workspace output to its immutable content reference.
+    /// Resolve an explicitly selected artifact input to its immutable content reference.
     /// This returns no bytes and grants no read authority to a later effect owner.
     ///
     /// # Errors
@@ -262,7 +260,8 @@ pub trait InvocationDataAccess: Send + Sync {
 /// resume or return its committed reference. Temporary execution directories are leased until
 /// the returned [`MaterializedExecution`] is dropped.
 pub struct StoreInvocationDataAccess {
-    store: Arc<dyn RuntimeStore>,
+    store: Arc<dyn ArtifactStore>,
+    publications: Mutex<()>,
     temporary_root: PathBuf,
     read_authority: ArtifactReadAuthority,
 }
@@ -274,7 +273,7 @@ impl StoreInvocationDataAccess {
     /// Returns filesystem errors while creating or canonicalizing the root, and rejects a root
     /// that is not a directory.
     pub fn new(
-        store: Arc<dyn RuntimeStore>,
+        store: Arc<dyn ArtifactStore>,
         temporary_root: impl Into<PathBuf>,
         read_authority: ArtifactReadAuthority,
     ) -> Result<Self, InvocationDataError> {
@@ -291,6 +290,7 @@ impl StoreInvocationDataAccess {
         }
         Ok(Self {
             store,
+            publications: Mutex::new(()),
             temporary_root,
             read_authority,
         })
@@ -308,39 +308,7 @@ impl StoreInvocationDataAccess {
                 let source = inline_cause(input.name(), &bytes)?;
                 Ok((bytes, source))
             }
-            InvocationValueReference::WorkspaceValue { identity, version } => {
-                let reference: WorkspaceValueReference =
-                    serde_json::from_str(identity).map_err(|_error| {
-                        InvocationDataError::Integrity(format!(
-                            "workspace input '{}' is not an exact reference",
-                            input.name()
-                        ))
-                    })?;
-                if version != &reference.version().get().to_string() {
-                    return Err(InvocationDataError::Integrity(format!(
-                        "workspace input '{}' has a contradictory version",
-                        input.name()
-                    )));
-                }
-                let entry = self
-                    .store
-                    .value(&reference)
-                    .map_err(|error| InvocationDataError::Integrity(error.to_string()))?
-                    .ok_or_else(|| {
-                        InvocationDataError::Integrity(format!(
-                            "workspace input '{}' is unavailable",
-                            input.name()
-                        ))
-                    })?;
-                let bytes = match entry.value() {
-                    WorkspaceValue::Json(value) => serde_json::to_vec(value.value())
-                        .map_err(|error| InvocationDataError::Integrity(error.to_string()))?,
-                    WorkspaceValue::Artifact(reference) => {
-                        self.read_artifact(reference.clone(), limits)?
-                    }
-                };
-                Ok((bytes, CausalReference::WorkspaceValue { reference }))
-            }
+            InvocationValueReference::WorkspaceValue { .. } => Err(InvocationDataError::Rejected("retired workspace-value inputs are unsupported; supply captured bytes or an immutable artifact".to_owned())),
             InvocationValueReference::Artifact { reference } => {
                 let durable = durable_artifact_reference(reference)?;
                 let bytes = self.read_artifact(durable.clone(), limits)?;
@@ -418,6 +386,9 @@ impl StoreInvocationDataAccess {
         limits: MaterializationLimits,
     ) -> Result<CapabilityArtifactReference, InvocationDataError> {
         validate_output_name(output_name)?;
+        let _publication = self.publications.lock().map_err(|_| {
+            InvocationDataError::Publication("output publication owner is unavailable".to_owned())
+        })?;
         if u64::try_from(bytes.len()).map_or(true, |size| size > limits.max_file_bytes) {
             return Err(InvocationDataError::Rejected(
                 "declared output exceeds the per-file publication bound".to_owned(),
@@ -484,57 +455,15 @@ impl StoreInvocationDataAccess {
             .store
             .artifact_usage(&owner)
             .map_err(|error| InvocationDataError::Publication(error.to_string()))?;
-        let workspace_budget = if let Some(budget) = context
+        let workspace_budget = context
             .peer_artifact_budget()
             .or_else(|| context.task_artifact_budget())
-        {
-            budget.clone()
-        } else {
-            // Local run creation owns its budget. An entered peer execution supplies
-            // its own accepted allowance without inventing a local workflow history.
-            let page = self
-                .store
-                .events(
-                    &EventPageQuery::new(
-                        context
-                            .workflow()
-                            .ok_or_else(|| {
-                                InvocationDataError::Integrity(
-                                    "workflow publication budget requires workflow provenance"
-                                        .to_owned(),
-                                )
-                            })?
-                            .run()
-                            .clone(),
-                        None,
-                        PageSize::new(1)
-                            .map_err(|error| InvocationDataError::Publication(error.to_string()))?,
-                    )
-                    .map_err(|error| InvocationDataError::Publication(error.to_string()))?,
-                )
-                .map_err(|error| InvocationDataError::Publication(error.to_string()))?;
-            let Some(RunEventKind::RunCreated {
-                workspace_budget, ..
-            }) = page.events.first().map(|event| event.kind())
-            else {
-                return Err(InvocationDataError::Integrity(
-                    "run creation budget is absent".to_owned(),
-                ));
-            };
-            workspace_budget.clone()
-        };
-        let begin = match (owner, context.controller_reservation()) {
-            (milkdrift_workspace::ArtifactOwner::Workflow { run }, Some(reservation)) => {
-                BeginArtifactPublication::for_invocation(
-                    publication.clone(),
-                    run,
-                    metadata,
-                    workspace_budget,
-                    usage,
-                    reservation.clone(),
-                )
-            }
-            (milkdrift_workspace::ArtifactOwner::HostInvocation { host, invocation }, None) => {
+            .cloned()
+            .ok_or_else(|| {
+                InvocationDataError::Integrity("accepted output budget is absent".to_owned())
+            })?;
+        let begin = match owner {
+            milkdrift_workspace::ArtifactOwner::HostInvocation { host, invocation } => {
                 BeginArtifactPublication::for_host_invocation(
                     publication.clone(),
                     host,
@@ -544,22 +473,27 @@ impl StoreInvocationDataAccess {
                     usage,
                 )
             }
-            (milkdrift_workspace::ArtifactOwner::Workflow { run }, None) => {
-                BeginArtifactPublication::new(
-                    publication.clone(),
-                    run,
-                    metadata,
-                    workspace_budget,
-                    usage,
-                )
-            }
+            milkdrift_workspace::ArtifactOwner::Workflow { run } => BeginArtifactPublication::new(
+                publication.clone(),
+                run,
+                metadata,
+                workspace_budget,
+                usage,
+            ),
             _ => {
                 return Err(InvocationDataError::Integrity(
-                    "serving output cannot name a local controller reservation".to_owned(),
+                    "output owner is not an entered workflow or serving invocation".to_owned(),
                 ));
             }
         }
         .map_err(|error| InvocationDataError::Publication(error.to_string()))?;
+        let begin = if let Some(limit) = context.task_output_bytes() {
+            begin
+                .with_task_output_limit(limit)
+                .map_err(|error| InvocationDataError::Publication(error.to_string()))?
+        } else {
+            begin
+        };
         let begin_outcome = self
             .store
             .begin_publication(&begin)
@@ -704,32 +638,18 @@ impl InvocationDataAccess for StoreInvocationDataAccess {
         let mut materialized = BTreeMap::new();
         let mut total = 0_u64;
         for specification in inputs {
-            let (bytes, input_name) = if specification.input_name()
-                == milkdrift_capability::CONTEXT_MANIFEST_INPUT_NAME
-            {
-                let reference = request.context_manifest().ok_or_else(|| {
-                    InvocationDataError::Rejected(
-                        "configured context manifest input is absent".to_owned(),
-                    )
+            let input = request
+                .inputs()
+                .iter()
+                .find(|input| input.name() == specification.input_name())
+                .ok_or_else(|| {
+                    InvocationDataError::Rejected(format!(
+                        "required invocation input '{}' is missing",
+                        specification.input_name()
+                    ))
                 })?;
-                (
-                    self.read_artifact(durable_artifact_reference(reference)?, limits)?,
-                    specification.input_name(),
-                )
-            } else {
-                let input = request
-                    .inputs()
-                    .iter()
-                    .find(|input| input.name() == specification.input_name())
-                    .ok_or_else(|| {
-                        InvocationDataError::Rejected(format!(
-                            "required invocation input '{}' is missing",
-                            specification.input_name()
-                        ))
-                    })?;
-                let bytes = self.read_input_bytes(context, input, limits)?;
-                (bytes, input.name())
-            };
+            let bytes = self.read_input_bytes(context, input, limits)?;
+            let input_name = input.name();
             let size = u64::try_from(bytes.len()).map_err(|_error| {
                 InvocationDataError::Rejected("materialized input size overflow".to_owned())
             })?;
@@ -886,8 +806,7 @@ fn publication_hash(
     hasher.update(b"milkdrift.process-output-publication.v1\0");
     let mut components = vec![context.publication_namespace()?.as_bytes()];
     match context.selection() {
-        crate::AdapterInputSelection::Workflow(workflow)
-        | crate::AdapterInputSelection::Task { workflow, .. } => components.extend([
+        crate::AdapterInputSelection::Task { workflow, .. } => components.extend([
             workflow.revision().as_str().as_bytes(),
             workflow.node().as_str().as_bytes(),
             workflow.execution().as_str().as_bytes(),
@@ -915,8 +834,7 @@ fn publication_causes(
     request: &InvocationRequest,
 ) -> Result<Vec<CausalReference>, InvocationDataError> {
     let mut causes = match context.selection() {
-        crate::AdapterInputSelection::Workflow(workflow)
-        | crate::AdapterInputSelection::Task { workflow, .. } => vec![
+        crate::AdapterInputSelection::Task { workflow, .. } => vec![
             external_cause("revision", workflow.revision().as_str())?,
             external_cause("node", workflow.node().as_str())?,
             external_cause("execution", workflow.execution().as_str())?,
@@ -932,11 +850,6 @@ fn publication_causes(
             "origin-invocation",
             request.invocation().as_str(),
         )?);
-    }
-    if let Some(manifest) = request.context_manifest() {
-        causes.push(CausalReference::Artifact {
-            reference: durable_artifact_reference(manifest)?,
-        });
     }
     for input in request.inputs() {
         let cause = match input.value() {
@@ -967,7 +880,7 @@ fn publication_causes(
     }
     if context.peer_artifact_budget().is_some() && context.workflow().is_some() {
         // The accepted peer request retains these exact origin-side references.
-        // Their source journal/artifact identities are not local storage facts.
+        // Their source workflow/artifact identities are not local storage facts.
         causes = causes
             .into_iter()
             .map(|cause| match cause {

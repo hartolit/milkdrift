@@ -404,13 +404,14 @@ fn request(
     )?)
 }
 
-fn context() -> TestResult<AdapterExecutionContext> {
-    Ok(AdapterExecutionContext::new(
+fn context(request: &InvocationRequest) -> TestResult<AdapterExecutionContext> {
+    Ok(AdapterExecutionContext::originated(
         RunId::new("run-process")?,
         serde_json::from_value(json!(format!("rev_{}", "0".repeat(64))))?,
         NodeId::new("node-process")?,
         NodeExecutionId::new("execution-process")?,
         AttemptId::new("attempt-process")?,
+        milkdrift_capability_host::DirectInputSelection::new(request, 1_048_576)?,
     ))
 }
 
@@ -423,11 +424,12 @@ fn process_conformance_case(_scenario: ConformanceScenario) -> TestResult<Adapte
         data,
         Arc::new(InMemorySecretResolver::new()),
     )?);
+    let context = context(&request)?;
     Ok(AdapterConformanceCase::new(
         adapter.clone(),
         adapter.descriptor().clone(),
         request,
-        context()?,
+        context,
         AdapterConformanceExpectations {
             start_replay: StartReplayExpectation::Rejected,
             available_while_draining: false,
@@ -526,16 +528,12 @@ fn authorized_host_working_directory_persists_across_fresh_process_invocations()
     )?;
     for suffix in ["first", "second"] {
         let reporter = TestReporter::default();
-        host.execute_exact_with_context(
-            &snapshot,
-            &request(
-                &profile,
-                &format!("invocation-persistent-{suffix}"),
-                Vec::new(),
-            )?,
-            &context()?,
-            &reporter,
+        let request = request(
+            &profile,
+            &format!("invocation-persistent-{suffix}"),
+            Vec::new(),
         )?;
+        host.execute_exact_with_context(&snapshot, &request, &context(&request)?, &reporter)?;
         let events = reporter.events()?;
         assert_eq!(terminal_status(&events), Some(TerminalStatus::Success));
         assert_eq!(
@@ -647,7 +645,7 @@ fn argv_metacharacters_stdin_environment_and_outputs_are_bounded_and_literal() -
     )?;
     let (host, snapshot) = setup(profile, data.clone(), secrets)?;
     let reporter = TestReporter::default();
-    host.execute_exact_with_context(&snapshot, &request, &context()?, &reporter)?;
+    host.execute_exact_with_context(&snapshot, &request, &context(&request)?, &reporter)?;
     let events = reporter.events()?;
     assert_eq!(terminal_status(&events), Some(TerminalStatus::Success));
     let process_key = ExtensionKey::new("org.milkdrift/process-profile")?;
@@ -727,7 +725,7 @@ fn simultaneous_large_streams_do_not_deadlock_and_are_truncated() -> TestResult 
         Arc::new(InMemorySecretResolver::new()),
     )?;
     let reporter = TestReporter::default();
-    host.execute_exact_with_context(&snapshot, &request, &context()?, &reporter)?;
+    host.execute_exact_with_context(&snapshot, &request, &context(&request)?, &reporter)?;
     assert_eq!(
         terminal_status(&reporter.events()?),
         Some(TerminalStatus::Success)
@@ -771,7 +769,7 @@ fn secret_echo_is_redacted_from_capture_artifacts_and_events() -> TestResult {
     )?;
     let (host, snapshot) = setup(profile, data.clone(), secrets)?;
     let reporter = TestReporter::default();
-    host.execute_exact_with_context(&snapshot, &request, &context()?, &reporter)?;
+    host.execute_exact_with_context(&snapshot, &request, &context(&request)?, &reporter)?;
     let stdout = data.output("stdout")?.ok_or("missing stdout capture")?;
     assert!(
         !stdout
@@ -869,7 +867,7 @@ fn configuration_rejects_unknown_placeholders_traversal_and_missing_secrets() ->
     let denied = denied_host.execute_exact_with_context(
         &denied_snapshot,
         &denied_request,
-        &context()?,
+        &context(&denied_request)?,
         &denied_reporter,
     );
     assert!(
@@ -911,7 +909,8 @@ fn configuration_rejects_unknown_placeholders_traversal_and_missing_secrets() ->
     let request = request(&profile, "invocation-secret-missing", Vec::new())?;
     let (host, snapshot) = setup(profile, data, Arc::new(InMemorySecretResolver::new()))?;
     let reporter = TestReporter::default();
-    let refused = host.execute_exact_with_context(&snapshot, &request, &context()?, &reporter);
+    let refused =
+        host.execute_exact_with_context(&snapshot, &request, &context(&request)?, &reporter);
     assert!(
         matches!(refused, Err(milkdrift_runtime::ExecutorError::BoundaryBeforeEntry(detail)) if detail.starts_with("secret_resolution_failed:"))
     );
@@ -947,7 +946,7 @@ fn undeclared_process_files_are_not_published() -> TestResult {
         Arc::new(InMemorySecretResolver::new()),
     )?;
     let reporter = TestReporter::default();
-    host.execute_exact_with_context(&snapshot, &request, &context()?, &reporter)?;
+    host.execute_exact_with_context(&snapshot, &request, &context(&request)?, &reporter)?;
     assert_eq!(
         terminal_status(&reporter.events()?),
         Some(TerminalStatus::Success)

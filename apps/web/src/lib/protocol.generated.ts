@@ -57,6 +57,32 @@ path: string,
  * Whether the task may write under this root.
  */
 write: boolean, };
+export type TaskOutputDeclarationDto = {
+/**
+ * Whether successful settlement requires this output.
+ */
+required: boolean,
+/**
+ * Optional exact media type checked at settlement.
+ */
+media_type: string | null,
+/**
+ * Maximum retained bytes for this output.
+ */
+max_bytes: number, };
+export type TaskBindingRedirectDto = {
+/**
+ * Unstarted consumer whose existing binding will change.
+ */
+consumer: string,
+/**
+ * Exact version observed by the caller.
+ */
+expected_version: number,
+/**
+ * Input currently bound to the original producer output.
+ */
+input: string, };
 export type TaskDefinitionDto = {
 /**
  * Human-readable task title.
@@ -78,6 +104,10 @@ capability: TaskCapability,
  * Named inputs with declared provenance.
  */
 inputs: { [key in string]: InputBinding },
+/**
+ * Named immutable outputs available to future consumers.
+ */
+outputs: { [key in string]: TaskOutputDeclarationDto },
 /**
  * Explicit producer IDs or batch aliases.
  */
@@ -209,7 +239,11 @@ task: string,
 /**
  * Successful corrective task accepted for that obligation.
  */
-correction: string, } | { "kind": "continue" } | { "kind": "wait",
+correction: string,
+/**
+ * Explicit, version-guarded future bindings to redirect.
+ */
+redirects: Array<TaskBindingRedirectDto>, } | { "kind": "continue" } | { "kind": "wait",
 /**
  * Explanation requiring a person's decision.
  */
@@ -247,11 +281,19 @@ aliases: { [key in string]: string }, };
 export type TaskStateDto = "queued" | "running" | "completed" | "failed" | "stopped" | "uncertain";
 export type TaskResultDto = {
 /**
+ * Declared text artifacts contain non-UTF-8 bytes; download individual artifacts.
+ */
+text_unavailable: boolean,
+/**
  * Displayable result content retained by the daemon.
  */
 text: string,
 /**
- * Content identity of these exact bytes.
+ * Whether text is a bounded preview of the complete retained result.
+ */
+text_truncated: boolean,
+/**
+ * Content identity of the complete retained text, including bytes outside a preview.
  */
 digest: string,
 /**
@@ -264,6 +306,10 @@ artifacts: Array<string>,
 input_digests: { [key in string]: string }, };
 export type FrozenInputDto = {
 /**
+ * Current artifact authority prevents releasing this captured input.
+ */
+restricted: boolean,
+/**
  * Text, captured file, absent value or immutable artifact.
  */
 kind: string,
@@ -275,6 +321,10 @@ name: string | null,
  * Selected UTF-8 bytes, when text is available.
  */
 text: string | null,
+/**
+ * Whether captured text was omitted or shortened by the inspector budget.
+ */
+text_truncated: boolean,
 /**
  * Exact selected byte digest.
  */
@@ -352,7 +402,93 @@ frozen: FrozenTaskDto | null,
 /**
  * Available immutable result.
  */
-result: TaskResultDto | null, };
+result: TaskResultDto | null,
+/**
+ * Result exists but current artifact authority does not permit its projection.
+ */
+result_restricted: boolean, };
+export type TaskSummaryDto = {
+/**
+ * Stable task identity.
+ */
+id: string,
+/**
+ * Accepted definition version.
+ */
+version: number,
+/**
+ * Human-readable accepted title.
+ */
+title: string,
+/**
+ * Human-readable accepted description.
+ */
+description: string,
+/**
+ * Accepted producer task identities used by the timeline.
+ */
+dependencies: Array<string>,
+/**
+ * Durable lifecycle state.
+ */
+state: TaskStateDto,
+/**
+ * Missing input or settlement explanation.
+ */
+reason: string | null,
+/**
+ * Recorded start, absent for queued tasks.
+ */
+started_at: number | null,
+/**
+ * Proven settlement time.
+ */
+ended_at: number | null,
+/**
+ * Whether cancellation has been requested.
+ */
+stop_requested: boolean,
+/**
+ * Reserved exact stop action identity.
+ */
+stop_request_id: string,
+/**
+ * Whether a retained result can be inspected.
+ */
+has_result: boolean, };
+export type WorkflowSummaryDto = {
+/**
+ * Stable workflow identity.
+ */
+id: string,
+/**
+ * Discoverable accepted title.
+ */
+title: string,
+/**
+ * Workflow brief.
+ */
+description: string,
+/**
+ * Accepted edit generation.
+ */
+generation: number,
+/**
+ * Current lifecycle state.
+ */
+state: string,
+/**
+ * Creation timestamp.
+ */
+created_at: number,
+/**
+ * Most recent recorded change.
+ */
+updated_at: number,
+/**
+ * Number of retained tasks in this workflow.
+ */
+task_count: number, };
 export type WorkflowReadDto = {
 /**
  * Stable daemon-assigned workflow identity.
@@ -389,12 +525,20 @@ limits: WorkflowLimitsDto,
 /**
  * Tasks ordered for stable presentation; order does not schedule work.
  */
-tasks: Array<TaskReadDto>, };
+tasks: Array<TaskSummaryDto>,
+/**
+ * Number of retained tasks across all pages.
+ */
+task_count: number,
+/**
+ * Continue the live task list without loading full task content.
+ */
+next_task_cursor: string | null, };
 export type WorkflowPageDto = {
 /**
  * Accessible workflows in this page.
  */
-items: Array<WorkflowReadDto>,
+items: Array<WorkflowSummaryDto>,
 /**
  * Opaque continuation, if more accessible results remain.
  */
@@ -404,6 +548,10 @@ next_cursor: string | null,
  */
 truncated: boolean, };
 export type TaskSessionDto = {
+/**
+ * Maximum UTF-8 bytes in a supplied text value or captured file.
+ */
+input_limit_bytes: number,
 /**
  * Installation identity required on subsequent task operations.
  */
@@ -454,7 +602,6 @@ digest: string,
  * UTF-8 byte count.
  */
 bytes: number, };
-export const MAX_TASK_INPUT_BYTES = 524288;
 
 export function decodeResponse<T>(body: unknown): T {
   if (typeof body !== 'object' || body === null) throw new Error('Invalid daemon response');

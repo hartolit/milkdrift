@@ -10,7 +10,7 @@ Milkdrift consumes a URL you configure; it does not discover peers or make them 
 
 For any non-loopback URL, use HTTPS with certificates managed by your platform or reverse proxy. Milkdrift does not issue certificates or run a CA. Keep the daemon listener on loopback behind the proxy unless a later hardened listener explicitly supports your deployment. The named insecure development option accepts only loopback/localhost and is disabled by default.
 
-Peer state is explicit in TOML schema 12. Both roles require a top-level stable `host_id` and share
+Peer state is explicit in TOML schema 14. Both roles require a top-level stable `host_id` and share
 the top-level `serving` policy. `[peers] mode = "disabled"` excludes relationships; `mode = "enabled"`
 permits explicit relationship tables. Configure both sides with different host identities and inverse
 relationship entries. The origin uses `workflow_enabled`; the target may use `execution_only`.
@@ -29,41 +29,19 @@ Start with `actions = []`, empty capability/operation allowlists, and add only r
 
 ## Pin tasks to approved hosts
 
-Give each repository/tool task an explicit capability `placement`. For repository A on `peer-a`,
-the requirement can contain:
+Select the exact peer capability returned by `milkdrift workflow capabilities` after connecting
+the approved host. Put that identity and operation in the task request's `capability` object.
+The [maintained task request](../../examples/operator/peer-placement.json) contains a placeholder
+that must be replaced with an actual advertised identity. Submit it with `milkdrift workflow create`.
+A local capability with the same operation does not satisfy a different exact peer identity.
 
-```json
-"placement": { "localities": ["peer"], "peers": ["peer-a"] }
-```
-
-Use `peers: ["peer-b"]` on repository B's task. The same optional object is supported in a
-prompt-sequence capability profile. The operation and profile names keep their ordinary exact
-meaning; `process.execute` on the local host or another peer cannot satisfy this placement. Each
-serving host configures and pins its own executable and working directory. Connectivity does not
-copy a checkout, credentials, or a filesystem mount.
-
-The [maintained blueprint](../../examples/operator/peer-placement.json) contains both tasks and their
-control ordering. Import it through the ordinary CLI after configuring the hosts and grants.
-
-Omitted or `null` dimensions are unrestricted. An empty array denies every candidate. Arrays must
-be unique and in canonical order; peers are bounded to 128 exact IDs. There is no `*` peer syntax.
-An exact peer set implies `peer` locality, and a nonempty set combined with localities excluding
-`peer` is invalid. Supported locality values are `local`, `peer`, `remote`, and `unspecified`.
-`remote` describes an external endpoint; it does not authenticate a Milkdrift peer. Tags are
-descriptive and cannot replace identity or authority.
-
-The origin's grant must cover the task's complete requirement, including its peer/locality sets.
-The serving relationship separately authorizes the exact capability and its host resources. No
-eligible match returns a typed resolution failure; unavailable, expired, or drained registrations
-never permit a wrong-host fallback. A constrained mismatch reports `placement_requirements_unsatisfied`
-without enumerating forbidden catalogs. Attempt inspection retains the requested requirement,
-chosen peer/locality, catalog digest/generation/expiry, remote descriptor revision, and entry decision.
-Reconnection and restart preserve that selection for accepted work.
-
-If selection fails before an attempt exists, inspect the run's immutable revision for its request
-and the bounded `runnable dispatch failed` operator log for the run/execution and typed mismatch or
-unavailability reason. No attempt or chosen host is invented for that failure. Daemon health reports
-the scheduler failure generically; it does not contain a per-run placement diagnosis.
+Each serving host pins its own executable and working directory. Connectivity does not copy a
+checkout, credentials or filesystem mount. The origin grant must cover the selected remote
+capability and the serving relationship separately authorizes the exact execution resources.
+Expired, unavailable or drained selections leave tasks queued with a reason; no wrong-host fallback
+is allowed. Start freezes the selected peer/catalog/descriptor generation and authority. Reconnect
+and restart preserve accepted selection. Public task reads expose generation and selected request;
+the retained runtime snapshot owns complete dispatch provenance.
 
 Observed remote outputs are imported through authorized core artifact transfers before the origin
 reports them as outputs. Enable the serving relationship's `artifact_download` action and permitted
@@ -104,13 +82,13 @@ inside the catalog's remaining lifetime; expiry during execution may preserve un
 
 ## Retain and recover accepted work
 
-Serving work uses the schema-11 top-level `serving` policy in both roles. `worker_threads`,
+Serving work uses the schema-14 top-level `serving` policy in both roles. `worker_threads`,
 `maximum_global_active`, and `maximum_dispatch_queue` bound live ownership;
 `maximum_hot_terminal_records` bounds terminal detail and reserves capacity for active work's
 eventual disposition. `archive_batch_size` bounds each compaction pass, and
 `observation_hot_retention_ms` sets the minimum age for removing reconnectable detail. Keep the
 hot bound at least as large as the global active bound and the batch no larger than the hot bound.
-These settings are independent of application receipts and security-audit retention.
+These settings are independent of workflow receipts and security-audit retention.
 
 Graceful shutdown stops new acceptance and claims, joins workers until the configured deadline, and reports retained workers/effects if the deadline expires. Active executions are never archived. Once terminal or uncertain history is older than the observation horizon, maintenance or the new-admission transaction can atomically replace it with a compact tombstone and reclaim a hot slot. Exact request replay and digest conflict remain permanent within the store generation. Archived lookup/observation responses are explicitly typed and retain the final terminal observation or uncertainty plus an observation-chain digest; intermediate progress/stream rows are no longer queryable. The archive retains at most 256 named output observations so an interrupted consumer can recover exact result bytes through current transfer authorization. Output overflow refuses append and preserves uncertainty. Core artifact retention and provenance are unchanged.
 

@@ -17,14 +17,12 @@ members = [
     "crates/control-protocol",
     "crates/model",
     "crates/persistence",
-    "crates/prompt-sequence",
     "crates/peer-protocol",
     "crates/runtime",
     "crates/workspace",
     "apps/cli",
     "apps/daemon",
     "tools/evidence",
-    "examples/adaptive-slotbook",
 ]
 
 [workspace.package]
@@ -59,7 +57,6 @@ milkdrift-model-provider = { version = "=0.1.0", path = "adapters/model-provider
 milkdrift-peer-http = { version = "=0.1.0", path = "adapters/peer-http" }
 milkdrift-peer-protocol = { version = "=0.1.0", path = "crates/peer-protocol" }
 milkdrift-persistence = { version = "=0.1.0", path = "crates/persistence" }
-milkdrift-prompt-sequence = { version = "=0.1.0", path = "crates/prompt-sequence" }
 milkdrift-redb-store = { version = "=0.1.0", path = "adapters/redb-store" }
 milkdrift-runtime = { version = "=0.1.0", path = "crates/runtime" }
 milkdrift-workspace = { version = "=0.1.0", path = "crates/workspace" }

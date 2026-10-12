@@ -33,8 +33,10 @@ impl ArtifactStore for RedbStore {
         owner: &milkdrift_workspace::ArtifactOwner,
     ) -> Result<super::WorkspaceUsage, PersistenceError> {
         let read = self.database().begin_read().map_err(error::redb)?;
-        Ok(crate::journal::validated_workspace_domain(&read, owner)?
-            .unwrap_or(super::WorkspaceUsage::EMPTY))
+        Ok(
+            crate::artifact::domain::validated_workspace_domain(&read, owner)?
+                .unwrap_or(super::WorkspaceUsage::EMPTY),
+        )
     }
     #[tracing::instrument(
         name = "milkdrift.redb_store.begin_artifact_publication",
@@ -75,7 +77,7 @@ impl ArtifactStore for RedbStore {
             }
             return match record.state {
                 PublicationState::Committed { .. } => {
-                    let actual = crate::journal::validate_workspace_domain_in_transaction(
+                    let actual = crate::artifact::domain::validate_workspace_domain_in_transaction(
                         &write,
                         &record.owner,
                         &record.budget,
@@ -112,7 +114,7 @@ impl ArtifactStore for RedbStore {
                     }
                 }
                 PublicationState::Writable => {
-                    let actual = crate::journal::validate_workspace_domain_in_transaction(
+                    let actual = crate::artifact::domain::validate_workspace_domain_in_transaction(
                         &write,
                         &record.owner,
                         &record.budget,
@@ -173,7 +175,7 @@ impl ArtifactStore for RedbStore {
             });
         }
 
-        let actual = crate::journal::validate_or_initialize_workspace_domain(
+        let actual = crate::artifact::domain::validate_or_initialize_workspace_domain(
             &write,
             request.owner(),
             request.budget(),
@@ -207,6 +209,18 @@ impl ArtifactStore for RedbStore {
         }
 
         let created_at = self.clock.now()?;
+        crate::task::reserve_task_output(
+            &write,
+            request.owner(),
+            request.metadata(),
+            request.task_output_limit(),
+        )?;
+        crate::task::begin_artifact(
+            &write,
+            request.owner(),
+            request.metadata().reference().size_bytes(),
+            self.workflow_limits.history_bytes,
+        )?;
         require_clock_in_transaction(&write, created_at)?;
         let created_at_millis = created_at.get();
         let record = PublicationRecord::from_request(request, created_at_millis);
@@ -308,7 +322,7 @@ impl ArtifactStore for RedbStore {
                 identity: publication.to_string(),
             });
         }
-        let actual = crate::journal::validate_workspace_domain_in_transaction(
+        let actual = crate::artifact::domain::validate_workspace_domain_in_transaction(
             &write,
             &record.owner,
             &record.budget,
@@ -380,7 +394,7 @@ impl ArtifactStore for RedbStore {
         }
         let mut record = publication_in_transaction(&write, publication)?;
         if let PublicationState::Committed { .. } = record.state {
-            let actual = crate::journal::validate_workspace_domain_in_transaction(
+            let actual = crate::artifact::domain::validate_workspace_domain_in_transaction(
                 &write,
                 &record.owner,
                 &record.budget,
@@ -431,7 +445,7 @@ impl ArtifactStore for RedbStore {
         validate_writable_publication_indexes(&write, &record)?;
         require_temp_inventory_ready(&write, &record)?;
 
-        let actual = crate::journal::validate_workspace_domain_in_transaction(
+        let actual = crate::artifact::domain::validate_workspace_domain_in_transaction(
             &write,
             &record.owner,
             &record.budget,
@@ -542,7 +556,7 @@ impl ArtifactStore for RedbStore {
                 message: "artifact content path is being durably finalized".to_owned(),
             });
         }
-        let actual = crate::journal::validate_workspace_domain_in_transaction(
+        let actual = crate::artifact::domain::validate_workspace_domain_in_transaction(
             &write,
             &record.owner,
             &record.budget,
@@ -551,30 +565,6 @@ impl ArtifactStore for RedbStore {
             return Err(error::corruption(
                 "writable publication changed workspace usage before metadata commit",
             ));
-        }
-        let controller_charge = if let (Some(run), Some(controller_owner)) =
-            (record.controller_run(), record.controller_owner.as_ref())
-        {
-            Some(crate::controller_account::charge_artifact_publication(
-                &write,
-                &record.publication,
-                run,
-                controller_owner,
-                record.metadata.reference().size_bytes(),
-            )?)
-        } else {
-            None
-        };
-        if controller_charge
-            == Some(milkdrift_persistence::ControllerArtifactChargeOutcome::ContractViolation)
-        {
-            release_writable_publication(&write, &record)?;
-            write.commit().map_err(error::redb)?;
-            let _removed = finalize_released_publication_paths(self, &record, None)?;
-            return Err(PersistenceError::Bounds {
-                location: "controller.artifact_reservation",
-                reason: "logical artifact bytes exceed the exact reservation remainder".to_owned(),
-            });
         }
         commit_artifact_metadata(self, &write, &mut record, content_deduplicated)?;
         self.faults
@@ -610,7 +600,7 @@ impl ArtifactStore for RedbStore {
             PublicationState::Writable | PublicationState::Released => record.expected_usage,
             PublicationState::Committed { .. } => record.resulting_usage,
         };
-        let actual = crate::journal::validate_workspace_domain_in_transaction(
+        let actual = crate::artifact::domain::validate_workspace_domain_in_transaction(
             &write,
             &record.owner,
             &record.budget,
@@ -786,32 +776,6 @@ pub(crate) fn decode_publication(bytes: &[u8]) -> Result<PublicationRecord, Pers
             found: record.schema_version,
             supported: PUBLICATION_SCHEMA_VERSION,
         });
-    }
-    let controller_valid = matches!(
-        (&record.owner, &record.controller_owner),
-        (
-            milkdrift_workspace::ArtifactOwner::Workflow { .. },
-            Some(
-                milkdrift_persistence::ControllerArtifactOwner::RunBinding
-                    | milkdrift_persistence::ControllerArtifactOwner::InvocationReservation(_),
-            ),
-        ) | (
-            milkdrift_workspace::ArtifactOwner::Transfer { .. },
-            Some(
-                milkdrift_persistence::ControllerArtifactOwner::RemoteInvocationReservation { .. }
-            ),
-        ) | (
-            milkdrift_workspace::ArtifactOwner::PeerInput { .. }
-                | milkdrift_workspace::ArtifactOwner::ClientInput { .. }
-                | milkdrift_workspace::ArtifactOwner::HostInvocation { .. }
-                | milkdrift_workspace::ArtifactOwner::Transfer { .. },
-            None,
-        )
-    );
-    if !controller_valid {
-        return Err(error::corruption(
-            "artifact owner contradicts its controller-account source",
-        ));
     }
     if let milkdrift_workspace::ArtifactOwner::PeerInput { peer, .. } = &record.owner
         && !matches!(record.metadata.provenance().producer(), milkdrift_workspace::CausalReference::PeerClaim { peer: source, .. } if source == peer)

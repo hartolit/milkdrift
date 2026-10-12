@@ -2,8 +2,7 @@
 use super::OfflineStore;
 use crate::{error, json, schema};
 use milkdrift_persistence::{
-    ClockWatermarkStore, ControllerAccountId, ControllerAccountStore, ControllerReservation,
-    ControllerResourceTotals, LeaseIndexEntry, PageSize, PeerExecutionSnapshot, PersistenceError,
+    ClockWatermarkStore, PageSize, PeerExecutionSnapshot, PersistenceError,
 };
 use milkdrift_workspace::ArtifactMetadata;
 use redb::ReadableTableMetadata;
@@ -15,14 +14,10 @@ use std::ops::Bound;
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum InspectionFamily {
-    /// Current lease index, to locate blocked active work.
-    Leases,
-    /// Cumulative accounts and unsettled reservation identities.
-    Accounts,
-    /// Recent exact command-result ownership, excluding response documents.
-    HotReceipts,
-    /// Archived exact command-result ownership, excluding response documents.
-    ColdReceipts,
+    /// Task snapshot identity and retained obligation counters, excluding task inputs.
+    Workflows,
+    /// Exact command replay ownership, excluding requests and responses.
+    Receipts,
     /// Serving execution identity and phase, excluding requests and grants.
     Peers,
     /// Permanent peer request replay ownership.
@@ -43,25 +38,18 @@ pub enum InspectionRecord {
         /// Durable installation state without live platform inspection.
         installation: milkdrift_capability::managed::ManagedResponse,
     },
-    /// Existing verifiable lease discovery evidence, never a renewed lease.
-    Lease {
-        /// Retained lease identity, epoch and expiry observation.
-        lease: LeaseIndexEntry,
-    },
-    /// Resource totals and exact unresolved reservations, without raw provider evidence.
-    Account {
-        /// Account whose retained resource obligations are projected.
-        account: ControllerAccountId,
-        /// Revision at which these totals and reservations were read.
-        revision: u64,
-        /// Usage already charged to this account.
-        settled: ControllerResourceTotals,
-        /// Resources still held by unresolved reservations.
-        outstanding: ControllerResourceTotals,
-        /// Whether the account currently refuses further admissions.
-        blocked: bool,
-        /// Exact outstanding reservations for reconciliation.
-        reservations: Vec<ControllerReservation>,
+    /// Runtime snapshot metadata without frozen inputs or capability requests.
+    Workflow {
+        /// Durable workflow identity.
+        workflow: String,
+        /// Current compare-and-swap generation.
+        generation: u64,
+        /// Authenticated immutable owner.
+        actor: String,
+        /// Guaranteed remaining execution-history growth.
+        reserved_bytes: u64,
+        /// Guaranteed remaining control receipt count.
+        reserved_receipts: u32,
     },
     /// Digests permit identification without exposing canonical request/result content.
     Receipt {
@@ -74,7 +62,7 @@ pub enum InspectionRecord {
         /// Fingerprint of the canonical retained result.
         result_digest: String,
         /// Durable completion observation, without sampling current time.
-        completed_at_unix_ms: u64,
+        generation: u64,
     },
     /// Durable remote execution/request link and conservative uncertainty classification.
     Peer {
@@ -170,10 +158,8 @@ impl OfflineStore {
                 ));
             };
         }
-        count!(Leases, LEASE_ENTRIES);
-        count!(Accounts, CONTROLLER_ACCOUNTS);
-        count!(HotReceipts, APPLICATION_COMMAND_RECEIPTS_HOT);
-        count!(ColdReceipts, APPLICATION_COMMAND_RECEIPTS_COLD);
+        count!(Workflows, TASK_WORKFLOWS);
+        count!(Receipts, TASK_RECEIPTS);
         count!(Peers, PEER_EXECUTIONS);
         count!(PeerTombstones, PEER_EXECUTION_TOMBSTONES);
         count!(Artifacts, ARTIFACT_METADATA);
@@ -284,23 +270,6 @@ impl OfflineStore {
             }));
             Ok(true)
         };
-        macro_rules! bytes_table {
-            ($table:ident) => {{
-                let table = read.open_table(schema::$table).map_err(error::redb)?;
-                for row in table
-                    .range::<&[u8]>((
-                        lower.map_or(Bound::Unbounded, Bound::Excluded),
-                        Bound::Unbounded,
-                    ))
-                    .map_err(error::redb)?
-                {
-                    let (key, bytes) = row.map_err(error::redb)?;
-                    if !visit(key.value(), bytes.value())? {
-                        break;
-                    }
-                }
-            }};
-        }
         macro_rules! text_table {
             ($table:ident) => {{
                 let lower = lower
@@ -323,10 +292,8 @@ impl OfflineStore {
             }};
         }
         match family {
-            InspectionFamily::Leases => bytes_table!(LEASE_ENTRIES),
-            InspectionFamily::HotReceipts => bytes_table!(APPLICATION_COMMAND_RECEIPTS_HOT),
-            InspectionFamily::ColdReceipts => bytes_table!(APPLICATION_COMMAND_RECEIPTS_COLD),
-            InspectionFamily::Accounts => text_table!(CONTROLLER_ACCOUNTS),
+            InspectionFamily::Workflows => text_table!(TASK_WORKFLOWS),
+            InspectionFamily::Receipts => text_table!(TASK_RECEIPTS),
             InspectionFamily::Peers => text_table!(PEER_EXECUTIONS),
             InspectionFamily::PeerTombstones => text_table!(PEER_EXECUTION_TOMBSTONES),
             InspectionFamily::Artifacts => text_table!(ARTIFACT_METADATA),
@@ -354,38 +321,32 @@ impl OfflineStore {
                     installation: record.view(),
                 })
             }
-            InspectionFamily::Leases => {
-                let lease: LeaseIndexEntry = json::decode(bytes, "lease entry")?;
-                if crate::codec::pair(lease.run.as_str(), lease.lease.as_str())? != key {
-                    return Err(error::corruption("lease key mismatch"));
-                }
-                Ok(InspectionRecord::Lease { lease })
-            }
-            InspectionFamily::Accounts => {
-                let account = ControllerAccountId::new(text_key()?)?;
-                let state = self
-                    .store
-                    .controller_account(&account)?
-                    .ok_or_else(|| error::corruption("account missing"))?;
-                Ok(InspectionRecord::Account {
-                    account,
-                    revision: state.revision(),
-                    settled: state.settled(),
-                    outstanding: state.outstanding(),
-                    blocked: state.blocked().is_some(),
-                    reservations: state.reservations().values().cloned().collect(),
+            InspectionFamily::Workflows => {
+                crate::task::validate_snapshot_row(text_key()?, bytes)?;
+                let snapshot: milkdrift_persistence::WorkflowSnapshot =
+                    json::decode(bytes, "task workflow")?;
+                Ok(InspectionRecord::Workflow {
+                    workflow: snapshot.workflow.to_string(),
+                    generation: snapshot.generation,
+                    actor: snapshot.owner_actor,
+                    reserved_bytes: snapshot.reserved_bytes,
+                    reserved_receipts: snapshot.reserved_receipts,
                 })
             }
-            InspectionFamily::HotReceipts | InspectionFamily::ColdReceipts => {
-                let receipt = crate::application::decode_receipt(key, bytes)?;
+            InspectionFamily::Receipts => {
+                crate::task::validate_receipt_row(text_key()?, bytes)?;
+                let receipt: milkdrift_persistence::WorkflowCommandReceipt =
+                    json::decode(bytes, "task receipt")?;
                 Ok(InspectionRecord::Receipt {
-                    command: receipt.command().to_string(),
-                    actor: receipt.actor().as_str().to_owned(),
-                    request_digest: receipt.command_digest().to_string(),
-                    result_digest: blake3::hash(receipt.result().document())
+                    command: receipt.acceptance.key,
+                    actor: receipt.acceptance.actor,
+                    request_digest: blake3::hash(&receipt.acceptance.canonical_request)
                         .to_hex()
                         .to_string(),
-                    completed_at_unix_ms: receipt.completed_at().get(),
+                    result_digest: blake3::hash(&serde_json::to_vec(&receipt.acceptance.result)?)
+                        .to_hex()
+                        .to_string(),
+                    generation: receipt.generation,
                 })
             }
             InspectionFamily::Peers | InspectionFamily::PeerTombstones => {

@@ -6,9 +6,9 @@ use milkdrift_authority::{
     ActorRef, ArtifactAuthorityScope, AuthorityBudget, AuthorityEvaluator,
     AuthorityExecutionProvenance, AuthorityGrantBuilder, AuthorityOperation, AuthorityRequest,
     BoundaryTimeMillis, CapabilityAuthorityScope, CapabilityAuthorityScopeBuilder,
-    DaemonAuthorityScope, DecisionId, DecisionReasonCode, GrantId, GrantSetEvaluator,
-    LayoutAuthorityScope, NetworkScope, PeerAuthorityScope, PolicyId, RequestedResourceFacts,
-    ResourceScope, Selection, WorkflowRunScope, WorkspaceAuthorityScope,
+    DaemonAuthorityScope, DecisionId, DecisionReasonCode, GrantId, GrantSetEvaluator, NetworkScope,
+    PeerAuthorityScope, PolicyId, RequestedResourceFacts, ResourceScope, Selection,
+    WorkflowRunScope, WorkspaceAuthorityScope,
 };
 use milkdrift_capability::{
     CapabilityCategory, CapabilityId, CapabilityRequirement, ExecutionTrustClass, OperationId,
@@ -176,7 +176,6 @@ fn deny_all_never_authorizes_capability_facts() -> TestResult {
                 network: NetworkScope::empty(),
                 secrets: BTreeSet::new(),
                 artifacts: ArtifactAuthorityScope::none(),
-                layouts: LayoutAuthorityScope::none(),
                 peers: PeerAuthorityScope::none(),
                 daemon: DaemonAuthorityScope::default(),
                 workspace: WorkspaceAuthorityScope::none(),
@@ -225,7 +224,6 @@ fn any_matches_explicit_capability_facts_but_not_excessive_side_effects() -> Tes
             network: NetworkScope::empty(),
             secrets: BTreeSet::new(),
             artifacts: ArtifactAuthorityScope::none(),
-            layouts: LayoutAuthorityScope::none(),
             peers: PeerAuthorityScope::none(),
             daemon: DaemonAuthorityScope::default(),
             workspace: WorkspaceAuthorityScope::none(),

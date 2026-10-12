@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use milkdrift_blueprint::{RevisionId, WorkflowId};
+use milkdrift_blueprint::WorkflowId;
 use milkdrift_capability::{
     CapabilityCategory, CapabilityId, ExecutionTrustClass, Locality, OperationId, PeerId,
     ProviderProfileRef, SideEffectClass, TrustZone,
@@ -11,20 +11,20 @@ use serde::{Deserialize, Serialize};
 use crate::{
     ActorRef, AuthorityError, DecisionId, GrantDigest, GrantId, NetworkProfileRef, PolicyId,
     SecretRef,
-    document::{AUTHORITY_DECISION_SCHEMA_VERSION_V2, canonical_json},
+    document::{AUTHORITY_DECISION_SCHEMA_VERSION_V3, canonical_json},
 };
 
 use super::{
     capability::CapabilityAuthorityScope,
     execution::AuthorityExecutionProvenance,
     resource::{
-        AuthorityBudget, AuthorityOperation, BoundaryTimeMillis, FilesystemScope, LayoutOwner,
-        MAX_SCOPE_ITEMS, NetworkScope,
+        AuthorityBudget, AuthorityOperation, BoundaryTimeMillis, FilesystemScope, MAX_SCOPE_ITEMS,
+        NetworkScope,
     },
 };
 
 const MAX_DIAGNOSTIC_CODES: usize = 16;
-const DECISION_DIGEST_DOMAIN: &[u8] = b"milkdrift.authority-decision.v2\0";
+const DECISION_DIGEST_DOMAIN: &[u8] = b"milkdrift.authority-decision.v3\0";
 
 /// Exact resource facts requested at one authorization boundary.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -72,12 +72,6 @@ pub struct RequestedResourceFacts {
     /// Exact artifact sensitivity obtained from immutable metadata before release.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artifact_sensitivity: Option<ArtifactSensitivity>,
-    /// Exact revision governing a revision/layout request.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub revision: Option<RevisionId>,
-    /// Shared layout scope, or a reserved actor owner that production denies.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub layout_owner: Option<LayoutOwner>,
     /// Exact workspace scope identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_scope: Option<ScopeId>,
@@ -126,8 +120,6 @@ impl RequestedResourceFacts {
             secrets: BTreeSet::new(),
             artifact: None,
             artifact_sensitivity: None,
-            revision: None,
-            layout_owner: None,
             workspace_scope: None,
             daemon_readiness: false,
             daemon_detailed_health: false,
@@ -151,11 +143,9 @@ impl RequestedResourceFacts {
             self.network_profiles.clone(),
             self.network_destinations.clone(),
         )?;
-        if self.artifact.is_some() != self.artifact_sensitivity.is_some()
-            || (self.layout_owner.is_some() && self.revision.is_none())
-        {
+        if self.artifact.is_some() != self.artifact_sensitivity.is_some() {
             return Err(AuthorityError::InvalidContract(
-                "artifact sensitivity and layout revision facts must be complete".to_owned(),
+                "artifact identity and sensitivity facts must be complete".to_owned(),
             ));
         }
         Ok(())
@@ -255,8 +245,6 @@ pub enum DecisionReasonCode {
     SecretScopeMismatch,
     /// Artifact identity or sensitivity is outside the grant.
     ArtifactScopeMismatch,
-    /// Layout revision or owner is outside the grant.
-    LayoutScopeMismatch,
     /// Configured peer identity is outside the grant.
     PeerScopeMismatch,
     /// Daemon health, authority, configuration, or audit detail is outside the grant.
@@ -364,7 +352,7 @@ impl AuthorityDecisionSnapshot {
             DecisionOutcome::Deny
         };
         let mut value = Self {
-            schema_version: AUTHORITY_DECISION_SCHEMA_VERSION_V2,
+            schema_version: AUTHORITY_DECISION_SCHEMA_VERSION_V3,
             policy,
             policy_version,
             request,
@@ -431,7 +419,7 @@ impl AuthorityDecisionSnapshot {
     }
     fn validate(&self) -> Result<(), AuthorityError> {
         self.request.validate()?;
-        if self.schema_version != AUTHORITY_DECISION_SCHEMA_VERSION_V2
+        if self.schema_version != AUTHORITY_DECISION_SCHEMA_VERSION_V3
             || self.policy_version == 0
             || self.reason_codes.is_empty()
             || self.reason_codes.len() > MAX_DIAGNOSTIC_CODES
@@ -462,7 +450,7 @@ impl AuthorityDecisionSnapshot {
     }
     fn compute_digest(&self) -> Result<String, AuthorityError> {
         let payload = DecisionDigest {
-            domain: "milkdrift.authority-decision.v2",
+            domain: "milkdrift.authority-decision.v3",
             schema_version: self.schema_version,
             policy: &self.policy,
             policy_version: self.policy_version,

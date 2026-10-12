@@ -5,7 +5,6 @@ mod config;
 mod dispatch;
 mod error;
 pub(crate) mod prepared;
-mod published;
 mod store;
 pub use artifact::{
     CorePeerArtifactStore, PeerArtifactError, PeerArtifactStore, PeerArtifactTransferFacts,
@@ -146,7 +145,6 @@ struct RateWindow {
 /// here; direct library callers must supply the authenticated peer identity themselves.
 /// [`Self::shutdown_workers`] must run while the store and capability host can accept final writes.
 pub struct PeerService {
-    published_cursor: Mutex<Option<PeerExecutionId>>,
     config: PeerServerConfig,
     relationships: BTreeMap<PeerId, PeerRelationship>,
     grants: BTreeMap<PeerId, AuthorityGrant>,
@@ -388,7 +386,6 @@ impl PeerService {
             artifacts,
             authenticator,
             workers: Mutex::new(None),
-            published_cursor: Mutex::new(None),
         });
         let workers = PeerDispatchWorkers::start(Arc::downgrade(&service), worker_config)?;
         *service
@@ -396,10 +393,6 @@ impl PeerService {
             .lock()
             .map_err(|_| ServingError::Unavailable("peer worker owner unavailable".to_owned()))? =
             Some(workers);
-        service
-            .capability_host
-            .install_published_serving_owner(&service)
-            .map_err(|error| ServingError::Unavailable(error.to_string()))?;
         Ok(service)
     }
 
@@ -871,15 +864,6 @@ impl PeerService {
                 detail: Some(
                     "adapter entry is known but terminal evidence is unavailable".to_owned(),
                 ),
-            }
-        } else if record.published_invocation.is_some() {
-            PeerCancellationAcknowledgement {
-                request_id: request.request_id.clone(),
-                execution: request.execution.clone(),
-                disposition: CancellationDisposition::Accepted,
-                terminal_boundary: false,
-                terminal_evidence: None,
-                detail: Some("durable cancellation will reach the exact internal run".to_owned()),
             }
         } else if record.phase.entry_evidence().is_none() {
             let terminal = self.append_cancelled_before_entry(&record)?;

@@ -53,7 +53,7 @@ and diagnostic report schema 1 are separate from ordinary CLI JSON and control p
 
 Every offline operation copies the complete database within a fixed ceiling before logical reads.
 Backups additionally traverse all included files and the integrity scanner within explicit limits.
-The [operator guide](../operations/daemon.md#offline-storage-administration) owns permissions,
+The [operator guide](../operations/daemon.md#offline-inspection-and-backup) owns permissions,
 commands, bounds and activation procedure. Guarantees cover source bytes/modification times under
 exclusive supported ownership; they exclude access times, power loss, authenticity and malicious
 OS actors bypassing locks. A new empty generation never settles the old generation's effects.

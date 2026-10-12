@@ -1,33 +1,11 @@
-//! Requests and read models shared by Milkdrift clients and the daemon.
+//! Bounded public task, artifact and independent-host transport contracts.
 //!
-//! Submit a [`CommandRequest`] to ask for a change, then inspect [`RunRead`], [`AttemptRead`],
-//! or [`TimelineEntry`] to learn what happened. [`Page`] and [`ObservationEnvelope`] carry
-//! continuations so clients can browse or follow work incrementally. Transport lives in
-//! `milkdrift-control-client`; the daemon supplies authentication and semantic validation.
-//!
-//! Identities are opaque strings here. Internal journal events are projected into the public
-//! [`TimelineCategory`] vocabulary so clients need not depend on runtime or storage types.
-//! Use [`decode_json`] for bounded, duplicate-rejecting input, then the owning type's validation:
-//!
-//! ```
-//! use milkdrift_control_protocol::{Command, CommandRequest, ProtocolVersion, decode_json, encode_json};
-//!
-//! let request = CommandRequest {
-//!     protocol: ProtocolVersion::CURRENT,
-//!     command_id: "pause-review-1".into(),
-//!     expected_sequence: Some(42),
-//!     expected_revision: None,
-//!     reason: "Inspect verification output".into(),
-//!     evidence: vec![],
-//!     command: Command::PauseRun { run_id: "run-review".into() },
-//! };
-//! let received: CommandRequest = decode_json(&encode_json(&request)?)?;
-//! received.validate()?; // Envelope checks; the daemon checks the run and authority.
-//! assert_eq!(received, request);
-//! # Ok::<(), Box<dyn std::error::Error>>(())
-//! ```
+//! Task requests contain client-local aliases. The daemon owns semantic validation, scoped
+//! admission and durable receipts; clients discover accepted work through authorized pages.
+//! [`decode_json`] rejects duplicate fields and unbounded documents before typed decoding.
+//! Capability/health observations retain authenticated continuations through [`Cursor`].
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use milkdrift_contracts::{
@@ -37,40 +15,20 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use thiserror::Error;
 
-mod authoring;
-mod command;
-pub use authoring::{BlueprintDraft, BlueprintEdit, ModelInputSource, ModelRepair};
-mod layout;
 mod read;
-mod result;
-pub use result::{RunOutputRead, RunResultRead};
 /// Ordinary task commands and projections used by every public client.
 pub mod tasks;
 mod upload;
-pub use upload::{InputUploadRequest, MAX_INPUT_UPLOAD_BYTES};
-
-pub use command::{
-    Command, CommandAccepted, CommandRequest, EvidenceRef, ProposalDecision, ResolveAction,
-    RunInput,
-};
-pub use layout::{LayoutDocument, LayoutPoint, LayoutViewport};
 pub use read::{
-    ApplicationReceiptHealthRead, ArtifactMetadataRead, AttemptOutputRead, AttemptRead,
-    AttemptUsageRead, AuthorityDecisionRead, AuthorityRead, CapabilityOperationRead,
-    CapabilityProvenanceRead, CapabilityRead, ContextManifestRead, DaemonState,
-    ExecutionAuthorityRead, HealthRead, HostRole, ModelGenerationRead, NestedWorkUsageRead,
-    NodeRead, Observation, ObservationEnvelope, PeerCapabilityProvenanceRead,
-    PeerExecutionHealthRead, PeerRead, ProposalImpactRead, ProposalRead, ResultAcceptanceRead,
-    RevisionChange, RevisionDiffRead, RevisionRead, RevisionSummary, RunRead, TimelineCategory,
-    TimelineEntry, WorkflowFieldRead,
+    ArtifactMetadataRead, AuthorityRead, CapabilityOperationRead, CapabilityRead, DaemonState,
+    HealthRead, HostRole, Observation, ObservationEnvelope, PeerExecutionHealthRead, PeerRead,
 };
+pub use upload::{InputUploadRequest, MAX_INPUT_UPLOAD_BYTES};
 
 /// Supported control protocol major version.
 const PROTOCOL_MAJOR: u16 = 3;
 /// Supported control protocol minor version.
 const PROTOCOL_MINOR: u16 = 0;
-/// Independent presentation-layout document version.
-const LAYOUT_SCHEMA_VERSION: u32 = 1;
 const AUTHENTICATED_CURSOR_SCHEMA_VERSION: u8 = 2;
 /// Maximum JSON request or response envelope size.
 pub const MAX_DOCUMENT_BYTES: usize = 1_310_720;
@@ -80,10 +38,6 @@ pub const MAX_REQUEST_ID_BYTES: usize = 128;
 pub const MAX_PAGE_ITEMS: u32 = 1_024;
 /// Maximum reason length in UTF-8 bytes.
 pub const MAX_REASON_BYTES: usize = 2_048;
-/// Maximum evidence references on one command.
-pub const MAX_EVIDENCE_ITEMS: usize = 32;
-/// Maximum independently persisted layout bytes.
-pub const MAX_LAYOUT_BYTES: usize = 262_144;
 
 const JSON_LIMITS: JsonLimits = JsonLimits {
     maximum_depth: 72,
@@ -714,8 +668,8 @@ pub struct Page<T> {
 
 /// Bounds and decodes one protocol JSON document, rejecting duplicate fields.
 ///
-/// Call the decoded type's validation method where provided. This generic reader does not
-/// call [`CommandRequest::validate`] or [`LayoutDocument::validate`] for the caller.
+/// Call the decoded type's validation method where provided; semantic admission belongs to
+/// the owning daemon command boundary.
 ///
 /// # Errors
 /// Rejects byte/structure bounds, malformed JSON, duplicate fields, and typed decoding failures.
@@ -746,8 +700,8 @@ fn checked_json_value(bytes: &[u8]) -> Result<Value, ProtocolError> {
 /// Returns serialization errors or rejects byte, nesting, string or container overflow.
 /// This helper does not validate the value's semantic contract.
 pub fn encode_json<T: Serialize>(value: &T) -> Result<Vec<u8>, ProtocolError> {
-    let bytes =
-        serde_json::to_vec(value).map_err(|error| ProtocolError::InvalidJson(error.to_string()))?;
+    let bytes = milkdrift_contracts::canonical_json_bytes(value, JSON_LIMITS)
+        .map_err(|error| ProtocolError::InvalidJson(format!("{error:?}")))?;
     checked_json_value(&bytes)?;
     Ok(bytes)
 }

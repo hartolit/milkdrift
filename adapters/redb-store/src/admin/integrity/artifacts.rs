@@ -95,7 +95,7 @@ pub(super) fn scan_committed(context: &mut ScanContext<'_, '_>) -> Result<(), Pe
         |key, bytes| {
             let components = codec::decode_components::<3>(key)?;
             let owner = crate::artifact::owner::domain_owner(components[0])?;
-            if crate::journal::validated_workspace_domain(read, &owner)?.is_none() {
+            if crate::artifact::domain::validated_workspace_domain(read, &owner)?.is_none() {
                 return Err(error::corruption(
                     "artifact ownership has no accounting domain",
                 ));

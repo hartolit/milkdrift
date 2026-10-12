@@ -90,7 +90,6 @@ impl ArtifactMetadataOffer {
                     .inputs()
                     .iter()
                     .filter_map(|input| input.value().artifact())
-                    .chain(request.request.context_manifest())
                     .any(|reference| {
                         reference.identity() == self.artifact.artifact().as_str()
                             && reference.digest() == self.artifact.digest().to_hex()

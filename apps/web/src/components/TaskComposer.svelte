@@ -1,6 +1,5 @@
 <script lang="ts">
   import type { CreateWorkflowRequest, TaskSessionDto, TaskUploadReceipt, TaskUploadRequest, WorkflowReceipt } from '../lib/protocol.generated';
-  import { MAX_TASK_INPUT_BYTES } from '../lib/protocol.generated';
   import { DaemonClient, DaemonError } from '../lib/transport';
 
   let { client, session, oncreated, oncancel, onerror }: {
@@ -14,6 +13,7 @@
   let description = $state('');
   let instructions = $state('');
   let brief = $state('');
+  let supplyBrief = $state(true);
   let capabilityIndex = $state(0);
   let files: FileList | undefined = $state();
   let upload = $state<TaskUploadReceipt | null>(null);
@@ -25,6 +25,7 @@
   let pendingUpload = $state<TaskUploadRequest | null>(null);
 
   async function captureFile() {
+    const reportError = onerror;
     const file = files?.[0];
     if (!file) return;
     busy = true;
@@ -32,40 +33,43 @@
     upload = null;
     pendingUpload = null;
     try {
-      if (file.size > MAX_TASK_INPUT_BYTES) throw new Error(`This file exceeds the daemon upload bound of ${MAX_TASK_INPUT_BYTES.toLocaleString()} bytes. Supply a smaller text file.`);
+      if (file.size > session.input_limit_bytes) throw new Error(`This file exceeds the daemon upload bound of ${session.input_limit_bytes.toLocaleString()} bytes. Supply a smaller text file.`);
       const text = new TextDecoder('utf-8', { fatal: true }).decode(await file.arrayBuffer());
       pendingUpload = { request_id: crypto.randomUUID(), name: file.name, media_type: 'text/plain', text };
       upload = await client.request<TaskUploadReceipt>('/v1/task-inputs', pendingUpload);
       pendingUpload = null;
     } catch (failure) {
       error = failure instanceof Error ? failure.message : 'The file upload failed.';
-      onerror(failure);
+      reportError(failure);
     } finally { busy = false; }
   }
 
   async function retryUpload() {
+    const reportError = onerror;
     if (!pendingUpload) return;
     busy = true;
     try {
       upload = await client.request<TaskUploadReceipt>('/v1/task-inputs', pendingUpload);
       pendingUpload = null;
       error = '';
-    } catch (failure) { error = failure instanceof Error ? failure.message : 'The file upload failed.'; onerror(failure); }
+    } catch (failure) { error = failure instanceof Error ? failure.message : 'The file upload failed.'; reportError(failure); }
     finally { busy = false; }
   }
 
   async function submit(event?: SubmitEvent) {
+    const reportCreated = oncreated;
+    const reportError = onerror;
     event?.preventDefault();
     const capability = session.capabilities[capabilityIndex];
     if (!capability) return;
     if (!pending) {
       pending = {
         request_id: crypto.randomUUID(), title, description, finish_when_settled: true, limits: null,
-        inputs: { brief: { kind: 'text', text: brief }, ...(upload ? { file: { kind: 'uploaded' as const, input_id: upload.input_id } } : {}) },
+        inputs: { ...(supplyBrief ? { brief: { kind: 'text' as const, text: brief } } : {}), ...(upload ? { file: { kind: 'uploaded' as const, input_id: upload.input_id } } : {}) },
         tasks: [{ alias: 'task', definition: {
           title, description, instructions, capability,
           inputs: { brief: { kind: 'supplied', name: 'brief', optional: false }, ...(upload ? { file: { kind: 'supplied' as const, name: 'file', optional: false } } : {}) },
-          dependencies: [], required: true, corrective_of: null,
+          dependencies: [], outputs: {}, required: true, corrective_of: null,
           paths: path.trim() ? [{ path: path.trim(), write: pathWrite }] : [],
         } }],
       };
@@ -75,22 +79,24 @@
     try {
       const receipt = await client.request<WorkflowReceipt>('/v1/workflows', pending);
       pending = null;
-      await oncreated(receipt);
+      await reportCreated(receipt);
     } catch (failure) {
       error = failure instanceof Error ? failure.message : 'The submission outcome is unknown.';
       if (failure instanceof DaemonError && failure.status >= 400 && failure.status < 500) pending = null;
-      onerror(failure);
+      reportError(failure);
     } finally { busy = false; }
   }
 
   async function findReceipt() {
+    const reportCreated = oncreated;
+    const reportError = onerror;
     if (!pending) return;
     busy = true;
     try {
       const receipt = await client.request<WorkflowReceipt>(`/v1/workflow-requests/${encodeURIComponent(pending.request_id)}`);
       pending = null;
-      await oncreated(receipt);
-    } catch (failure) { error = failure instanceof Error ? failure.message : 'No receipt could be read.'; onerror(failure); }
+      await reportCreated(receipt);
+    } catch (failure) { error = failure instanceof Error ? failure.message : 'No receipt could be read.'; reportError(failure); }
     finally { busy = false; }
   }
 </script>
@@ -110,9 +116,10 @@
       <div class="form-grid"><label>Task title<input bind:value={title} placeholder="Compare Rust animation approaches" required maxlength="256" /></label><label>Capability<select aria-label="Capability" bind:value={capabilityIndex} required>{#each session.capabilities as capability, index (`${capability.id}/${capability.operation}`)}<option value={index}>{capability.id} · {capability.operation}</option>{/each}</select></label></div>
       <label>Short description<input bind:value={description} placeholder="What this work is for" maxlength="4096" /></label>
       <label>Instructions<textarea bind:value={instructions} placeholder="Explain the work to perform, the expected output, and any constraints." required rows="4"></textarea></label>
-      <label>Brief input<textarea bind:value={brief} placeholder="Project details, a question, or data the task should use." rows="4"></textarea></label>
+      <label class="checkbox-label"><input type="checkbox" bind:checked={supplyBrief} /> Supply brief now</label>
+      {#if supplyBrief}<label>Brief input<textarea bind:value={brief} placeholder="Project details, a question, or data the task should use." rows="4"></textarea></label>{:else}<p class="field-hint">The task requires a brief. It will stay queued until you supply that input in its inspector.</p>{/if}
       <label>Text file input<input type="file" bind:files accept="text/*,.md,.toml,.json,.csv,.rs,.txt" onchange={captureFile} /></label>
-      <p class="field-hint">UTF-8 text up to {(MAX_TASK_INPUT_BYTES / 1024).toLocaleString()} KiB. The daemon also checks the complete encoded upload size.</p>
+      <p class="field-hint">UTF-8 text up to {(session.input_limit_bytes / 1024).toLocaleString()} KiB. The daemon also checks the combined instructions and selected inputs.</p>
       {#if upload}<p class="notice">Captured {upload.name} · {upload.bytes.toLocaleString()} bytes<br /><small>Input digest: <code>{upload.digest}</code></small></p>{/if}
       <details><summary>Project filesystem access</summary><p class="field-hint">For configured process work that needs a native project. The daemon validates the path against your grant.</p><label>Absolute project root<input bind:value={path} placeholder="/home/you/projects/animation" /></label><label class="checkbox-label"><input type="checkbox" bind:checked={pathWrite} /> Allow writes within this root</label></details>
     </fieldset>

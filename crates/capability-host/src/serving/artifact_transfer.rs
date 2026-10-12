@@ -150,7 +150,6 @@ impl PeerService {
                     authenticated_peer,
                     offer,
                     relationship.maximum_artifact_bytes,
-                    None,
                 )
                 .map_err(Into::into);
         }
@@ -246,7 +245,6 @@ impl PeerService {
                 authenticated_peer,
                 offer,
                 relationship.maximum_artifact_bytes,
-                None,
             )
             .map_err(Into::into)
     }
@@ -431,7 +429,6 @@ impl PeerArtifactStore for DisabledArtifactStore {
         _owner_peer: &PeerId,
         _offer: &ArtifactMetadataOffer,
         _maximum_artifact_bytes: u64,
-        _controller: Option<&milkdrift_persistence::ControllerArtifactOwner>,
     ) -> Result<ArtifactTransferDecision, PeerArtifactError> {
         Err(PeerArtifactError::Rejected(
             "peer artifact storage is not configured".to_owned(),

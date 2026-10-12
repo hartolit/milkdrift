@@ -1,68 +1,45 @@
-//! Measure journal, projection, artifact, and receipt operations through their product ports.
-//!
-//! Logical document counts/bytes and physical directory allocation answer different questions.
-//! Reopen and cold replay establish retained software state; they do not test filesystem power
-//! loss. The in-memory snapshot measurement is also distinct from verified durable recovery.
-
-use std::{fs, path::Path, time::Instant};
-
-use milkdrift_authority::{ActorRef, GrantDigest, GrantId};
-use milkdrift_blueprint::{ContentDigest as BlueprintDigest, RevisionId, WorkflowId};
-use milkdrift_capability::BoundedJson;
+//! Measure atomic task snapshots, exact receipts, artifact I/O and independent peer retention.
+//! Logical bytes and filesystem allocation answer different questions. Reopen checks retain
+//! software facts; these measurements make no filesystem power-loss claim.
+use crate::{EvidenceResult, ScenarioMeasurement};
+use milkdrift_blueprint::WorkflowId;
 use milkdrift_persistence::{
-    ApplicationCommandCommit, ApplicationCommandCommitOutcome, ApplicationCommandEffect,
-    ApplicationCommandReceipt, ApplicationCommandResult, ApplicationCommandStore,
     ArtifactPublicationId, ArtifactReadAuthority, ArtifactReadRequest, ArtifactStore,
-    AtomicRunCommitRequest, CommandDisposition, CommandId, CommandReceipt, CommandResultDocument,
-    EventId, IndexedRunState, IntegrityDigest, Reason, RunEventEnvelope, RunEventKind,
-    RunIndexUpdate, RunJournal, RunSequence, RunSummaryIndex, TimestampMillis, WorkspaceAccounting,
-    WorkspaceMutation,
+    PersistenceError, TimestampMillis, WorkflowCommandAcceptance, WorkflowCommit,
+    WorkflowCommitOutcome, WorkflowSnapshot, WorkflowStore,
 };
-use milkdrift_redb_store::{RedbStore, RedbStoreConfig};
-use milkdrift_runtime::RunProjection;
+use milkdrift_redb_store::RedbStore;
 use milkdrift_workspace::{
     ArtifactId, ArtifactMetadata, ArtifactProvenance, ArtifactReference, ArtifactRetention,
-    ArtifactSensitivity, CausalId, CausalReference, ContentDigest, MediaType, RunId, ScopeId,
-    WorkspaceBudget, WorkspaceScope, WorkspaceUsage,
+    ArtifactSensitivity, CausalId, CausalReference, ContentDigest, MediaType, RunId,
+    WorkspaceBudget, WorkspaceUsage,
 };
 use serde::Serialize;
+use std::{fs, path::Path, time::Instant};
 
-use crate::{EvidenceResult, ScenarioMeasurement};
-
-const HOT_BOUND: u32 = 8;
-const ARCHIVE_BATCH: u32 = 3;
-
-/// Machine-readable storage turnover and recovery report.
+/// Machine-readable storage, receipt and peer retention measurements.
 #[derive(Clone, Debug, Serialize)]
 pub struct StorageEvidence {
-    /// Unique application receipts admitted.
+    /// Unique task command receipts admitted.
     pub receipt_operations: u32,
-    /// Complete immutable receipt documents across hot and cold ownership.
+    /// Complete immutable receipt documents.
     pub receipt_primary_count: u64,
-    /// Final bounded hot receipt count.
-    pub receipt_hot_count: u64,
-    /// Final exact cold receipt count.
-    pub receipt_cold_count: u64,
     /// Canonical JSON bytes for every primary receipt document.
     pub receipt_primary_logical_bytes: u64,
-    /// Canonical JSON bytes owned by the final hot receipt tier.
-    pub receipt_hot_logical_bytes: u64,
-    /// Canonical JSON bytes owned by the final cold receipt tier.
-    pub receipt_cold_logical_bytes: u64,
-    /// Receipt archive transactions observed.
-    pub receipt_archive_generation: u64,
-    /// Durable store bytes before explicit final archival.
-    pub bytes_before_final_archive: u64,
-    /// Durable store bytes after explicit final archival.
-    pub bytes_after_final_archive: u64,
+    /// Filesystem allocation after the initial store creation.
+    pub bytes_before_commands: u64,
+    /// Filesystem allocation after all accepted commands.
+    pub bytes_after_commands: u64,
     /// Store reopen and accounting recovery time.
     pub reopen_microseconds: u64,
-    /// Exact replay of the first cold receipt succeeded after reopen.
-    pub oldest_cold_replayed: bool,
-    /// Journal/projection events used by the prompt-sequence-style history measurement.
-    pub journal_events: u64,
-    /// Bounded current projection node count after lifetime history replay.
-    pub active_projection_nodes: u64,
+    /// Exact replay of the first accepted receipt succeeded after reopen.
+    pub oldest_receipt_replayed: bool,
+    /// A changed canonical request with the retained key was refused after reopen.
+    pub conflicting_receipt_refused: bool,
+    /// Atomic task-workflow snapshots advanced by the storage measurement.
+    pub workflow_transitions: u64,
+    /// Exact task-workflow documents recovered through the stable list port.
+    pub workflow_documents: u64,
     /// Peer executions driven through the complete state machine.
     pub peer_executions: u64,
     /// Final peer active execution count.
@@ -89,132 +66,169 @@ pub struct StorageEvidence {
     pub peer_observation_logical_bytes: u64,
 }
 
-/// Appends one accepted command/event transaction through the production redb journal.
-///
-/// # Errors
-/// Returns temporary-store, request-validation, journal-commit, or result-encoding failure.
-pub fn journal_append_one() -> EvidenceResult<ScenarioMeasurement> {
+fn workflow_snapshot(name: &str, generation: u64, items: u32) -> EvidenceResult<WorkflowSnapshot> {
+    Ok(WorkflowSnapshot {
+        workflow: WorkflowId::new(format!("workflow-evidence-{name}"))?,
+        generation,
+        title: "Task storage measurement".into(),
+        description: "Bounded synthetic document through the ordinary opaque storage port".into(),
+        owner_actor: "actor:evidence".into(),
+        updated_at: TimestampMillis::new(generation),
+        document: serde_json::json!({"generation":generation,"facts":(0..items).map(|index| serde_json::json!({"index":index,"title":"Task evidence"})).collect::<Vec<_>>()}),
+        entered_invocations: Vec::new(),
+        managed_executions: Vec::new(),
+        artifact_capacity: 0,
+        reserved_bytes: 65_536,
+        reserved_receipts: 0,
+    })
+}
+
+fn commit_measurement(items: u32) -> EvidenceResult<ScenarioMeasurement> {
     let directory = tempfile::tempdir()?;
     let store = RedbStore::open(directory.path())?;
-    let request = journal_request("one", 1)?;
-    let outcome = store.commit_command(&request)?;
-    let bytes = serde_json::to_vec(outcome.result())?;
+    let snapshot = workflow_snapshot("commit", 1, items)?;
+    store.commit_workflow(WorkflowCommit {
+        expected_generation: None,
+        snapshot: snapshot.clone(),
+        command: None,
+    })?;
+    let retained = store
+        .workflow(&snapshot.workflow)?
+        .ok_or("snapshot disappeared")?;
+    if retained != snapshot {
+        return Err("stored task document differs from accepted bytes".into());
+    }
+    let bytes = serde_json::to_vec(&retained)?;
     Ok(ScenarioMeasurement::new(
-        "persistence/journal_append_one",
-        1,
+        if items == 1 {
+            "persistence/task_commit_one"
+        } else {
+            "persistence/task_commit_batch_32"
+        },
+        u64::from(items),
         u64::try_from(bytes.len())?,
         &bytes,
     ))
 }
 
-/// Appends one maximum-representative bounded event batch in one transaction.
-///
+/// Commit and read one workflow document through production redb.
 /// # Errors
-/// Returns temporary-store, batch-validation, atomic-commit, or result-encoding failure.
-pub fn journal_append_batch() -> EvidenceResult<ScenarioMeasurement> {
+/// Returns storage admission, read or encoding failures.
+pub fn workflow_commit_one() -> EvidenceResult<ScenarioMeasurement> {
+    commit_measurement(1)
+}
+/// Commit one bounded 32-item initial task document atomically.
+/// # Errors
+/// Returns storage admission, read or encoding failures.
+pub fn workflow_commit_batch() -> EvidenceResult<ScenarioMeasurement> {
+    commit_measurement(32)
+}
+/// Discover 64 retained workflows through stable bounded pagination.
+/// # Errors
+/// Returns storage or page ordering failures.
+pub fn workflow_read_page() -> EvidenceResult<ScenarioMeasurement> {
     let directory = tempfile::tempdir()?;
     let store = RedbStore::open(directory.path())?;
-    let request = journal_request("batch", 64)?;
-    let outcome = store.commit_command(&request)?;
-    let bytes = serde_json::to_vec(outcome.result())?;
+    for index in 0..64 {
+        store.commit_workflow(WorkflowCommit {
+            expected_generation: None,
+            snapshot: workflow_snapshot(&format!("{index:04}"), 1, 1)?,
+            command: None,
+        })?;
+    }
+    let mut cursor = None;
+    let mut identities = Vec::new();
+    loop {
+        let page = store.workflows(cursor.as_deref(), 16)?;
+        identities.extend(page.items.into_iter().map(|item| item.workflow));
+        cursor = page.next;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    if identities.len() != 64 || identities.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err("workflow page coverage/order differs".into());
+    }
+    let bytes = serde_json::to_vec(&identities)?;
     Ok(ScenarioMeasurement::new(
-        "persistence/journal_append_batch_64",
+        "persistence/task_discovery_64",
         64,
         u64::try_from(bytes.len())?,
         &bytes,
     ))
 }
-
-/// Rebuilds a projection from representative bounded lifetime history.
-///
+/// Reopen the exact snapshot after 128 generation-checked updates.
 /// # Errors
-/// Invalid fixture history, rejected replay, or projection encoding fails the measurement.
-pub fn projection_rebuild() -> EvidenceResult<ScenarioMeasurement> {
-    let history = projection_history(4_096)?;
-    let projection = RunProjection::replay(&history)?;
-    let encoded = serde_json::to_vec(&projection)?;
-    Ok(ScenarioMeasurement::new(
-        "runtime/projection_rebuild_4096",
-        u64::try_from(history.len())?,
-        u64::try_from(encoded.len())?,
-        &encoded,
-    ))
-}
-
-/// Restores an in-memory projection serialization and applies an authoritative tail.
-///
-/// # Errors
-/// History/checkpoint encoding, decoding, or replay can fail, including an invalid tail boundary.
-pub fn projection_snapshot_tail() -> EvidenceResult<ScenarioMeasurement> {
-    let history = projection_history(4_096)?;
-    let split = history.len().saturating_sub(128);
-    let (prefix, tail) = history
-        .split_at_checked(split)
-        .ok_or("projection checkpoint exceeds history")?;
-    let checkpoint = RunProjection::replay(prefix)?;
-    let payload = serde_json::to_vec(&checkpoint)?;
-    let mut restored: RunProjection = serde_json::from_slice(&payload)?;
-    for event in tail {
-        restored.apply(event)?;
-    }
-    let encoded = serde_json::to_vec(&restored)?;
-    Ok(ScenarioMeasurement::new(
-        "runtime/in_memory_projection_serde_plus_tail_128",
-        128,
-        u64::try_from(payload.len().saturating_add(encoded.len()))?,
-        &encoded,
-    ))
-}
-
-/// Exercises hot/cold exact receipt lookup, replay, conflict-safe commit, and archival.
-///
-/// # Errors
-/// Store access, rejected commits, unexpected replay, or disagreement in exact hot/cold lookup
-/// fails the measurement; archive status and encoding errors propagate.
-pub fn application_receipt_paths() -> EvidenceResult<ScenarioMeasurement> {
+/// Returns CAS, open, read or canonical-byte mismatches.
+pub fn workflow_snapshot_reopen() -> EvidenceResult<ScenarioMeasurement> {
     let directory = tempfile::tempdir()?;
-    let store = RedbStore::open_with_config(
-        RedbStoreConfig::new(directory.path())
-            .with_application_receipt_lifecycle(HOT_BOUND, ARCHIVE_BATCH),
-    )?;
-    let mut first = None;
-    let mut last = None;
-    for index in 0..32 {
-        let receipt = application_receipt(index)?;
-        if first.is_none() {
-            first = Some(receipt.clone());
-        }
-        last = Some(receipt.clone());
-        let outcome = store.commit_application_command(&ApplicationCommandCommit {
-            receipt,
-            effect: ApplicationCommandEffect::None,
-        })?;
-        if !matches!(outcome, ApplicationCommandCommitOutcome::Committed) {
-            return Err(std::io::Error::other("fresh receipt unexpectedly replayed").into());
-        }
-    }
-    let first = first.ok_or_else(|| std::io::Error::other("first receipt missing"))?;
-    let last = last.ok_or_else(|| std::io::Error::other("last receipt missing"))?;
-    let cold = store.application_command_receipt(first.actor(), first.command())?;
-    let hot = store.application_command_receipt(last.actor(), last.command())?;
-    if cold.as_ref() != Some(&first) || hot.as_ref() != Some(&last) {
-        return Err(std::io::Error::other("hot/cold receipt lookup disagreed").into());
-    }
-    let replay = store.commit_application_command(&ApplicationCommandCommit {
-        receipt: first,
-        effect: ApplicationCommandEffect::None,
+    let store = RedbStore::open(directory.path())?;
+    let mut snapshot = workflow_snapshot("reopen", 1, 32)?;
+    store.commit_workflow(WorkflowCommit {
+        expected_generation: None,
+        snapshot: snapshot.clone(),
+        command: None,
     })?;
-    if !matches!(replay, ApplicationCommandCommitOutcome::Replayed(_)) {
-        return Err(std::io::Error::other("cold receipt did not replay").into());
+    for generation in 2..=128 {
+        snapshot.generation = generation;
+        snapshot.document["generation"] = serde_json::json!(generation);
+        store.commit_workflow(WorkflowCommit {
+            expected_generation: Some(generation.saturating_sub(1)),
+            snapshot: snapshot.clone(),
+            command: None,
+        })?;
     }
-    let status = store.application_receipt_status()?;
-    let encoded = serde_json::to_vec(&(
-        status.hot_count,
-        status.cold_count,
-        status.archive_generation,
-    ))?;
+    drop(store);
+    let store = RedbStore::open(directory.path())?;
+    if store.workflow(&snapshot.workflow)? != Some(snapshot.clone()) {
+        return Err("reopened task snapshot changed".into());
+    }
+    let bytes = serde_json::to_vec(&snapshot)?;
     Ok(ScenarioMeasurement::new(
-        "persistence/application_receipt_hot_cold_archive",
+        "persistence/task_snapshot_reopen_128",
+        128,
+        u64::try_from(bytes.len())?,
+        &bytes,
+    ))
+}
+
+/// Exercise exact task receipts, changed-request conflicts, and replay after reopen.
+/// # Errors
+/// Returns command admission, lookup, reopen, or canonical-result failures.
+pub fn workflow_receipt_paths() -> EvidenceResult<ScenarioMeasurement> {
+    let directory = tempfile::tempdir()?;
+    let store = RedbStore::open(directory.path())?;
+    for index in 0..32 {
+        let outcome = store.commit_workflow(receipt_commit(index)?)?;
+        if !matches!(outcome, WorkflowCommitOutcome::Applied(Some(_))) {
+            return Err("fresh task receipt unexpectedly replayed".into());
+        }
+    }
+    drop(store);
+    let store = RedbStore::open(directory.path())?;
+    let first = receipt_commit(0)?;
+    let recovered = store
+        .workflow_receipt("actor:evidence", "command-evidence-00000000")?
+        .ok_or("retained task receipt absent")?;
+    let replay = store.commit_workflow(first.clone())?;
+    if replay != WorkflowCommitOutcome::Replay(recovered.clone()) {
+        return Err("task receipt exact replay changed".into());
+    }
+    let mut conflict = first;
+    conflict
+        .command
+        .as_mut()
+        .ok_or("command absent")?
+        .canonical_request = serde_json::to_vec(&serde_json::json!({"index":99}))?;
+    if !matches!(
+        store.commit_workflow(conflict),
+        Err(PersistenceError::WorkflowIdempotencyConflict { .. })
+    ) {
+        return Err("changed task command reused retained key".into());
+    }
+    let encoded = serde_json::to_vec(&recovered)?;
+    Ok(ScenarioMeasurement::new(
+        "persistence/task_receipt_replay_conflict_reopen",
         35,
         u64::try_from(encoded.len())?,
         &encoded,
@@ -277,106 +291,69 @@ pub fn artifact_publication() -> EvidenceResult<ScenarioMeasurement> {
     ))
 }
 
-/// Measures receipt turnover, durable growth, projection boundedness, and reopen recovery.
-///
+/// Measures exact task receipt growth, bounded snapshot recovery, and independent peer retention.
 /// # Errors
-/// Refuses fewer than two hot-receipt turnovers. Store operations, archival/reopen checks,
-/// projection replay, peer retention measurements, size conversion, and directory reads can fail.
+/// Refuses an empty scenario and returns storage, replay, conflict, or accounting failures.
 pub fn measure_storage_growth(operations: u32) -> EvidenceResult<StorageEvidence> {
-    if operations < HOT_BOUND.saturating_mul(2) {
-        return Err(
-            std::io::Error::other("storage evidence needs at least two hot turnovers").into(),
-        );
+    if operations == 0 {
+        return Err("storage evidence requires at least one command".into());
     }
     let directory = tempfile::tempdir()?;
-    let root = directory.path().to_path_buf();
-    let store = RedbStore::open_with_config(
-        RedbStoreConfig::new(&root).with_application_receipt_lifecycle(HOT_BOUND, ARCHIVE_BATCH),
-    )?;
-    let receipts = (0..operations)
-        .map(application_receipt)
-        .collect::<EvidenceResult<Vec<_>>>()?;
-    let first = receipts
-        .first()
-        .cloned()
-        .ok_or_else(|| std::io::Error::other("storage receipt fixture is empty"))?;
-    for receipt in &receipts {
-        store.commit_application_command(&ApplicationCommandCommit {
-            receipt: receipt.clone(),
-            effect: ApplicationCommandEffect::None,
-        })?;
+    let root = directory.path();
+    let store = RedbStore::open(root)?;
+    let bytes_before_commands = directory_bytes(root)?;
+    let mut receipt_primary_logical_bytes = 0_u64;
+    for index in 0..operations {
+        let outcome = store.commit_workflow(receipt_commit(index)?)?;
+        let WorkflowCommitOutcome::Applied(Some(receipt)) = outcome else {
+            return Err("fresh task command did not create exact receipt".into());
+        };
+        receipt_primary_logical_bytes = receipt_primary_logical_bytes
+            .checked_add(u64::try_from(serde_json::to_vec(&receipt)?.len())?)
+            .ok_or("receipt measurement overflow")?;
     }
-    let before = store.application_receipt_status()?;
-    let bytes_before_final_archive = directory_bytes(&root)?;
-    let archived = store.archive_application_command_receipts(
-        milkdrift_persistence::ApplicationReceiptArchiveRequest {
-            expected_generation: before.archive_generation,
-            archived_at: TimestampMillis::new(u64::from(operations).saturating_add(10_000)),
-        },
-    )?;
-    let bytes_after_final_archive = directory_bytes(&root)?;
+    let bytes_after_commands = directory_bytes(root)?;
     drop(store);
-
     let reopen_started = Instant::now();
-    let reopened = RedbStore::open_with_config(
-        RedbStoreConfig::new(&root).with_application_receipt_lifecycle(HOT_BOUND, ARCHIVE_BATCH),
-    )?;
-    let status = reopened.application_receipt_status()?;
-    let replay = reopened.commit_application_command(&ApplicationCommandCommit {
-        receipt: first,
-        effect: ApplicationCommandEffect::None,
-    })?;
+    let reopened = RedbStore::open(root)?;
+    let replay = reopened.commit_workflow(receipt_commit(0)?)?;
+    let oldest_receipt_replayed = matches!(replay, WorkflowCommitOutcome::Replay(_));
+    let mut changed = receipt_commit(0)?;
+    changed
+        .command
+        .as_mut()
+        .ok_or("command absent")?
+        .canonical_request = b"{\"changed\":true}".to_vec();
+    let conflicting_receipt_refused = matches!(
+        reopened.commit_workflow(changed),
+        Err(PersistenceError::WorkflowIdempotencyConflict { .. })
+    );
     let reopen_microseconds = u64::try_from(reopen_started.elapsed().as_micros())?;
-    let history = projection_history(10_000)?;
-    let projection = RunProjection::replay(&history)?;
-    let hot_count = usize::try_from(status.hot_count)?;
-    let hot_start = receipts.len().saturating_sub(hot_count);
-    let receipt_bytes = receipts
-        .iter()
-        .map(serde_json::to_vec)
-        .collect::<Result<Vec<_>, _>>()?;
-    let receipt_primary_logical_bytes = receipt_bytes.iter().try_fold(0_u64, |total, bytes| {
-        Ok::<_, std::num::TryFromIntError>(total.saturating_add(u64::try_from(bytes.len())?))
-    })?;
-    let receipt_cold_logical_bytes =
-        receipt_bytes
-            .iter()
-            .take(hot_start)
-            .try_fold(0_u64, |total, bytes| {
-                Ok::<_, std::num::TryFromIntError>(
-                    total.saturating_add(u64::try_from(bytes.len())?),
-                )
-            })?;
-    let receipt_hot_logical_bytes =
-        receipt_bytes
-            .iter()
-            .skip(hot_start)
-            .try_fold(0_u64, |total, bytes| {
-                Ok::<_, std::num::TryFromIntError>(
-                    total.saturating_add(u64::try_from(bytes.len())?),
-                )
-            })?;
+    let mut cursor = None;
+    let mut workflow_documents = 0_u64;
+    loop {
+        let page = reopened.workflows(cursor.as_deref(), 200)?;
+        workflow_documents = workflow_documents
+            .checked_add(u64::try_from(page.items.len())?)
+            .ok_or("workflow count overflow")?;
+        cursor = page.next;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    let usage = reopened.workflow_storage_usage()?;
     let peer = peer_operational_counts(operations)?;
     Ok(StorageEvidence {
         receipt_operations: operations,
-        receipt_primary_count: status.hot_count.saturating_add(status.cold_count),
-        receipt_hot_count: status.hot_count,
-        receipt_cold_count: status.cold_count,
+        receipt_primary_count: usage.receipt_entries,
         receipt_primary_logical_bytes,
-        receipt_hot_logical_bytes,
-        receipt_cold_logical_bytes,
-        receipt_archive_generation: archived.status.archive_generation,
-        bytes_before_final_archive,
-        bytes_after_final_archive,
+        bytes_before_commands,
+        bytes_after_commands,
         reopen_microseconds,
-        oldest_cold_replayed: matches!(replay, ApplicationCommandCommitOutcome::Replayed(_)),
-        journal_events: u64::try_from(history.len())?,
-        active_projection_nodes: u64::try_from(
-            projection
-                .node_executions()
-                .len()
-                .saturating_add(projection.settled_node_executions().len()),
-        )?,
+        oldest_receipt_replayed,
+        conflicting_receipt_refused,
+        workflow_transitions: u64::from(operations),
+        workflow_documents,
         peer_executions: peer.executions,
         peer_active_count: peer.final_active,
         peer_dispatch_queued_count: peer.final_dispatch_queued,
@@ -408,148 +385,18 @@ pub fn peer_observation_paths() -> EvidenceResult<ScenarioMeasurement> {
     ))
 }
 
-fn journal_request(name: &str, count: u64) -> EvidenceResult<AtomicRunCommitRequest> {
-    let run = RunId::new(format!("run-evidence-journal-{name}"))?;
-    let command = CommandId::new(format!("command-evidence-journal-{name}"))?;
-    let receipt = CommandReceipt::new(
-        command.clone(),
-        run.clone(),
-        ActorRef::new("actor:evidence")?,
-        RunSequence::ZERO,
-        TimestampMillis::new(1),
-        br#"{"schema_version":1,"type":"evidence"}"#.to_vec(),
-    )?;
-    let mut events = Vec::new();
-    for sequence in 1..=count {
-        events.push(RunEventEnvelope::new(
-            EventId::new(format!("event-evidence-{name}-{sequence}"))?,
-            run.clone(),
-            RunSequence::new(sequence),
-            TimestampMillis::new(sequence),
-            RunEventKind::RunStarted,
-        )?);
-    }
-    let result = CommandResultDocument::new(
-        command,
-        run.clone(),
-        receipt.fingerprint().clone(),
-        CommandDisposition::Accepted,
-        RunSequence::new(count),
-        events
-            .iter()
-            .map(|event| event.event_id().clone())
-            .collect(),
-        BoundedJson::new(serde_json::json!({"accepted": true}))?,
-    )?;
-    Ok(AtomicRunCommitRequest::new(
-        receipt,
-        events,
-        Vec::<WorkspaceMutation>::new(),
-        Some(WorkspaceAccounting {
-            budget: WorkspaceBudget::new(0, 0, 0, 0, 0, 0)?,
-            expected_usage: WorkspaceUsage::EMPTY,
-            resulting_usage: WorkspaceUsage::EMPTY,
+fn receipt_commit(index: u32) -> EvidenceResult<WorkflowCommit> {
+    Ok(WorkflowCommit {
+        expected_generation: None,
+        snapshot: workflow_snapshot(&format!("receipt-{index:08}"), 1, 1)?,
+        command: Some(WorkflowCommandAcceptance {
+            actor: "actor:evidence".into(),
+            key: format!("command-evidence-{index:08}"),
+            reserved_action: None,
+            canonical_request: serde_json::to_vec(&serde_json::json!({"index":index}))?,
+            result: serde_json::json!({"accepted":index}),
         }),
-        Vec::new(),
-        Vec::new(),
-        None,
-        result,
-        RunIndexUpdate::new(
-            Some(RunSummaryIndex {
-                run,
-                workflow: WorkflowId::new("workflow-evidence-journal")?,
-                revision: revision_id('0')?,
-                state: IndexedRunState::Active,
-                through_sequence: RunSequence::new(count),
-                updated_at: TimestampMillis::new(count),
-            }),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        ),
-    )?)
-}
-
-fn application_receipt(index: u32) -> EvidenceResult<ApplicationCommandReceipt> {
-    let command = CommandId::new(format!("command-evidence-receipt-{index:08}"))?;
-    Ok(ApplicationCommandReceipt::new(
-        ActorRef::new("actor:evidence")?,
-        command,
-        1,
-        IntegrityDigest::hash(format!("application-command-{index}").as_bytes()),
-        GrantId::new("grant:evidence")?,
-        1,
-        GrantDigest::new(format!("b3_{}", "1".repeat(64)))?,
-        Some(format!("b3_{}", "2".repeat(64))),
-        TimestampMillis::new(u64::from(index).saturating_add(1)),
-        TimestampMillis::new(u64::from(index).saturating_add(2)),
-        ApplicationCommandResult::Accepted {
-            document: serde_json::to_vec(&serde_json::json!({"index": index}))?,
-            effect: None,
-        },
-    )?)
-}
-
-fn projection_history(event_count: u64) -> EvidenceResult<Vec<RunEventEnvelope>> {
-    let event_count = event_count.max(2);
-    let run = RunId::new("run-evidence-projection")?;
-    let scope = WorkspaceScope::run_root(run.clone(), ScopeId::new("root")?);
-    let mut events = vec![RunEventEnvelope::new(
-        EventId::new("event-projection-created")?,
-        run.clone(),
-        RunSequence::FIRST,
-        TimestampMillis::new(1),
-        RunEventKind::RunCreated {
-            workflow: WorkflowId::new("workflow-evidence-projection")?,
-            revision: revision_id('3')?,
-            revision_digest: blueprint_digest('4')?,
-            root_scope: scope,
-            workspace_budget: WorkspaceBudget::new(16, 65_536, 65_536, 16, 65_536, 65_536)?,
-            inputs: Vec::new(),
-        },
-    )?];
-    events.push(RunEventEnvelope::new(
-        EventId::new("event-projection-started")?,
-        run.clone(),
-        RunSequence::new(2),
-        TimestampMillis::new(2),
-        RunEventKind::RunStarted,
-    )?);
-    for sequence in 3..=event_count {
-        let kind = if sequence % 2 == 1 {
-            RunEventKind::RunPaused {
-                reason: Reason::new("operational evidence pause")?,
-                evidence: Vec::new(),
-            }
-        } else {
-            RunEventKind::RunResumed {
-                reason: Reason::new("operational evidence resume")?,
-                evidence: Vec::new(),
-            }
-        };
-        events.push(RunEventEnvelope::new(
-            EventId::new(format!("event-projection-{sequence}"))?,
-            run.clone(),
-            RunSequence::new(sequence),
-            TimestampMillis::new(sequence),
-            kind,
-        )?);
-    }
-    Ok(events)
-}
-
-fn revision_id(character: char) -> EvidenceResult<RevisionId> {
-    Ok(serde_json::from_value(serde_json::json!(format!(
-        "rev_{}",
-        character.to_string().repeat(64)
-    )))?)
-}
-
-fn blueprint_digest(character: char) -> EvidenceResult<BlueprintDigest> {
-    Ok(serde_json::from_value(serde_json::json!(format!(
-        "b3_{}",
-        character.to_string().repeat(64)
-    )))?)
+    })
 }
 
 fn deterministic_bytes(size: usize) -> Vec<u8> {

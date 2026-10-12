@@ -1,10 +1,7 @@
 use super::*;
-use milkdrift_authority::{ActorRef, GrantDigest, GrantId};
 use milkdrift_persistence::{
-    ApplicationCommandCommit, ApplicationCommandCommitOutcome, ApplicationCommandEffect,
-    ApplicationCommandReceipt, ApplicationCommandResult, ApplicationCommandStore,
-    ClockWatermarkStore, CommandId, IntegrityDigest, PageSize, StorageFailureClass,
-    TimestampMillis,
+    ClockWatermarkStore, PageSize, StorageFailureClass, TimestampMillis, WorkflowCommandAcceptance,
+    WorkflowCommit, WorkflowCommitOutcome, WorkflowSnapshot, WorkflowStore,
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -16,42 +13,42 @@ fn producer() -> BackupProducer {
         source_revision: "fixture".into(),
     }
 }
-fn receipt(
-    command: &str,
-    intent: &[u8],
-) -> Result<ApplicationCommandReceipt, Box<dyn std::error::Error>> {
-    Ok(ApplicationCommandReceipt::new(
-        ActorRef::new("operator:offline")?,
-        CommandId::new(command)?,
-        1,
-        IntegrityDigest::hash(intent),
-        GrantId::new("grant:offline")?,
-        1,
-        GrantDigest::new(format!("b3_{}", "a".repeat(64)))?,
-        None,
-        TimestampMillis::new(10),
-        TimestampMillis::new(10),
-        ApplicationCommandResult::Rejected {
-            document: br#"{"accepted":false,"private":"never-export-this"}"#.to_vec(),
+fn receipt(command: &str, intent: &[u8]) -> Result<WorkflowCommit, Box<dyn std::error::Error>> {
+    Ok(WorkflowCommit {
+        expected_generation: None,
+        snapshot: WorkflowSnapshot {
+            workflow: milkdrift_blueprint::WorkflowId::new("offline-workflow")?,
+            generation: 1,
+            title: "Private offline fixture".into(),
+            description: String::new(),
+            owner_actor: "operator:offline".into(),
+            updated_at: TimestampMillis::new(10),
+            document: serde_json::json!({"private":"never-export-this"}),
+            entered_invocations: Vec::new(),
+            managed_executions: Vec::new(),
+            artifact_capacity: 0,
+            reserved_bytes: 0,
+            reserved_receipts: 0,
         },
-    )?)
+        command: Some(WorkflowCommandAcceptance {
+            actor: "operator:offline".into(),
+            key: command.into(),
+            reserved_action: None,
+            canonical_request: serde_json::to_vec(
+                &serde_json::json!({"intent": String::from_utf8_lossy(intent)}),
+            )?,
+            result: serde_json::json!({"private":"never-export-this"}),
+        }),
+    })
 }
-
-fn seed(root: &Path) -> Result<ApplicationCommandReceipt, Box<dyn std::error::Error>> {
-    let store = RedbStore::open_with_config(
-        RedbStoreConfig::new(root).with_application_receipt_lifecycle(1, 1),
-    )?;
+fn seed(root: &Path) -> Result<WorkflowCommit, Box<dyn std::error::Error>> {
+    let store = RedbStore::open(root)?;
     let first = receipt("first", b"original")?;
-    for saved in [
-        first.clone(),
-        receipt("second", b"second")?,
-        receipt("third", b"third")?,
-    ] {
-        store.commit_application_command(&ApplicationCommandCommit {
-            receipt: saved,
-            effect: ApplicationCommandEffect::None,
-        })?;
-    }
+    store.commit_workflow(first.clone())?;
+    let mut second = receipt("second", b"second")?;
+    second.expected_generation = Some(1);
+    second.snapshot.generation = 2;
+    store.commit_workflow(second)?;
     Ok(first)
 }
 
@@ -79,23 +76,18 @@ fn inspection_preserves_bytes_clock_retention_and_refuses_live_writer() -> TestR
         overview
             .row_counts
             .iter()
-            .find(|(f, _)| *f == InspectionFamily::ColdReceipts)
+            .find(|(f, _)| *f == InspectionFamily::Receipts)
             .map(|(_, n)| *n),
         Some(2)
     );
     assert!(RedbStore::open(&root).is_err());
-    let page = offline.inspect(
-        InspectionFamily::ColdReceipts,
-        PageSize::new(1)?,
-        None,
-        false,
-    )?;
+    let page = offline.inspect(InspectionFamily::Receipts, PageSize::new(1)?, None, false)?;
     assert_eq!(page.records.len(), 1);
     assert!(!serde_json::to_string(&page)?.contains("never-export-this"));
     assert!(
         offline
             .inspect(
-                InspectionFamily::HotReceipts,
+                InspectionFamily::Workflows,
                 PageSize::new(1)?,
                 page.next.as_deref(),
                 false
@@ -103,7 +95,7 @@ fn inspection_preserves_bytes_clock_retention_and_refuses_live_writer() -> TestR
             .is_err()
     );
     let next = offline.inspect(
-        InspectionFamily::ColdReceipts,
+        InspectionFamily::Receipts,
         PageSize::new(1)?,
         page.next.as_deref(),
         false,
@@ -158,23 +150,18 @@ fn backup_restore_preserves_cold_exact_replay_conflict_and_clock_with_execution_
     fs::remove_file(restored.join(INSPECTION_MARKER))?;
     let store = RedbStore::open(&restored)?;
     assert!(store.clock_watermark()?.ok_or("clock")?.get() >= manifest.clock_high_water_unix_ms);
-    assert_eq!(
-        store.application_command_receipt(saved.actor(), saved.command())?,
-        Some(saved.clone())
-    );
+    let accepted = saved.command.as_ref().ok_or("missing command")?;
+    let retained = store
+        .workflow_receipt(&accepted.actor, &accepted.key)?
+        .ok_or("missing exact receipt")?;
+    assert_eq!(retained.acceptance, *accepted);
     assert!(matches!(
-        store.commit_application_command(&ApplicationCommandCommit {
-            receipt: saved,
-            effect: ApplicationCommandEffect::None
-        })?,
-        ApplicationCommandCommitOutcome::Replayed(_)
+        store.commit_workflow(saved)?,
+        WorkflowCommitOutcome::Replay(_)
     ));
     assert!(matches!(
-        store.commit_application_command(&ApplicationCommandCommit {
-            receipt: receipt("first", b"changed")?,
-            effect: ApplicationCommandEffect::None
-        }),
-        Err(PersistenceError::ExternalCommandIdempotencyConflict { .. })
+        store.commit_workflow(receipt("first", b"changed")?),
+        Err(PersistenceError::WorkflowIdempotencyConflict { .. })
     ));
     Ok(())
 }
@@ -343,17 +330,12 @@ fn unsupported_schema_corrupt_record_missing_root_and_sensitive_extra_files_are_
     let database = Database::open(root.join(DATABASE_FILENAME))?;
     let write = database.begin_write()?;
     write
-        .open_table(crate::schema::APPLICATION_COMMAND_RECEIPTS_COLD)?
-        .insert(b"bad".as_slice(), b"corrupt-protected-data".as_slice())?;
+        .open_table(crate::schema::TASK_RECEIPTS)?
+        .insert("bad", b"corrupt-protected-data".as_slice())?;
     write.commit()?;
     drop(database);
     let offline = OfflineStore::open(&root, parent.path())?;
-    let page = offline.inspect(
-        InspectionFamily::ColdReceipts,
-        PageSize::new(128)?,
-        None,
-        false,
-    )?;
+    let page = offline.inspect(InspectionFamily::Receipts, PageSize::new(128)?, None, false)?;
     assert!(
         page.records
             .iter()

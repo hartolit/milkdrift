@@ -29,9 +29,9 @@ fn maintenance_binary_inspects_backs_up_restores_and_refuses_existing_destinatio
     let before = fs::read(root.join("milkdrift.redb"))?;
     for args in [
         vec!["overview"],
-        vec!["runs", "--limit", "1"],
-        vec!["records", "--family", "leases", "--limit", "1"],
-        vec!["records", "--family", "accounts"],
+        vec!["records", "--family", "workflows", "--limit", "1"],
+        vec!["records", "--family", "workflows", "--limit", "1"],
+        vec!["records", "--family", "receipts"],
         vec!["records", "--family", "peer-tombstones"],
         vec!["scan", "--hash-artifacts"],
     ] {
@@ -104,7 +104,7 @@ fn maintenance_parsing_and_missing_roots_never_initialize_storage() -> TestResul
     for args in [
         vec!["overview"],
         vec!["records", "--family", "grants"],
-        vec!["records", "--family", "leases", "--limit", "0"],
+        vec!["records", "--family", "workflows", "--limit", "0"],
         vec!["scan", "--limit", "129"],
         vec!["run", "--run", "unknown", "--maximum-events", "0"],
     ] {

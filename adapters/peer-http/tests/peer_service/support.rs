@@ -533,7 +533,6 @@ pub(super) fn enter(
 ) -> TestResult {
     assert!(matches!(
         store.mark_peer_entered(&PeerEntryRequest {
-            published_invocation: None,
             owner: &milkdrift_peer_protocol::ServingCaller::peer(target, peer),
             execution,
             worker,
@@ -694,8 +693,6 @@ pub(super) fn request_with_optional_input_artifact(
         limits.clone(),
         deadline,
         DelegatedAuthorization {
-            publication_ancestry: Vec::new(),
-            controller_reservation: None,
             reference: DelegationRef::new("delegation-configured")?,
             issuer_peer: issuer.clone(),
             actor: ActorRef::new(format!("peer:{}", issuer.as_str()))?,

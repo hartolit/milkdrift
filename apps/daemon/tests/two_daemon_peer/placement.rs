@@ -1,10 +1,8 @@
 //! Two approved serving hosts, an origin with a local look-alike, and durable provenance.
 use super::*;
 use milkdrift_authority::CapabilityAuthorityScopeBuilder;
-use milkdrift_blueprint::{DataPort, SchemaRef};
 use milkdrift_capability::{
-    CapabilityCategory, ExecutionTrustClass, Locality, PlacementRequirement, SchemaId,
-    SideEffectClass,
+    CapabilityCategory, ExecutionTrustClass, Locality, OperationId, SideEffectClass,
 };
 use serde_json::json;
 
@@ -58,168 +56,6 @@ fn placement_config(
         relationship.maximum_side_effect = PeerSideEffectConfig::NonIdempotentWrite;
     }
     Ok(config)
-}
-
-fn placement_blueprint(workflow: &str, hosts: &[&str]) -> TestResult<serde_json::Value> {
-    let mut mutations = Vec::new();
-    for (index, host) in hosts.iter().enumerate() {
-        let mut task = Node::new(
-            NodeId::new(format!("repository-{index}"))?,
-            NodeKind::task_direct_inputs(
-                CapabilityRequirement::new(OperationId::new("process.execute")?)
-                    .category(CapabilityCategory::Process)
-                    .execution_trust(ExecutionTrustClass::TrustedHostProcess)
-                    .maximum_side_effect(SideEffectClass::NonIdempotentWrite)
-                    .with_placement(PlacementRequirement::new(
-                        Some(BTreeSet::from([Locality::Peer])),
-                        Some(BTreeSet::from([PeerId::new(*host)?])),
-                    )?),
-            )?,
-        )?
-        .with_control_output(PortId::new("next")?)?
-        .with_data_output(
-            PortId::new("host_result")?,
-            DataPort::output(SchemaRef::new(SchemaId::new("milkdrift.value")?, 1)?),
-        )?;
-        if index > 0 {
-            task = task.with_control_input(PortId::new("in")?)?;
-            mutations.push(Mutation::AddEdge {
-                edge: Edge::new(
-                    EdgeId::new(format!("step-{index}"))?,
-                    EdgeKind::Control,
-                    NodeId::new(format!("repository-{}", index - 1))?,
-                    PortId::new("next")?,
-                    task.id().clone(),
-                    PortId::new("in")?,
-                ),
-            });
-        }
-        mutations.push(Mutation::AddNode { node: task });
-    }
-    mutations.push(Mutation::AddNode {
-        node: Node::new(
-            NodeId::new("done")?,
-            NodeKind::Terminal {
-                outcome: TerminalOutcome::Success,
-            },
-        )?
-        .with_control_input(PortId::new("in")?)?,
-    });
-    mutations.push(Mutation::AddEdge {
-        edge: Edge::new(
-            EdgeId::new("finished")?,
-            EdgeKind::Control,
-            NodeId::new(format!("repository-{}", hosts.len() - 1))?,
-            PortId::new("next")?,
-            NodeId::new("done")?,
-            PortId::new("in")?,
-        ),
-    });
-    let revision = BlueprintRevision::genesis(
-        WorkflowId::new(workflow)?,
-        MutationBatch::new(mutations)?,
-        AuthorRef::new("human:placement")?,
-        "pin each repository operation to its approved host",
-    )?;
-    Ok(serde_json::from_slice(
-        &BlueprintRevisionDocument::new(&revision).to_canonical_json()?,
-    )?)
-}
-
-async fn import_and_start(
-    client: &ControlClient,
-    workflow: &str,
-    hosts: &[&str],
-) -> TestResult<milkdrift_control_protocol::CommandAccepted> {
-    let imported = client
-        .submit(&command(
-            &format!("import-{workflow}"),
-            Command::ImportBlueprint {
-                document: if workflow == "placed-repositories" {
-                    serde_json::from_slice(include_bytes!(
-                        "../../../../examples/operator/peer-placement.json"
-                    ))?
-                } else {
-                    placement_blueprint(workflow, hosts)?
-                },
-            },
-        ))
-        .await?;
-    let revision = imported
-        .value
-        .pointer("/revision_id")
-        .ok_or("fixture field /revision_id absent")?
-        .as_str()
-        .ok_or("import omitted revision")?;
-    Ok(client
-        .submit(&command(
-            &format!("start-{workflow}"),
-            Command::StartRun {
-                inputs: Vec::new(),
-                run_id: format!("run-{workflow}"),
-                workflow_id: workflow.to_owned(),
-                revision_id: revision.to_owned(),
-            },
-        ))
-        .await?)
-}
-
-async fn completed_attempts(
-    client: &ControlClient,
-    run: &str,
-) -> TestResult<Vec<milkdrift_control_protocol::AttemptRead>> {
-    // Observe both sequential delegated calls and their durable reporting. Each
-    // keeps its existing call allowance and the process itself still has a 5s limit.
-    let deadline = tokio::time::Instant::now() + super::RUN_OBSERVATION_TIMEOUT * 2;
-    loop {
-        let view = client.run(run).await?;
-        if view.uncertainty_count > 0 {
-            let mut detail = Vec::new();
-            for node in &view.nodes {
-                if let Some(id) = &node.latest_attempt_id {
-                    detail.push(client.attempt(run, id).await?.terminal_detail);
-                }
-            }
-            return Err(format!("placement uncertain: {detail:?}").into());
-        }
-        if view.lifecycle == "terminal" {
-            if view.terminal.as_deref() != Some("succeeded") {
-                let mut detail = Vec::new();
-                for node in &view.nodes {
-                    if let Some(id) = &node.latest_attempt_id {
-                        detail.push(client.attempt(run, id).await?);
-                    }
-                }
-                return Err(format!("placement failed: {view:?}; attempts={detail:?}").into());
-            }
-            break;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "placement run did not finish: {view:?}"
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    let timeline = client
-        .timeline(
-            run,
-            &PageRequest {
-                cursor: None,
-                limit: 100,
-            },
-        )
-        .await?;
-    let ids: BTreeSet<_> = timeline
-        .items
-        .iter()
-        .filter_map(|item| item.attempt_id.as_ref())
-        .collect();
-    let mut attempts = Vec::new();
-    for id in ids {
-        attempts.push(client.attempt(run, id).await?);
-    }
-    attempts.sort_by(|a, b| a.peer_id.cmp(&b.peer_id));
-    Ok(attempts)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 6)]
@@ -296,9 +132,17 @@ async fn two_repository_hosts_enforce_placement_return_artifacts_and_retain_sele
     for peer in ["peer-a", "peer-b"] {
         assert!(origin.client.peer_action(peer, "connect").await?.connected);
     }
-    // A grant narrowed to these exact hosts admits the constrained revision.
-    import_and_start(&origin.client, "placed-repositories", &["peer-a", "peer-b"]).await?;
-    let attempts = completed_attempts(&origin.client, "run-placed-repositories").await?;
+    let advertised = origin
+        .client
+        .capabilities()
+        .await?
+        .into_iter()
+        .map(|capability| (capability.capability_id.clone(), capability))
+        .collect::<BTreeMap<_, _>>();
+    // A grant narrowed to these exact hosts admits their explicitly selected task capabilities.
+    let receipt =
+        submit_remote(&origin.client, "placed-repositories", &["peer-a", "peer-b"]).await?;
+    let attempts = completed_tasks(&origin.client, &receipt.workflow_id).await?;
     assert_eq!(attempts.len(), 2);
     for (attempt, (host, repository, root)) in attempts
         .iter()
@@ -306,55 +150,42 @@ async fn two_repository_hosts_enforce_placement_return_artifacts_and_retain_sele
     {
         let expected = format!("host={host} repository={repository}\n");
         assert_eq!(fs::read_to_string(root.path().join("entries"))?, expected);
-        assert_eq!(attempt.peer_id.as_deref(), Some(host));
         assert_eq!(
-            attempt
-                .requirement
-                .as_ref()
-                .ok_or("missing requirement")?
-                .pointer("/placement/peers")
-                .ok_or("placement peers absent")?,
-            &json!([host])
+            attempt.definition.title,
+            format!("Inspect repository on {host}")
         );
-        let provenance = attempt
-            .capability_provenance
-            .as_ref()
-            .ok_or("missing provenance")?;
-        assert_eq!(provenance.locality, "peer");
-        let peer = provenance
-            .peer
-            .as_ref()
-            .ok_or("missing catalog provenance")?;
-        assert_eq!(peer.peer_id, host);
-        assert_eq!(peer.remote_capability_id, "golden-local-process");
-        assert_eq!(peer.remote_descriptor_revision, 2);
-        assert!(peer.catalog_generation > 0);
-        assert!(
-            attempt
-                .entry_authorization
-                .as_ref()
-                .is_some_and(|decision| decision.allowed)
-        );
-        let output = attempt
-            .outputs
-            .iter()
-            .find(|output| output.name == "host_result")
-            .ok_or("missing host result")?;
-        let artifact = &output.artifact;
+        assert!(attempt.definition.capability.id.starts_with("peer:"));
+        let frozen = attempt.frozen.as_ref().ok_or("frozen task start absent")?;
+        let selected = advertised
+            .get(&attempt.definition.capability.id)
+            .ok_or("selected capability was not advertised")?;
+        assert!(frozen.entered);
+        assert_eq!(selected.peer_id.as_deref(), Some(host));
+        assert_eq!(frozen.capability_generation, selected.generation);
+        let result = attempt.result.as_ref().ok_or("peer result absent")?;
+        // Process stdout has an opaque byte media type; verify the retained bytes through
+        // the authorized artifact route instead of treating it as a text preview.
+        assert!(result.text.is_empty());
+        let artifact = result
+            .artifacts
+            .first()
+            .ok_or("peer output artifact absent")?;
+        let metadata = origin.client.artifact_metadata(artifact).await?;
+        assert_eq!(metadata.content_type, "application/octet-stream");
         let content = origin
             .client
-            .artifact_range(&artifact.artifact_id, 0, artifact.size - 1)
+            .artifact_range(artifact, 0, metadata.size - 1)
             .await?;
         assert_eq!(content.bytes, expected.as_bytes());
         assert_eq!(
             blake3::hash(&content.bytes).to_hex().as_str(),
-            artifact.digest
+            metadata.digest
         );
     }
     assert!(!origin_root.path().join("entries").exists());
-    // An unauthorized exact peer is refused at revision admission, before any entry.
+    // The constrained catalog cannot supply a capability for an unauthorized peer.
     assert!(
-        import_and_start(&origin.client, "forbidden-placement", &["peer-forbidden"])
+        submit_remote(&origin.client, "forbidden-placement", &["peer-forbidden"])
             .await
             .is_err()
     );
@@ -363,12 +194,73 @@ async fn two_repository_hosts_enforce_placement_return_artifacts_and_retain_sele
         origin.client.peer_action(peer, "connect").await?;
     }
     assert_eq!(
-        completed_attempts(&origin.client, "run-placed-repositories").await?,
+        completed_tasks(&origin.client, &receipt.workflow_id).await?,
         attempts
     );
     origin.stop().await?;
     a.stop().await?;
     b.stop().await?;
+    let retained_selections = {
+        use milkdrift_persistence::WorkflowStore;
+        let store = milkdrift_redb_store::RedbStore::open(origin_root.path().join("data"))?;
+        let saved = store
+            .workflow(&milkdrift_blueprint::WorkflowId::new(&receipt.workflow_id)?)?
+            .ok_or("durable workflow absent")?;
+        let record: milkdrift_runtime::WorkflowRecord = serde_json::from_value(saved.document)?;
+        let mut peers = Vec::new();
+        for task in record.tasks.values() {
+            let dispatch = &task
+                .frozen
+                .as_ref()
+                .ok_or("frozen selection absent")?
+                .dispatch;
+            assert_eq!(dispatch.resolution().locality(), Locality::Peer);
+            let selected = advertised
+                .get(dispatch.resolution().capability().as_str())
+                .ok_or("durable selection was not advertised")?;
+            assert_eq!(
+                dispatch.resolution().capability().as_str(),
+                task.definition
+                    .capability
+                    .exact_capability()
+                    .ok_or("task lost exact capability")?
+                    .as_str()
+            );
+            assert_eq!(
+                dispatch.resolution().descriptor_revision(),
+                selected.generation
+            );
+            assert_eq!(
+                dispatch.resolution().peer().map(PeerId::as_str),
+                selected.peer_id.as_deref()
+            );
+            assert!(dispatch.entry_authorization().is_allowed());
+            peers.push(
+                dispatch
+                    .resolution()
+                    .peer()
+                    .ok_or("peer provenance absent")?
+                    .to_string(),
+            );
+        }
+        peers.sort();
+        assert_eq!(peers, vec!["peer-a", "peer-b"]);
+        record
+            .tasks
+            .iter()
+            .map(|(id, task)| {
+                Ok((
+                    id.clone(),
+                    task.frozen
+                        .as_ref()
+                        .ok_or("retained selection absent")?
+                        .dispatch
+                        .resolution()
+                        .clone(),
+                ))
+            })
+            .collect::<TestResult<BTreeMap<_, _>>>()?
+    };
     let a = start_plan(
         a_config.validate(a_root.path())?,
         tokio::net::TcpListener::bind(a_address).await?,
@@ -385,7 +277,7 @@ async fn two_repository_hosts_enforce_placement_return_artifacts_and_retain_sele
     )
     .await?;
     assert_eq!(
-        completed_attempts(&origin.client, "run-placed-repositories").await?,
+        completed_tasks(&origin.client, &receipt.workflow_id).await?,
         attempts
     );
     for (host, repository, root) in [("peer-a", "repo-a", &a_root), ("peer-b", "repo-b", &b_root)] {
@@ -398,5 +290,29 @@ async fn two_repository_hosts_enforce_placement_return_artifacts_and_retain_sele
     origin.stop().await?;
     a.stop().await?;
     b.stop().await?;
+    {
+        use milkdrift_persistence::WorkflowStore;
+        let store = milkdrift_redb_store::RedbStore::open(origin_root.path().join("data"))?;
+        let snapshot = store
+            .workflow(&milkdrift_blueprint::WorkflowId::new(&receipt.workflow_id)?)?
+            .ok_or("restarted workflow absent")?;
+        let record: milkdrift_runtime::WorkflowRecord = serde_json::from_value(snapshot.document)?;
+        let after = record
+            .tasks
+            .iter()
+            .map(|(id, task)| {
+                Ok((
+                    id.clone(),
+                    task.frozen
+                        .as_ref()
+                        .ok_or("restarted selection absent")?
+                        .dispatch
+                        .resolution()
+                        .clone(),
+                ))
+            })
+            .collect::<TestResult<BTreeMap<_, _>>>()?;
+        assert_eq!(after, retained_selections);
+    }
     Ok(())
 }

@@ -19,10 +19,9 @@ mod tests;
 pub use backup::{BackupManifest, BackupProducer};
 pub use records::{InspectionFamily, InspectionPage, InspectionRecord, StorageOverview};
 
-use milkdrift_blueprint::{BlueprintRevision, RevisionId};
 use milkdrift_persistence::{
-    ArtifactStore, IntegrityScanRequest, IntegrityScanResult, PersistenceError, RevisionStore,
-    RunQueryStore, StorageAdmin,
+    ArtifactStore, IntegrityScanRequest, IntegrityScanResult, PersistenceError, StorageAdmin,
+    WorkflowStore,
 };
 use milkdrift_workspace::ArtifactReference;
 use redb::{Database, StorageBackend, backends::FileBackend};
@@ -138,7 +137,6 @@ impl OfflineStore {
             workflow_limits: milkdrift_persistence::WorkflowStorageLimits::default(),
             max_active_installations: config.max_active_installations,
             max_pending_evaluations: config.max_pending_evaluations,
-            max_active_publications: config.max_active_publications,
             database,
             root: root.clone(),
             artifact_root,
@@ -146,8 +144,6 @@ impl OfflineStore {
             max_artifact_bytes: config.max_artifact_bytes,
             max_total_artifact_bytes: config.max_total_artifact_bytes,
             max_read_bytes: config.max_read_bytes,
-            hot_application_receipt_bound: config.hot_application_receipt_bound,
-            application_receipt_archive_batch_size: config.application_receipt_archive_batch_size,
             max_security_audit_records: config.max_security_audit_records,
             faults: config.faults,
             clock: config.clock,
@@ -169,17 +165,9 @@ impl OfflineStore {
         &self.database_digest
     }
 
-    /// Read-only, bounded journal discovery and event queries. No execution is implied.
-    pub fn queries(&self) -> &dyn RunQueryStore {
+    /// Read-only task snapshots under the existing file-owner authority.
+    pub fn workflows(&self) -> &dyn WorkflowStore {
         &self.store
-    }
-
-    /// Reads the exact immutable governing revision for a historical attempt.
-    ///
-    /// # Errors
-    /// Returns database read failures or invalid retained revision envelopes/contracts.
-    pub fn revision(&self, id: &RevisionId) -> Result<Option<BlueprintRevision>, PersistenceError> {
-        self.store.revision(id)
     }
 
     /// Reads one bounded, digest-verified artifact under OS-owner authority. Callers

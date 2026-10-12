@@ -54,35 +54,13 @@ fn outside_consumers_require_validated_construction_and_explicit_helper_features
         pub fn selector() -> milkdrift_authority::Selection<milkdrift_capability::OperationId> {
             milkdrift_authority::Selection::any()
         }
-        pub fn inspect(revision: &milkdrift_blueprint::BlueprintRevision) { let _ = revision.id(); }
+        pub fn inspect(task: &milkdrift_blueprint::TaskDefinition) { let _ = task.validate(); }
     "#;
     let output = check(directory.path(), valid, false)?;
     assert!(
         output.status.success(),
         "valid consumer failed: {}",
         String::from_utf8_lossy(&output.stderr)
-    );
-    let output = check(
-        directory.path(),
-        "pub fn bypass() { let _ = milkdrift_blueprint::BlueprintRevision::from_verified_parts; }",
-        false,
-    )?;
-    let stderr = String::from_utf8(output.stderr)?;
-    assert!(
-        !output.status.success()
-            && stderr.contains("E0624")
-            && stderr.contains("from_verified_parts"),
-        "expected private raw revision constructor: {stderr}"
-    );
-    let output = check(
-        directory.path(),
-        "pub fn corrupt(value: &mut milkdrift_blueprint::BlueprintRevision) { value.sequence = 99; }",
-        false,
-    )?;
-    let stderr = String::from_utf8(output.stderr)?;
-    assert!(
-        !output.status.success() && stderr.contains("E0616") && stderr.contains("sequence"),
-        "expected private revision field, got {stderr}"
     );
     let output = check(
         directory.path(),
@@ -95,7 +73,7 @@ fn outside_consumers_require_validated_construction_and_explicit_helper_features
         "expected private selector construction, got {stderr}"
     );
     let helpers = r#"
-        pub use milkdrift_runtime::{ManualClock, DeterministicExecutor};
+        pub use milkdrift_runtime::{ManualClock};
         pub use milkdrift_capability_host::{InMemorySecretResolver, SystemPeerClock};
         pub use milkdrift_redb_store::{FaultInjector, FaultPoint};
     "#;

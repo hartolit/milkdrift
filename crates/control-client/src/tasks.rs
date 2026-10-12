@@ -54,8 +54,27 @@ impl ControlClient {
     /// # Errors
     /// Returns invalid identity, authorization, missing content or transport failure.
     pub async fn workflow(&self, workflow: &str) -> Result<WorkflowReadDto, ClientError> {
-        self.safe_get(&format!("v1/workflows/{}", path_segment(workflow)?))
-            .await
+        self.workflow_page(workflow, None).await
+    }
+
+    /// Reads one live page of compact task summaries. Full task content has its own route.
+    /// # Errors
+    /// Returns missing workflow, invalid cursor, authorization or transport failure.
+    pub async fn workflow_page(
+        &self,
+        workflow: &str,
+        cursor: Option<&str>,
+    ) -> Result<WorkflowReadDto, ClientError> {
+        let path = format!("v1/workflows/{}", path_segment(workflow)?);
+        let mut url = self.url(&path)?;
+        if let Some(cursor) = cursor {
+            url.query_pairs_mut().append_pair("cursor", cursor);
+        }
+        let path = match url.query() {
+            Some(query) => format!("{path}?{query}"),
+            None => path,
+        };
+        self.safe_get(&path).await
     }
 
     /// Applies one generation-guarded batch without automatic semantic retries.

@@ -95,7 +95,7 @@ fn streaming_case(
             HandshakeResponse {
                 peer: remote,
                 session: SessionId::new("streaming-server").map_err(|e| e.to_string())?,
-                selected_version: ProtocolVersion::V1_5,
+                selected_version: ProtocolVersion::V1_6,
                 features: FeatureSet {
                     resumable_observations: true,
                     resumable_artifacts: true,

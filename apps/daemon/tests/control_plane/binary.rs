@@ -1,5 +1,5 @@
 //! Own a real daemon process for independent HTTP and CLI clients.
-use super::{inputs::ModelFixture, support::*};
+use super::support::*;
 use std::{io, path::Path, process::Child, time::Instant};
 
 pub(super) struct ChildOwner(pub(super) Option<Child>);
@@ -117,36 +117,6 @@ impl BinaryDaemon {
     pub(super) fn stop(mut self) -> TestResult {
         self.child.finish()?;
         Ok(())
-    }
-    pub(super) async fn configured(
-        directory: &TempDir,
-        model: &ModelFixture,
-    ) -> TestResult<(Self, std::path::PathBuf)> {
-        let mut config = super::authoring::model_configuration_document(directory, model.address)?;
-        config
-            .actors
-            .first_mut()
-            .ok_or("controller absent")?
-            .authority
-            .resources
-            .workflow_run = milkdrift_authority::WorkflowRunScope::Workflows {
-            workflows: milkdrift_authority::WorkflowSet::new([
-                WorkflowId::new("release-notes")?,
-                WorkflowId::new("independent-notes")?,
-            ])?,
-        };
-        config.bind.set_port(0);
-        let endpoint = Url::parse(&format!("http://{}/", config.bind))?;
-        let path = directory.path().join("daemon.toml");
-        fs::write(&path, toml::to_string(&config)?)?;
-        let daemon = Self::start(&path, endpoint, directory.path()).await?;
-        // Reopen the same endpoint after stopping this owned child. The initial port
-        // was allocated by its actual listener, not by a released probe socket.
-        config
-            .bind
-            .set_port(daemon.endpoint.port().ok_or("listener port absent")?);
-        fs::write(&path, toml::to_string(&config)?)?;
-        Ok((daemon, path))
     }
     pub(super) async fn start(
         config: &Path,

@@ -8,14 +8,12 @@ use std::{
     },
 };
 
+use super::DaemonHost;
 use super::clock::{DaemonClockError, DaemonClockSource};
-use super::{DaemonHost, read_model::timeline_summary};
 use crate::config::{
-    ActorBindingConfig, ActorGrantConfig, AdapterConfig, ApplicationReceiptConfig,
-    AuthorityPresetConfig, ConfigError, DaemonConfig, PeerHostConfig, RuntimeHostConfig,
-    SecretSourceConfig, ShutdownConfig,
+    ActorBindingConfig, ActorGrantConfig, AdapterConfig, AuthorityPresetConfig, ConfigError,
+    DaemonConfig, PeerHostConfig, RuntimeHostConfig, SecretSourceConfig, ShutdownConfig,
 };
-use milkdrift_control_protocol::TimelineCategory;
 
 mod artifact_visibility;
 mod live_streams;
@@ -100,21 +98,8 @@ fn owner_test_document(
         adapters: AdapterConfig::default(),
         peers: PeerHostConfig::default(),
         shutdown: ShutdownConfig::default(),
-        application_receipts: ApplicationReceiptConfig {
-            hot_receipt_bound: 100,
-            archive_batch_size: 10,
-        },
         security_audit_record_bound: 100,
     }
-}
-
-#[test]
-fn timeline_projection_never_serializes_internal_event_body() {
-    assert_eq!(
-        timeline_summary(TimelineCategory::Execution),
-        "node execution changed"
-    );
-    assert!(!timeline_summary(TimelineCategory::Execution).contains("NodeScheduled"));
 }
 
 #[tokio::test]
@@ -203,10 +188,20 @@ async fn maintenance_refreshes_capability_health_after_an_idle_minute()
     let (root, initial) = queue_test_host()?;
     initial.shutdown().await?;
     let clock = Arc::new(ControlledDaemonClock::new(100));
-    let host = DaemonHost::start_with_clock(
-        clock_test_config(root.path(), &root.path().join("operator.token"))?,
-        clock.clone(),
+    let profile = root.path().join("idle-model.json");
+    fs::write(
+        &profile,
+        unavailable_models::profile("127.0.0.1:9".parse()?)?.to_canonical_json()?,
     )?;
+    let mut config = owner_test_document(root.path(), &root.path().join("operator.token"), 32, 100);
+    config
+        .adapters
+        .model_profiles
+        .push(crate::ModelProfileConfig {
+            capability_id: "idle-model".into(),
+            profile,
+        });
+    let host = DaemonHost::start_with_clock(config.validate(root.path())?, clock.clone())?;
     clock.set(70_000);
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
     let refreshed = loop {

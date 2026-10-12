@@ -48,12 +48,12 @@ of Milkdrift's needs and source, rather than additional promises made by either 
 ## Current meaning and candidate correspondence
 
 Current node definitions are owned by
-[node.rs](../../../../../crates/blueprint/src/model/node.rs), configuration by
-[structured.rs](../../../../../crates/blueprint/src/model/structured.rs), and control/data edges by
-[graph.rs](../../../../../crates/blueprint/src/model/graph.rs). Runtime details below come from
-[the structured driver](../../../../../crates/runtime/src/engine/structured.rs),
-[join completion](../../../../../crates/runtime/src/engine/completion.rs), and
-[reducer execution](../../../../../crates/runtime/src/engine/structured/reducer.rs).
+[node.rs](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/blueprint/src/model/node.rs), configuration by
+[structured.rs](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/blueprint/src/model/structured.rs), and control/data edges by
+[graph.rs](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/blueprint/src/model/graph.rs). Runtime details below come from
+[the structured driver](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/structured.rs),
+[join completion](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/completion.rs), and
+[reducer execution](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/structured/reducer.rs).
 These are source findings, not newly executed tests.
 
 | Milkdrift concern | UML-oriented candidate | BPMN-oriented candidate | Obligation before selection |
@@ -83,7 +83,7 @@ decision requiring loss/gain and migration evidence. The existing enum is a comp
 ### Source refinement: alternative-path convergence
 
 The complete validator trace narrows the initial concern. In
-[validation.rs](../../../../../crates/blueprint/src/validation.rs), `validate_control_topology`
+[validation.rs](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/blueprint/src/validation.rs), `validate_control_topology`
 rejects more than one incoming control edge on a non-Join node; Join is bound to a Fork.
 Thus directly converging exclusive alternatives is an authoring refusal, not established evidence
 of an accepted graph that stalls. The runtime's all-predecessor rule is consistent with that refusal.

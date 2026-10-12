@@ -26,6 +26,7 @@ thiserror.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+milkdrift-control.workspace = true
 milkdrift-blueprint.workspace = true
 milkdrift-capability-host = { workspace = true, features = ["test-support"] }
 milkdrift-persistence.workspace = true

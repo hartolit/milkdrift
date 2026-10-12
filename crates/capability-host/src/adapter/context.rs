@@ -1,10 +1,10 @@
 use super::DirectInputSelection;
 use milkdrift_authority::{AuthorityDecisionSnapshot, ExecutionAuthorityBasis};
 use milkdrift_blueprint::{NodeId, RevisionId};
-use milkdrift_persistence::{AttemptId, ControllerReservationId, NodeExecutionId};
+use milkdrift_persistence::{AttemptId, NodeExecutionId};
 use milkdrift_workspace::RunId;
 
-/// Exact local or originating workflow coordinates; direct work has none.
+/// Immutable task-origin coordinates; remote origins never own a local workflow.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WorkflowExecutionContext {
     run: RunId,
@@ -13,62 +13,57 @@ pub struct WorkflowExecutionContext {
     execution: NodeExecutionId,
     attempt: AttemptId,
 }
-
 impl WorkflowExecutionContext {
-    /// Originating durable run.
+    /// Owning workflow identity.
     #[must_use]
     pub const fn run(&self) -> &RunId {
         &self.run
     }
-    /// Immutable workflow revision.
+    /// Frozen definition identity carried by the authority protocol.
     #[must_use]
     pub const fn revision(&self) -> &RevisionId {
         &self.revision
     }
-    /// Semantic node identity.
+    /// Task identity carried by the authority protocol.
     #[must_use]
     pub const fn node(&self) -> &NodeId {
         &self.node
     }
-    /// Logical execution identity.
+    /// Exact logical execution identity.
     #[must_use]
     pub const fn execution(&self) -> &NodeExecutionId {
         &self.execution
     }
-    /// Exact execution attempt.
+    /// Exact accepted attempt identity.
     #[must_use]
     pub const fn attempt(&self) -> &AttemptId {
         &self.attempt
     }
 }
 
-/// How the owner selected the inputs supplied to this adapter.
+/// Frozen selected bytes and references; no adapter performs a workflow-history lookup.
 #[derive(Clone, Debug, PartialEq)]
 pub enum AdapterInputSelection {
-    /// Frozen ordinary task inputs with their real owning workflow coordinates.
+    /// Work with an immutable originating workflow/task identity.
     Task {
-        /// Durable workflow/task/attempt provenance.
+        /// Originating task coordinates.
         workflow: WorkflowExecutionContext,
-        /// Exact supplied bytes and immutable references selected at task start.
+        /// Exact accepted request inputs.
         selection: DirectInputSelection,
     },
-    /// A causal selection whose manifest must match these exact coordinates.
-    Workflow(WorkflowExecutionContext),
-    /// Only the accepted caller-supplied inputs, without a workflow-history lookup.
+    /// Independently accepted work without workflow coordinates.
     Direct(DirectInputSelection),
 }
 
-/// Exact input selection and durable authority supplied to materializing adapters.
+/// Frozen selection, authority and output ownership supplied by an execution owner.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AdapterExecutionContext {
     task_artifact_budget: Option<milkdrift_workspace::WorkspaceBudget>,
-    publication_ancestry: Vec<milkdrift_capability::PublicationAncestor>,
-    serving_source: Option<milkdrift_persistence::published::PublishedInvocationSource>,
+    task_output_bytes: Option<u64>,
     selection: AdapterInputSelection,
     authority: Option<ExecutionAuthorityBasis>,
     resolution_authorization: Option<AuthorityDecisionSnapshot>,
     entry_authorization: Option<AuthorityDecisionSnapshot>,
-    controller_reservation: Option<ControllerReservationId>,
     peer_artifacts: Option<(
         milkdrift_workspace::ArtifactOwner,
         milkdrift_workspace::WorkspaceBudget,
@@ -76,236 +71,108 @@ pub struct AdapterExecutionContext {
 }
 
 impl AdapterExecutionContext {
-    /// Enclosing accepted methods, bounded by the runtime and exact peer delegation document.
+    /// Capture exact inputs alongside independently validated originating coordinates.
+    /// Publication additionally requires an accepted task dispatch or durable serving entry.
     #[must_use]
-    pub fn publication_ancestry(&self) -> &[milkdrift_capability::PublicationAncestor] {
-        &self.publication_ancestry
-    }
-
-    /// Existing acceptance owner; serving workflow coordinates never become a second local attempt.
-    #[must_use]
-    pub fn published_source(
-        &self,
-    ) -> Option<milkdrift_persistence::published::PublishedInvocationSource> {
-        self.serving_source.clone().or_else(|| {
-            self.workflow().map(|w| {
-                milkdrift_persistence::published::PublishedInvocationSource::Local {
-                    run: w.run.clone(),
-                    attempt: w.attempt.clone(),
-                }
-            })
-        })
-    }
-    pub(crate) fn with_serving_preparation(
-        mut self,
-        record: &milkdrift_persistence::PeerExecutionRecord,
-    ) -> Self {
-        self.serving_source = Some(
-            milkdrift_persistence::published::PublishedInvocationSource::Serving {
-                caller: record.caller.clone(),
-                execution: record.execution.clone(),
-            },
-        );
-        self.entry_authorization = Some(record.authority.clone());
-        if let milkdrift_peer_protocol::ServingAuthorization::Peer(delegation) =
-            &record.request.authorization
-        {
-            self.publication_ancestry = delegation.publication_ancestry.clone();
-        }
-        self
-    }
-
-    /// Recover a public result's local owner from the exact attempt association. This constructor
-    /// carries the original reservation so publishing result bytes cannot escape its accounting.
-    ///
-    /// # Errors
-    /// Returns an integrity error if the plan does not match this run's exact retained attempt
-    /// and revision, or if its controller account or reservation cannot be recovered.
-    pub fn published_local_result(
-        plan: &milkdrift_persistence::published::PublishedInvocationPlan,
-        projection: &milkdrift_runtime::RunProjection,
-        accounts: &dyn milkdrift_persistence::ControllerAccountStore,
-    ) -> Result<Self, crate::InvocationDataError> {
-        use milkdrift_persistence::published::PublishedInvocationSource;
-        let invalid = || {
-            crate::InvocationDataError::Integrity(
-                "public result lost its exact local acceptance".to_owned(),
-            )
-        };
-        let PublishedInvocationSource::Local { run, attempt } = &plan.source else {
-            return Err(invalid());
-        };
-        let value = projection.attempts().get(attempt).ok_or_else(invalid)?;
-        if projection.run_id() != Some(run) || value.published_invocation() != Some(plan) {
-            return Err(invalid());
-        }
-        let execution = projection
-            .node_executions()
-            .get(value.execution())
-            .ok_or_else(invalid)?;
-        let mut context = Self::new(
-            run.clone(),
-            projection
-                .revision_for_attempt(attempt)
-                .ok_or_else(invalid)?
-                .clone(),
-            execution.node().clone(),
-            value.execution().clone(),
-            attempt.clone(),
-        );
-        context.authority = projection.execution_authority().cloned();
-        context.entry_authorization = value.adapter_entry_authorization().cloned();
-        context.controller_reservation = accounts
-            .controller_account_binding(run)
-            .map_err(|_| invalid())?
-            .map(|account| {
-                milkdrift_persistence::ControllerReservationId::for_attempt(&account, attempt)
-            })
-            .transpose()
-            .map_err(|_| invalid())?;
-        Ok(context)
-    }
-
-    /// Recover the serving artifact namespace from the entered operation, including a workflow
-    /// origin on another host. That origin must never be mistaken for a locally owned run.
-    ///
-    /// # Errors
-    /// Rejects a mismatched plan, source, input selection, or execution that lacks durable entry.
-    /// Invalid authorization facts and exhausted artifact allowances also fail.
-    pub fn published_serving_result(
-        plan: &milkdrift_persistence::published::PublishedInvocationPlan,
-        record: &milkdrift_persistence::PeerExecutionRecord,
-    ) -> Result<Self, crate::InvocationDataError> {
-        let source = milkdrift_persistence::published::PublishedInvocationSource::Serving {
-            caller: record.caller.clone(),
-            execution: record.execution.clone(),
-        };
-        if plan.source != source || record.published_invocation.as_ref() != Some(plan) {
-            return Err(crate::InvocationDataError::Integrity(
-                "public result differs from its serving acceptance".to_owned(),
-            ));
-        }
-        crate::serving::authority::adapter_execution_context(&record.request)
-            .map_err(|e| crate::InvocationDataError::Integrity(e.to_string()))?
-            .with_serving_execution(record)
-    }
-
-    /// Constructs exact durable provenance for an already validated execution dispatch.
-    #[must_use]
-    pub const fn new(
+    pub fn originated(
         run: RunId,
         revision: RevisionId,
         node: NodeId,
         execution: NodeExecutionId,
         attempt: AttemptId,
+        selection: DirectInputSelection,
     ) -> Self {
-        Self {
-            task_artifact_budget: None,
-            publication_ancestry: Vec::new(),
-            serving_source: None,
-            selection: AdapterInputSelection::Workflow(WorkflowExecutionContext {
+        let mut context = Self::direct(selection.clone());
+        context.selection = AdapterInputSelection::Task {
+            workflow: WorkflowExecutionContext {
                 run,
                 revision,
                 node,
                 execution,
                 attempt,
-            }),
-            authority: None,
-            resolution_authorization: None,
-            entry_authorization: None,
-            controller_reservation: None,
-            peer_artifacts: None,
-        }
+            },
+            selection,
+        };
+        context
     }
-
-    /// Constructs a direct preparation context after the serving owner has authorized inputs.
-    /// Output publication remains unavailable until a durable serving entry binds its owner.
+    /// A serving preparation context whose caller has authorized these exact inputs.
     #[must_use]
     pub const fn direct(selection: DirectInputSelection) -> Self {
         Self {
             task_artifact_budget: None,
-            publication_ancestry: Vec::new(),
-            serving_source: None,
+            task_output_bytes: None,
             selection: AdapterInputSelection::Direct(selection),
             authority: None,
             resolution_authorization: None,
             entry_authorization: None,
-            controller_reservation: None,
             peer_artifacts: None,
         }
     }
-
-    /// Exact input-selection meaning; callers must handle direct and workflow work explicitly.
+    /// Frozen selected inputs and their optional originating coordinates.
     #[must_use]
     pub const fn selection(&self) -> &AdapterInputSelection {
         &self.selection
     }
-
-    /// Originating workflow coordinates, if this work came from a workflow.
+    /// Originating workflow coordinates when present.
     #[must_use]
     pub const fn workflow(&self) -> Option<&WorkflowExecutionContext> {
         match &self.selection {
             AdapterInputSelection::Task { workflow, .. } => Some(workflow),
-            AdapterInputSelection::Workflow(workflow) => Some(workflow),
             AdapterInputSelection::Direct(_) => None,
         }
     }
-
-    /// Frozen caller-supplied selection for direct work.
+    /// Exact request inputs, with no causal-history expansion.
     #[must_use]
     pub const fn direct_selection(&self) -> Option<&DirectInputSelection> {
-        match &self.selection {
-            AdapterInputSelection::Task { selection, .. } => Some(selection),
-            AdapterInputSelection::Direct(direct) => Some(direct),
-            AdapterInputSelection::Workflow(_) => None,
-        }
-    }
-
-    pub(crate) fn from_dispatch(
-        dispatch: &milkdrift_runtime::ExecutionDispatch,
-        controller_reservation: Option<&ControllerReservationId>,
-    ) -> Result<Self, crate::InvocationDataError> {
-        let workflow = WorkflowExecutionContext {
-            run: dispatch.run().clone(),
-            revision: dispatch.revision().clone(),
-            node: dispatch.node().clone(),
-            execution: dispatch.execution().clone(),
-            attempt: dispatch.attempt().clone(),
-        };
-        let selection = if dispatch.is_task() {
-            AdapterInputSelection::Task {
-                workflow,
-                selection: DirectInputSelection::new(
-                    dispatch.request(),
-                    milkdrift_blueprint::MAX_TASK_DEFINITION_BYTES as u64,
-                )?,
-            }
-        } else {
-            AdapterInputSelection::Workflow(workflow)
-        };
-        Ok(Self {
-            task_artifact_budget: dispatch.task_artifact_budget().cloned(),
-            publication_ancestry: dispatch.publication_ancestry().to_vec(),
-            serving_source: None,
-            selection,
-            authority: Some(dispatch.execution_authority().clone()),
-            resolution_authorization: Some(dispatch.resolution_authorization().clone()),
-            entry_authorization: Some(dispatch.entry_authorization().clone()),
-            controller_reservation: controller_reservation.cloned(),
-            peer_artifacts: None,
+        Some(match &self.selection {
+            AdapterInputSelection::Task { selection, .. } => selection,
+            AdapterInputSelection::Direct(selection) => selection,
         })
     }
-
-    /// Binds artifact publication to the serving host's durably entered peer execution.
-    /// The accepted request owns this allowance; the originating run is not a local run.
+    /// Materialization facts from the runtime's immutable task dispatch.
+    ///
+    /// # Errors
+    /// Refuses a request whose complete selected input document exceeds the task bound.
+    pub fn from_dispatch(
+        dispatch: &milkdrift_runtime::ExecutionDispatch,
+    ) -> Result<Self, crate::InvocationDataError> {
+        let selection = DirectInputSelection::new(
+            dispatch.request(),
+            milkdrift_blueprint::MAX_TASK_DEFINITION_BYTES as u64,
+        )?;
+        let mut context = Self::originated(
+            dispatch.run().clone(),
+            dispatch.revision().clone(),
+            dispatch.node().clone(),
+            dispatch.execution().clone(),
+            dispatch.attempt().clone(),
+            selection,
+        );
+        context.task_artifact_budget = dispatch.task_artifact_budget().cloned();
+        context.task_output_bytes = dispatch.task_output_bytes();
+        context.authority = Some(dispatch.execution_authority().clone());
+        context.resolution_authorization = Some(dispatch.resolution_authorization().clone());
+        context.entry_authorization = Some(dispatch.entry_authorization().clone());
+        Ok(context)
+    }
+    pub(crate) fn with_serving_preparation(
+        mut self,
+        record: &milkdrift_persistence::PeerExecutionRecord,
+    ) -> Self {
+        self.entry_authorization = Some(record.authority.clone());
+        self
+    }
     pub(crate) fn with_serving_execution(
         mut self,
         record: &milkdrift_persistence::PeerExecutionRecord,
     ) -> Result<Self, crate::InvocationDataError> {
-        let origin = record.request.authorization.origin();
-        let selection_matches = match (&self.selection, &origin) {
+        let selected = self
+            .direct_selection()
+            .is_some_and(|selection| selection.validate_request(&record.request.request).is_ok());
+        let origin_matches = match (self.workflow(), record.request.authorization.origin()) {
+            (None, milkdrift_peer_protocol::InvocationOrigin::Direct) => true,
             (
-                AdapterInputSelection::Workflow(workflow),
+                Some(workflow),
                 milkdrift_peer_protocol::InvocationOrigin::Workflow { provenance },
             ) => {
                 provenance.run == workflow.run.as_str()
@@ -314,22 +181,18 @@ impl AdapterExecutionContext {
                     && provenance.execution == workflow.execution.as_str()
                     && provenance.attempt == workflow.attempt.as_str()
             }
-            (
-                AdapterInputSelection::Direct(selection),
-                milkdrift_peer_protocol::InvocationOrigin::Direct,
-            ) => selection.validate_request(&record.request.request).is_ok(),
             _ => false,
         };
         if !matches!(
             record.phase,
             milkdrift_persistence::PeerExecutionPhase::Entered { .. }
-                | milkdrift_persistence::PeerExecutionPhase::AwaitingWorkflow { .. }
                 | milkdrift_persistence::PeerExecutionPhase::CancellationRequested {
                     evidence: Some(_),
                     ..
                 }
         ) || record.caller != record.request.authorization.caller()
-            || !selection_matches
+            || !selected
+            || !origin_matches
             || self.authority.is_some()
             || self.peer_artifacts.is_some()
         {
@@ -366,26 +229,28 @@ impl AdapterExecutionContext {
             remaining,
         )
         .map_err(|error| crate::InvocationDataError::Rejected(error.to_string()))?;
-        self.entry_authorization = record.phase.entry_evidence().map(|e| e.authority.clone());
+        self.entry_authorization = record
+            .phase
+            .entry_evidence()
+            .map(|evidence| evidence.authority.clone());
         self.peer_artifacts = Some((owner, budget));
         Ok(self)
     }
-
     pub(crate) fn publication_owner(
         &self,
     ) -> Result<milkdrift_workspace::ArtifactOwner, crate::InvocationDataError> {
         if let Some((owner, _)) = &self.peer_artifacts {
             return Ok(owner.clone());
         }
-        self.workflow()
-            .map(|workflow| (&workflow.run).into())
-            .ok_or_else(|| {
-                crate::InvocationDataError::Rejected(
-                    "direct publication requires a durably entered serving execution".to_owned(),
-                )
-            })
+        if self.task_artifact_budget.is_some() && self.task_output_bytes.is_some() {
+            if let Some(workflow) = self.workflow() {
+                return Ok((&workflow.run).into());
+            }
+        }
+        Err(crate::InvocationDataError::Rejected(
+            "output publication requires a durably entered task or serving execution".to_owned(),
+        ))
     }
-
     pub(crate) fn publication_namespace(&self) -> Result<&str, crate::InvocationDataError> {
         match self.peer_artifacts.as_ref().map(|(owner, _)| owner) {
             Some(milkdrift_workspace::ArtifactOwner::HostInvocation { invocation, .. }) => {
@@ -396,40 +261,31 @@ impl AdapterExecutionContext {
                 .map(|workflow| workflow.run.as_str())
                 .ok_or_else(|| {
                     crate::InvocationDataError::Rejected(
-                        "direct publication requires a durably entered serving execution"
-                            .to_owned(),
+                        "publication namespace is absent".to_owned(),
                     )
                 }),
         }
     }
-
     pub(crate) fn peer_artifact_budget(&self) -> Option<&milkdrift_workspace::WorkspaceBudget> {
         self.peer_artifacts.as_ref().map(|(_, budget)| budget)
     }
-
     pub(crate) fn task_artifact_budget(&self) -> Option<&milkdrift_workspace::WorkspaceBudget> {
         self.task_artifact_budget.as_ref()
     }
-
-    /// Exact controller reservation committed before this adapter entry, when controlled.
-    #[must_use]
-    pub const fn controller_reservation(&self) -> Option<&ControllerReservationId> {
-        self.controller_reservation.as_ref()
+    pub(crate) const fn task_output_bytes(&self) -> Option<u64> {
+        self.task_output_bytes
     }
-
-    /// Frozen actor/grant/policy basis inherited from run acceptance.
+    /// Frozen actor/grant/policy basis of local task acceptance.
     #[must_use]
     pub const fn authority(&self) -> Option<&ExecutionAuthorityBasis> {
         self.authority.as_ref()
     }
-
-    /// Exact decision that allowed this capability generation to be selected.
+    /// Decision permitting this exact capability selection.
     #[must_use]
     pub const fn resolution_authorization(&self) -> Option<&AuthorityDecisionSnapshot> {
         self.resolution_authorization.as_ref()
     }
-
-    /// Fresh decision committed immediately before adapter entry.
+    /// Fresh decision committed immediately before external entry.
     #[must_use]
     pub const fn entry_authorization(&self) -> Option<&AuthorityDecisionSnapshot> {
         self.entry_authorization.as_ref()

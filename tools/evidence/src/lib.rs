@@ -25,12 +25,12 @@ mod persistence;
 mod report;
 
 pub use adapters::{artifact_range_read, local_process_stream_drain, model_stream_parsers};
-pub use context::{context_discovery_and_selection, context_materialization};
+pub use context::{explicit_input_materialization, explicit_input_selection};
 pub use daemon::{DaemonEvidence, daemon_owner_round_trip, measure_daemon_saturation};
 pub use persistence::{
-    StorageEvidence, application_receipt_paths, artifact_publication, journal_append_batch,
-    journal_append_one, measure_storage_growth, peer_observation_paths, projection_rebuild,
-    projection_snapshot_tail,
+    StorageEvidence, artifact_publication, measure_storage_growth, peer_observation_paths,
+    workflow_commit_batch, workflow_commit_one, workflow_read_page, workflow_receipt_paths,
+    workflow_snapshot_reopen,
 };
 pub use report::{EvidenceError, EvidenceResult, LatencySummary, ScenarioMeasurement};
 

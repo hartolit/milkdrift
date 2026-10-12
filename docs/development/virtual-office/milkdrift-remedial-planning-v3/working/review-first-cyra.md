@@ -64,21 +64,21 @@ neither a collapsed graphic nor a hidden child run resolves the question.
 
 ## Primary-source grounding and existing focused evidence
 
-- [Runtime join completion](../../../../../crates/runtime/src/engine/completion.rs),
+- [Runtime join completion](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/completion.rs),
   `RuntimeService::try_satisfy_join`, finds the governing fork occurrence in the same scope, records
   cancellation requests for active losers under Any/FirstSuccess/Quorum, then records
   `JoinSatisfied` and deterministic node completion. It does not wait for all losing external
   effects to become physically quiescent before recording satisfaction.
-- [Structured progress](../../../../../crates/runtime/src/engine/structured.rs),
+- [Structured progress](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/structured.rs),
   `extend_structured_progress` and `drive_eligible_execution`, use bounded transitions and the
   execution's governing revision. This supports occurrence-qualified recovery and future
   eligibility; it is not evidence that arbitrary new merge events will be atomic automatically.
-- [Terminal deferral test](../../../../../crates/runtime/tests/structured_runtime/lifecycle/cancellation.rs),
+- [Terminal deferral test](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/tests/structured_runtime/lifecycle/cancellation.rs),
   `explicit_terminal_waits_for_an_already_dispatched_any_join_loser`, observes a completed Join and
   terminal node while the run remains Running with an active attempt and no `RunTerminal` event.
   Only release of the entered executor allows run completion. This guards against conflating
   visual end/control success with complete lifetime settlement.
-- [Join policy tests](../../../../../crates/runtime/tests/structured_runtime/structured_graph.rs),
+- [Join policy tests](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/tests/structured_runtime/structured_graph.rs),
   `first_success_and_quorum_cancel_losers_without_dispatching_them` and
   `impossible_first_success_and_quorum_fail_deterministically_instead_of_deadlocking`, support
   legitimate policy progress and a negative path. Their non-entered losers do not alone cover the
@@ -87,12 +87,12 @@ neither a collapsed graphic nor a hidden child run resolves the question.
   and `transfer`, require current exact claims/accepted lineage and quiescence; release also
   refuses unresolved child ownership. Return can refuse resuming a cancelled/unauthorized parent.
   These checks must still apply when a new merge has completed.
-- [Managed publication tests](../../../../../crates/control/tests/control_service/published/managed.rs),
+- [Managed publication tests](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control/tests/control_service/published/managed.rs),
   `publication_hands_editing_to_exact_internal_writers_and_releases_every_hold` and
   `lost_child_stop_proof_survives_cancel_and_reopen_without_returning_editing`, give positive
   sequential child progress and retained-uncertainty evidence. The coordinator owns any executed
   results in [observations](observations.md); this review inspected assertions only.
-- [Saved run recovery](../../../../../crates/control-client/src/saved_run.rs), `SavedRunRequest`
+- [Saved run recovery](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control-client/src/saved_run.rs), `SavedRunRequest`
   and `submit_saved_run`, explicitly direct the native consumer to persist the complete bounded
   JSON privately before submission and require equality of current and saved `AuthorityRead`.
   A changed grant refuses the helper; frontend recovery cannot promise arbitrary current-grant

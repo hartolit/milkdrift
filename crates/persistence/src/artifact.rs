@@ -5,8 +5,8 @@ use milkdrift_workspace::{
 };
 
 use crate::{
-    ArtifactPublicationId, ControllerArtifactOwner, ControllerReservationId, EvidenceId, PageSize,
-    PersistenceError, TimestampMillis, bounded::MAX_ARTIFACT_CHUNK_BYTES,
+    ArtifactPublicationId, EvidenceId, PageSize, PersistenceError, TimestampMillis,
+    bounded::MAX_ARTIFACT_CHUNK_BYTES,
 };
 
 /// Maximum opaque key bytes retained by one resumable orphan-cleanup cursor.
@@ -17,8 +17,7 @@ pub const MAX_ORPHAN_CLEANUP_CURSOR_KEY_BYTES: usize = 512;
 /// Supply expected metadata and workspace usage before sending content. The store reserves
 /// publication ownership and rechecks accounting at commit. Reuse the same publication
 /// identity after a lost response; [`BeginArtifactOutcome`] tells whether to resume at an
-/// exact offset or use the already committed metadata. Invocation-owned controller output
-/// uses [`Self::for_invocation`] to name its final-entry reservation.
+/// exact offset or use the already committed metadata.
 ///
 /// Checked request facts cannot be rewritten after construction:
 ///
@@ -42,8 +41,7 @@ pub struct BeginArtifactPublication {
     expected_usage: WorkspaceUsage,
     /// Exact usage after charging metadata/content once.
     resulting_usage: WorkspaceUsage,
-    /// Explicit controller-account source used at first logical commit.
-    controller_owner: Option<ControllerArtifactOwner>,
+    task_output_limit: Option<u64>,
 }
 
 impl BeginArtifactPublication {
@@ -66,11 +64,11 @@ impl BeginArtifactPublication {
         let request = Self {
             publication,
             owner: ArtifactOwner::PeerInput { host, peer },
+            task_output_limit: None,
             metadata,
             budget,
             expected_usage,
             resulting_usage,
-            controller_owner: None,
         };
         request.validate()?;
         Ok(request)
@@ -94,11 +92,11 @@ impl BeginArtifactPublication {
         let request = Self {
             publication,
             owner: ArtifactOwner::ClientInput { host, client },
+            task_output_limit: None,
             metadata,
             budget,
             expected_usage,
             resulting_usage,
-            controller_owner: None,
         };
         request.validate()?;
         Ok(request)
@@ -121,31 +119,12 @@ impl BeginArtifactPublication {
         Ok(Self {
             publication,
             owner: ArtifactOwner::Workflow { run },
+            task_output_limit: None,
             metadata,
             budget,
             expected_usage,
             resulting_usage,
-            controller_owner: Some(ControllerArtifactOwner::RunBinding),
         })
-    }
-
-    /// Constructs an invocation publication owned by its committed controller reservation.
-    ///
-    /// # Errors
-    /// Propagates workspace admission failures from [`Self::new`]. The store checks the
-    /// committed reservation when publishing; construction does not reserve controller use.
-    pub fn for_invocation(
-        publication: ArtifactPublicationId,
-        run: RunId,
-        metadata: ArtifactMetadata,
-        budget: WorkspaceBudget,
-        expected_usage: WorkspaceUsage,
-        reservation: ControllerReservationId,
-    ) -> Result<Self, PersistenceError> {
-        let mut request = Self::new(publication, run, metadata, budget, expected_usage)?;
-        request.controller_owner =
-            Some(ControllerArtifactOwner::InvocationReservation(reservation));
-        Ok(request)
     }
 
     /// Constructs publication against the serving invocation's accepted output allowance.
@@ -167,11 +146,11 @@ impl BeginArtifactPublication {
         let request = Self {
             publication,
             owner: ArtifactOwner::HostInvocation { host, invocation },
+            task_output_limit: None,
             metadata,
             budget,
             expected_usage,
             resulting_usage,
-            controller_owner: None,
         };
         request.validate()?;
         Ok(request)
@@ -180,8 +159,7 @@ impl BeginArtifactPublication {
     /// Constructs a bounded import without creating a workflow accounting domain.
     ///
     /// # Errors
-    /// Refuses workspace admission failures or a controller owner other than an optional
-    /// remote invocation reservation for this transfer, as checked by [`Self::validate`].
+    /// Refuses workspace admission failures or inconsistent artifact provenance.
     pub fn for_transfer(
         publication: ArtifactPublicationId,
         source: milkdrift_capability::PeerId,
@@ -189,7 +167,6 @@ impl BeginArtifactPublication {
         metadata: ArtifactMetadata,
         budget: WorkspaceBudget,
         expected_usage: WorkspaceUsage,
-        controller: Option<ControllerArtifactOwner>,
     ) -> Result<Self, PersistenceError> {
         let resulting_usage = budget
             .admit_artifact(&expected_usage, &metadata)
@@ -197,11 +174,11 @@ impl BeginArtifactPublication {
         let request = Self {
             publication,
             owner: ArtifactOwner::Transfer { source, transfer },
+            task_output_limit: None,
             metadata,
             budget,
             expected_usage,
             resulting_usage,
-            controller_owner: controller,
         };
         request.validate()?;
         Ok(request)
@@ -243,43 +220,39 @@ impl BeginArtifactPublication {
         self.resulting_usage
     }
 
-    /// Returns the explicit controller-account source for this logical publication.
+    /// Bind this task producer's cumulative output ceiling before any output is written.
+    ///
+    /// # Errors
+    /// Refuses zero ceilings and publications without exact workflow/invocation provenance.
+    pub fn with_task_output_limit(mut self, bytes: u64) -> Result<Self, PersistenceError> {
+        if bytes == 0
+            || !matches!(self.owner, ArtifactOwner::Workflow { .. })
+            || !matches!(
+                self.metadata.provenance().producer(),
+                milkdrift_workspace::CausalReference::Invocation { .. }
+            )
+        {
+            return Err(PersistenceError::InvalidDocument(
+                "task output allowance requires a workflow invocation producer".to_owned(),
+            ));
+        }
+        self.task_output_limit = Some(bytes);
+        Ok(self)
+    }
+
+    /// Frozen cumulative byte ceiling of a local task producer, when present.
     #[must_use]
-    pub const fn controller_owner(&self) -> Option<&ControllerArtifactOwner> {
-        self.controller_owner.as_ref()
+    pub const fn task_output_limit(&self) -> Option<u64> {
+        self.task_output_limit
     }
 
     /// Revalidates the request's derived accounting transition at a trust boundary.
     ///
     /// # Errors
-    /// Refuses incompatible artifact/controller owners, host-invocation producer mismatch,
+    /// Refuses host-invocation producer mismatch,
     /// invalid prior usage, failed budget admission, or a resulting usage different from
     /// the exact metadata charge.
     pub fn validate(&self) -> Result<(), PersistenceError> {
-        let controller_valid = matches!(
-            (&self.owner, &self.controller_owner),
-            (
-                ArtifactOwner::Workflow { .. },
-                Some(
-                    ControllerArtifactOwner::RunBinding
-                        | ControllerArtifactOwner::InvocationReservation(_),
-                ),
-            ) | (
-                ArtifactOwner::Transfer { .. },
-                Some(ControllerArtifactOwner::RemoteInvocationReservation { .. }),
-            ) | (
-                ArtifactOwner::PeerInput { .. }
-                    | milkdrift_workspace::ArtifactOwner::ClientInput { .. }
-                    | ArtifactOwner::HostInvocation { .. }
-                    | ArtifactOwner::Transfer { .. },
-                None,
-            )
-        );
-        if !controller_valid {
-            return Err(PersistenceError::InvalidDocument(
-                "artifact owner and controller reservation source disagree".to_owned(),
-            ));
-        }
         if let ArtifactOwner::PeerInput { peer, .. } = &self.owner
             && !matches!(self.metadata.provenance().producer(), milkdrift_workspace::CausalReference::PeerClaim { peer: source, .. } if source == peer)
         {
@@ -643,7 +616,7 @@ pub struct OrphanCleanupResult {
 /// charge, even when several artifacts share content bytes.
 ///
 /// Content must be verified and durably published before metadata/accounting accepts it.
-/// A failure in between may leave unreferenced content for replay or cleanup. Controller
+/// A failure in between may leave unreferenced content for replay or cleanup. Task output
 /// charges participate in the metadata transaction. Publication errors can follow a
 /// completed step, so recover with the original session identity and returned offset.
 /// Reads verify content independently of the caller's authority proof; this port does
@@ -685,7 +658,7 @@ pub trait ArtifactStore: Send + Sync {
     ///
     /// # Errors
     /// Refuses missing sessions, size/digest mismatch, stale accounting, exhausted budgets
-    /// or controller contract violations, and returns storage/integrity failures.
+    /// or output allowance violations, and returns storage/integrity failures.
     fn commit_publication(
         &self,
         publication: &ArtifactPublicationId,
@@ -709,14 +682,14 @@ pub trait ArtifactStore: Send + Sync {
     -> Result<Option<ArtifactMetadata>, PersistenceError>;
 
     /// Proves both immutable metadata and verified content are durably committed.
-    /// Journal append uses this exact predicate for every required reference.
+    /// Task settlement uses this exact predicate for every required reference.
     ///
     /// # Errors
     /// Returns storage or verification failures; corruption must not be reported as absence.
     fn is_committed(&self, reference: &ArtifactReference) -> Result<bool, PersistenceError>;
 
     /// Returns whether this run's accounting domain has already admitted the exact
-    /// artifact, whether through publication or an earlier journal reference.
+    /// artifact through an accepted publication.
     ///
     /// # Errors
     /// Returns storage failures or inconsistent run ownership/reference evidence.

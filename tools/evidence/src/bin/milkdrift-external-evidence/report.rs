@@ -8,7 +8,7 @@ use std::{collections::BTreeSet, fs, path::Path};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub(crate) const REPORT_SCHEMA_VERSION: u32 = 1;
+pub(crate) const REPORT_SCHEMA_VERSION: u32 = 2;
 const MAX_REPORT_BYTES: usize = 1_048_576;
 const MAX_REPORT_ITEMS: usize = 4_096;
 
@@ -143,10 +143,9 @@ pub(crate) struct ScenarioEvidence {
     pub(crate) outcome: String,
     pub(crate) profile: Value,
     pub(crate) commands: Vec<String>,
-    pub(crate) runs: Vec<String>,
-    pub(crate) revisions: Vec<String>,
-    pub(crate) attempts: Vec<String>,
-    pub(crate) proposals: Vec<String>,
+    pub(crate) workflows: Vec<String>,
+    pub(crate) tasks: Vec<String>,
+    pub(crate) corrections: Vec<String>,
     pub(crate) artifacts: Vec<ArtifactEvidence>,
     pub(crate) restart_boundaries: Vec<RestartEvidence>,
     pub(crate) facts: Value,
@@ -157,21 +156,19 @@ impl ScenarioEvidence {
     fn validate_qualifying(&self, name: &str) -> Result<(), String> {
         let vectors = [
             self.commands.len(),
-            self.runs.len(),
-            self.revisions.len(),
-            self.attempts.len(),
-            self.proposals.len(),
+            self.workflows.len(),
+            self.tasks.len(),
+            self.corrections.len(),
             self.artifacts.len(),
             self.restart_boundaries.len(),
         ];
         if vectors.into_iter().any(|count| count > MAX_REPORT_ITEMS)
             || self.commands.is_empty()
-            || self.runs.is_empty()
-            || self.revisions.is_empty()
-            || self.attempts.is_empty()
+            || self.workflows.is_empty()
+            || self.tasks.is_empty()
             || self.artifacts.is_empty()
             || self.restart_boundaries.is_empty()
-            || (name == "process" && self.proposals.is_empty())
+            || (name == "process" && self.corrections.is_empty())
         {
             return Err(format!(
                 "qualifying {name} evidence omits a required bounded collection"
@@ -180,10 +177,9 @@ impl ScenarioEvidence {
         if self
             .commands
             .iter()
-            .chain(&self.runs)
-            .chain(&self.revisions)
-            .chain(&self.attempts)
-            .chain(&self.proposals)
+            .chain(&self.workflows)
+            .chain(&self.tasks)
+            .chain(&self.corrections)
             .any(|value| value.is_empty() || value.len() > 1_024)
             || self.artifacts.iter().any(|artifact| {
                 artifact.artifact_id.is_empty()
@@ -197,8 +193,8 @@ impl ScenarioEvidence {
             || self.restart_boundaries.iter().any(|restart| {
                 restart.boundary.is_empty()
                     || restart.recovered_state.is_empty()
-                    || restart.duplicate_attempts
-                    || restart.sequence_before != restart.sequence_after
+                    || restart.duplicate_tasks
+                    || restart.generation_before != restart.generation_after
             })
         {
             return Err(format!(
@@ -224,18 +220,18 @@ impl ScenarioEvidence {
             &[
                 "repository_initial_commit",
                 "repository_final_commit",
-                "distinct_process_invocations",
-                "process_invocations",
-                "terminal_sequence",
+                "distinct_process_tasks",
+                "process_tasks",
+                "terminal_generation",
             ]
         } else {
             &[
-                "context_manifest_digest",
-                "streaming_observations",
+                "selected_inputs_digest",
+                "streaming",
                 "usage",
                 "terminal",
                 "uncertain",
-                "invocation_id",
+                "task_id",
             ]
         };
         if required_profile
@@ -290,16 +286,14 @@ impl ScenarioEvidence {
             && bounded_string(facts, "dirty_diff_digest").is_some_and(|digest| {
                 is_blake3_digest(digest) && digest != format!("b3_{}", blake3::hash(b""))
             });
-        let count = facts
-            .get("distinct_process_invocations")
-            .and_then(Value::as_u64);
-        let invocations = facts.get("process_invocations").and_then(Value::as_array);
+        let count = facts.get("distinct_process_tasks").and_then(Value::as_u64);
+        let invocations = facts.get("process_tasks").and_then(Value::as_array);
         if !history_preserved
             || !nonempty_diff
             || count.is_none_or(|value| value < 5)
             || invocations.is_none_or(|items| u64::try_from(items.len()).ok() != count)
             || facts
-                .get("terminal_sequence")
+                .get("terminal_generation")
                 .and_then(Value::as_u64)
                 .is_none_or(|value| value == 0)
         {
@@ -308,16 +302,21 @@ impl ScenarioEvidence {
         let Some(invocations) = invocations else {
             return Err("qualifying process invocation facts are absent".to_owned());
         };
-        let mut invocation_ids = BTreeSet::new();
+        let mut task_ids = BTreeSet::new();
         let mut roles = BTreeSet::new();
         for invocation in invocations {
-            let id = bounded_string(invocation, "invocation_id")
+            let id = bounded_string(invocation, "task_id")
                 .ok_or_else(|| "qualifying process invocation has no identity".to_owned())?;
             let role = bounded_string(invocation, "role")
                 .ok_or_else(|| "qualifying process invocation has no role".to_owned())?;
-            if !invocation_ids.insert(id)
+            if !task_ids.insert(id)
                 || !roles.insert(role)
-                || invocation.get("terminal").and_then(Value::as_str) != Some("succeeded")
+                || invocation.get("terminal").and_then(Value::as_str)
+                    != Some(if role == "controlled_verification" {
+                        "failed"
+                    } else {
+                        "completed"
+                    })
                 || invocation.get("uncertain").and_then(Value::as_bool) != Some(false)
             {
                 return Err(
@@ -335,7 +334,7 @@ impl ScenarioEvidence {
         Ok(())
     }
 
-    fn validate_model_semantics(&self) -> Result<(), String> {
+    pub(super) fn validate_model_semantics(&self) -> Result<(), String> {
         let profile = &self.profile;
         let facts = &self.facts;
         let usage = facts.get("usage").and_then(Value::as_object);
@@ -346,16 +345,16 @@ impl ScenarioEvidence {
                 .is_none_or(|value| value == 0)
             || bounded_string(profile, "provider_protocol").is_none()
             || bounded_string(profile, "model_alias").is_none()
-            || bounded_string(facts, "context_manifest_digest")
+            || bounded_string(facts, "selected_inputs_digest")
                 .is_none_or(|value| !is_blake3_digest(value))
-            || facts
-                .get("streaming_observations")
-                .and_then(Value::as_u64)
-                .is_none_or(|value| value == 0)
-            || facts.get("terminal").and_then(Value::as_str) != Some("succeeded")
+            || facts.get("streaming").and_then(Value::as_bool) != Some(false)
+            || facts.get("selected_count").and_then(Value::as_u64) != Some(2)
+            || facts.get("unselected_count").and_then(Value::as_u64) != Some(1)
+            || facts.get("model_output_units").and_then(Value::as_u64) != Some(4096)
+            || facts.get("terminal").and_then(Value::as_str) != Some("completed")
             || facts.get("finish_reason").and_then(Value::as_str) != Some("stop")
             || facts.get("uncertain").and_then(Value::as_bool) != Some(false)
-            || bounded_string(facts, "invocation_id").is_none()
+            || bounded_string(facts, "task_id").is_none()
             || usage.is_none_or(|value| {
                 value.get("input_units").and_then(Value::as_u64).is_none()
                     || value.get("output_units").and_then(Value::as_u64).is_none()
@@ -372,10 +371,9 @@ impl ScenarioEvidence {
             outcome: "not_run".to_owned(),
             profile: Value::Object(Default::default()),
             commands: Vec::new(),
-            runs: Vec::new(),
-            revisions: Vec::new(),
-            attempts: Vec::new(),
-            proposals: Vec::new(),
+            workflows: Vec::new(),
+            tasks: Vec::new(),
+            corrections: Vec::new(),
             artifacts: Vec::new(),
             restart_boundaries: Vec::new(),
             facts: Value::Object(Default::default()),
@@ -389,10 +387,9 @@ impl ScenarioEvidence {
             outcome: "failed".to_owned(),
             profile: Value::Object(Default::default()),
             commands: Vec::new(),
-            runs: Vec::new(),
-            revisions: Vec::new(),
-            attempts: Vec::new(),
-            proposals: Vec::new(),
+            workflows: Vec::new(),
+            tasks: Vec::new(),
+            corrections: Vec::new(),
             artifacts: Vec::new(),
             restart_boundaries: Vec::new(),
             facts: Value::Object(Default::default()),
@@ -415,10 +412,10 @@ pub(crate) struct ArtifactEvidence {
 #[serde(deny_unknown_fields)]
 pub(crate) struct RestartEvidence {
     pub(crate) boundary: String,
-    pub(crate) sequence_before: u64,
-    pub(crate) sequence_after: u64,
+    pub(crate) generation_before: u64,
+    pub(crate) generation_after: u64,
     pub(crate) recovered_state: String,
-    pub(crate) duplicate_attempts: bool,
+    pub(crate) duplicate_tasks: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -530,12 +527,12 @@ mod tests {
             "repository_final_tree":"b".repeat(40),
             "dirty_diff_digest":format!("b3_{}", blake3::hash(b"test diff")),
             "dirty_diff_bytes":9,
-            "distinct_process_invocations":5,
-            "process_invocations":roles.map(|role| serde_json::json!({
-                "role":role,"invocation_id":format!("invocation-{role}"),
-                "terminal":"succeeded","uncertain":false,
+            "distinct_process_tasks":5,
+            "process_tasks":roles.map(|role| serde_json::json!({
+                "role":role,"task_id":format!("invocation-{role}"),
+                "terminal":if role == "controlled_verification" {"failed"} else {"completed"},"uncertain":false,
             })),
-            "terminal_sequence":100,
+            "terminal_generation":100,
         });
         process
     }
@@ -552,9 +549,9 @@ mod tests {
             "profile_revision":1,"provider_protocol":"open_ai_compatible","model_alias":"model"
         });
         model.facts = serde_json::json!({
-            "context_manifest_digest":format!("b3_{}", "b".repeat(64)),
-            "streaming_observations":1,"terminal":"succeeded","uncertain":false,
-            "invocation_id":"model-invocation","usage":{"input_units":10,"output_units":3},
+            "selected_inputs_digest":format!("b3_{}", "b".repeat(64)),
+            "streaming":false,"selected_count":2,"unselected_count":1,"model_output_units":4096,"terminal":"completed","uncertain":false,
+            "task_id":"model-invocation","usage":{"input_units":10,"output_units":3},
             "finish_reason":"stop"
         });
         model
@@ -632,10 +629,9 @@ mod tests {
             scenario.outcome = "succeeded".to_owned();
             scenario.failure_reason = None;
             scenario.commands.push("test-command".to_owned());
-            scenario.runs.push("test-run".to_owned());
-            scenario.revisions.push("test-revision".to_owned());
-            scenario.attempts.push("test-attempt".to_owned());
-            scenario.proposals.push("test-proposal".to_owned());
+            scenario.workflows.push("test-run".to_owned());
+            scenario.tasks.push("test-attempt".to_owned());
+            scenario.corrections.push("test-proposal".to_owned());
             scenario.artifacts.push(ArtifactEvidence {
                 artifact_id: "test-artifact".to_owned(),
                 digest: "d".repeat(64),
@@ -645,10 +641,10 @@ mod tests {
             });
             scenario.restart_boundaries.push(RestartEvidence {
                 boundary: "test-settled-boundary".to_owned(),
-                sequence_before: 10,
-                sequence_after: 10,
+                generation_before: 10,
+                generation_after: 10,
                 recovered_state: "test-settled-state".to_owned(),
-                duplicate_attempts: false,
+                duplicate_tasks: false,
             });
         }
         let mut report = report(process, model);

@@ -148,18 +148,7 @@ impl RedbStore {
             authority: request.authority.clone(),
         };
         crate::managed::enter_serving_resources(&write, &record)?;
-        if let Some(plan) = request.published_invocation {
-            crate::published::validate_plan(&write, plan)?;
-            // put_execution validates the complete serving association before commit. A
-            // mismatch rolls back these resource/index changes in the same transaction.
-            remove_claim_index(&write, &record.execution, &claim)?;
-            crate::managed::link_published(&write, plan)?;
-            crate::managed::pending_publication(&write, plan)?;
-            record.published_invocation = Some(plan.clone());
-            record.phase = PeerExecutionPhase::AwaitingWorkflow { evidence };
-        } else {
-            record.phase = PeerExecutionPhase::Entered { claim, evidence };
-        }
+        record.phase = PeerExecutionPhase::Entered { claim, evidence };
         bump_record(&mut record)?;
         global.dispatch_queued = global
             .dispatch_queued

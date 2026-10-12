@@ -14,10 +14,6 @@ use std::{
     time::Duration,
 };
 
-use milkdrift_blueprint::{
-    AuthorRef, BlueprintRevision, Mutation, MutationBatch, Node, NodeId, NodeKind,
-    TaskContextPolicy, TerminalOutcome, WorkflowId,
-};
 use milkdrift_capability::{
     AdmissionBound, ArtifactReference, BoundedJson, CancellationBehavior, CancellationRequest,
     CapabilityId, IdempotencyBehavior, InputReference, InvocationEvent, InvocationEventKind,
@@ -25,36 +21,24 @@ use milkdrift_capability::{
     ResolvedCapabilitySnapshot, SideEffectClass, TerminalStatus,
 };
 use milkdrift_capability_host::{
-    AdapterExecutionContext, AdapterInvocation, CapabilityAdapter, InMemorySecretResolver,
-    InvocationDataAccess, InvocationDataError, MaterializationLimits, MaterializedExecution,
-    SecretResolver,
+    AdapterExecutionContext, AdapterInvocation, CapabilityAdapter, DirectInputSelection,
+    InMemorySecretResolver, InvocationDataAccess, InvocationDataError, MaterializationLimits,
+    MaterializedExecution, SecretResolver,
     conformance::{
         AdapterConformanceCase, AdapterConformanceExpectations, ConformanceScenario,
         StartReplayExpectation, UnknownCancellationExpectation, run_adapter_conformance,
     },
 };
 use milkdrift_model::{
-    AuthorityFact, ContentPart, ContextManifest, ContextManifestDocument, ContextProducerFact,
-    ContextSemanticKind, ContextSource, ContextTotals, MODEL_TASK_INPUT_NAME, Message, MessageRole,
-    ModelTaskRequest, ModelTaskRequestDocument, SessionSelection, StructuredOutput, ToolDefinition,
+    ContentPart, MODEL_TASK_INPUT_NAME, Message, MessageRole, ModelTaskRequest,
+    ModelTaskRequestDocument, SessionSelection, StructuredOutput, ToolDefinition,
 };
 use milkdrift_model_provider::{
     AuthMode, EndpointLimits, EndpointProfile, ModelEndpointAdapter, ModelFeature,
     ProviderProtocol, ProxyPolicy, RedirectPolicy, TlsPolicy, descriptor_for_profile,
 };
-use milkdrift_persistence::{ArtifactStore, AttemptId, NodeExecutionId};
-use milkdrift_redb_store::RedbStore;
-use milkdrift_runtime::{
-    CausalContextBuilder, ContextBuildIdentity, ContextBuildRequest, ContextCandidate,
-    ContextCandidateAvailability, persist_context_manifest,
-};
-use milkdrift_workspace::{
-    ArtifactId, ArtifactSensitivity, ContentDigest, RunId, WorkspaceBudget, WorkspaceUsage,
-};
 use serde_json::{Value, json};
 
-#[path = "mock_endpoints/continuation.rs"]
-mod continuation;
 #[path = "mock_endpoints/direct.rs"]
 mod direct;
 #[path = "mock_endpoints/effect_stages.rs"]
@@ -269,85 +253,30 @@ fn serve_drop_after_request() -> TestResult<(String, thread::JoinHandle<std::io:
     Ok((address, handle))
 }
 
-fn revision() -> TestResult<BlueprintRevision> {
-    Ok(BlueprintRevision::genesis(
-        WorkflowId::new("model-mock")?,
-        MutationBatch::new(vec![Mutation::AddNode {
-            node: Node::new(
-                NodeId::new("model")?,
-                NodeKind::Terminal {
-                    outcome: TerminalOutcome::Success,
-                },
-            )?,
-        }])?,
-        AuthorRef::new("human:test")?,
-        "mock endpoint",
-    )?)
-}
-
-fn manifest(
-    data: &MockData,
-    revision: &BlueprintRevision,
-) -> TestResult<(ArtifactReference, AdapterExecutionContext)> {
-    let run = RunId::new("run-model-mock")?;
-    let execution = NodeExecutionId::new("execution-model")?;
-    let attempt = AttemptId::new("attempt-model")?;
-    let policy = TaskContextPolicy::default();
-    let manifest = ContextManifest::new(
-        run.clone(),
-        revision.id().clone(),
-        NodeId::new("model")?,
-        execution.clone(),
-        attempt.clone(),
-        1,
-        policy.digest()?,
-        Vec::new(),
-        Vec::new(),
-        ContextTotals::default(),
-        policy.budget(),
-    )?;
-    let bytes = ContextManifestDocument::new(manifest).to_canonical_json()?;
-    let reference = data.install(
-        "context-manifest",
-        "application/vnd.milkdrift.context-manifest.v2+json",
-        bytes,
-    )?;
-    Ok((
-        reference,
-        AdapterExecutionContext::new(
-            run,
-            revision.id().clone(),
-            NodeId::new("model")?,
-            execution,
-            attempt,
-        ),
-    ))
-}
-
 fn request(
     capability: &CapabilityId,
     profile: &EndpointProfile,
-    manifest: ArtifactReference,
     task: ModelTaskRequest,
     context_inputs: Vec<InputReference>,
 ) -> TestResult<InvocationRequest> {
     let task_value: Value =
         serde_json::from_slice(&ModelTaskRequestDocument::new(task).to_canonical_json()?)?;
+    let mut inputs = vec![InputReference::new(
+        MODEL_TASK_INPUT_NAME,
+        InvocationValueReference::Inline {
+            value: BoundedJson::new(task_value)?,
+        },
+    )?];
+    inputs.extend(context_inputs);
     Ok(InvocationRequest::new(
         InvocationId::new("invocation-model")?,
         capability.clone(),
         OperationId::new("model.generate")?,
         Some(profile.identity().clone()),
         None,
-        vec![InputReference::new(
-            MODEL_TASK_INPUT_NAME,
-            InvocationValueReference::Inline {
-                value: BoundedJson::new(task_value)?,
-            },
-        )?],
+        inputs,
         BTreeMap::new(),
-    )?
-    .with_context_materialization(manifest, context_inputs)?)
+    )?)
 }
 
 fn serve(
@@ -452,9 +381,7 @@ fn execute(
     data: Arc<MockData>,
     secrets: Arc<dyn SecretResolver>,
 ) -> TestResult<Vec<InvocationEvent>> {
-    let revision = revision()?;
-    let (manifest, context) = manifest(&data, &revision)?;
-    execute_bound(profile, task, data, secrets, manifest, context, Vec::new())
+    execute_bound(profile, task, data, secrets, Vec::new())
 }
 
 fn execute_bound(
@@ -462,8 +389,6 @@ fn execute_bound(
     task: ModelTaskRequest,
     data: Arc<MockData>,
     secrets: Arc<dyn SecretResolver>,
-    manifest: ArtifactReference,
-    context: AdapterExecutionContext,
     context_inputs: Vec<InputReference>,
 ) -> TestResult<Vec<InvocationEvent>> {
     let capability = CapabilityId::new("model-mock")?;
@@ -472,7 +397,8 @@ fn execute_bound(
         &descriptor,
         &OperationId::new("model.generate")?,
     )?;
-    let request = request(&capability, &profile, manifest, task, context_inputs)?;
+    let request = request(&capability, &profile, task, context_inputs)?;
+    let context = AdapterExecutionContext::direct(DirectInputSelection::new(&request, 1_048_576)?);
     let expected_artifact_bytes = serde_json::to_value(&profile)?
         .pointer("/limits/max_response_bytes")
         .and_then(Value::as_u64)
@@ -545,11 +471,10 @@ fn model_conformance_case(scenario: ConformanceScenario) -> TestResult<AdapterCo
         BTreeMap::new(),
     )?;
     let data = Arc::new(MockData::default());
-    let revision = revision()?;
-    let (manifest, context) = manifest(data.as_ref(), &revision)?;
     let capability = CapabilityId::new("model-conformance")?;
     let descriptor = descriptor_for_profile(capability.clone(), &profile)?;
-    let request = request(&capability, &profile, manifest, task, Vec::new())?;
+    let request = request(&capability, &profile, task, Vec::new())?;
+    let context = AdapterExecutionContext::direct(DirectInputSelection::new(&request, 1_048_576)?);
     let adapter = Arc::new(ModelEndpointAdapter::new(
         capability,
         profile,

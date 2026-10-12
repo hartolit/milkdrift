@@ -72,7 +72,6 @@ impl PeerService {
                     .inputs()
                     .iter()
                     .filter_map(|input| input.value().artifact())
-                    .chain(request.request.context_manifest())
                 {
                     let metadata = self.artifacts.metadata(reference)?;
                     let mut resources = RequestedResourceFacts::empty();

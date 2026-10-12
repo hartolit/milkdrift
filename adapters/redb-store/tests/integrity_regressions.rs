@@ -1,16 +1,10 @@
 //! Focused physical-deletion and lowered-accounting regressions.
 
-use milkdrift_authority::ActorRef;
-use milkdrift_blueprint::{BlueprintRevisionDocument, RevisionId, WorkflowId};
-use milkdrift_capability::{BoundedJson, InvocationId};
+use milkdrift_capability::InvocationId;
 use milkdrift_persistence::{
-    ArtifactPublicationId, ArtifactStore, AtomicRunCommitRequest, BeginArtifactPublication,
-    CommandDisposition, CommandId, CommandReceipt, CommandResultDocument, EventId, IndexedRunState,
-    IntegrityScanFamily, IntegrityScanRequest, OrphanCleanupRequest, PageSize, PersistenceError,
-    RevisionStore, RunEventEnvelope, RunEventKind, RunIndexUpdate, RunJournal, RunSequence,
-    RunSummaryIndex, SnapshotDocument, SnapshotId, SnapshotLoad, SnapshotStore, StorageAdmin,
-    StorageFailureClass, StorageHealthStatus, TimestampMillis, WorkspaceAccounting, WorkspaceStore,
-    history_digest,
+    ArtifactPublicationId, ArtifactStore, BeginArtifactPublication, IntegrityScanFamily,
+    IntegrityScanRequest, OrphanCleanupRequest, PageSize, PersistenceError, StorageAdmin,
+    StorageFailureClass, StorageHealthStatus, TimestampMillis,
 };
 use milkdrift_redb_store::{RedbStore, RedbStoreConfig};
 use milkdrift_workspace::{
@@ -26,10 +20,6 @@ const ARTIFACT_METADATA: TableDefinition<'static, &'static str, &'static [u8]> =
     TableDefinition::new("milkdrift.v1.artifacts.metadata_by_id");
 const ARTIFACTS_BY_DIGEST: TableDefinition<'static, &'static [u8], &'static [u8]> =
     TableDefinition::new("milkdrift.v1.artifacts.by_digest_and_id");
-const ARTIFACT_REFERENCES: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.artifacts.references");
-const RUN_ARTIFACT_OWNERSHIP: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.artifacts.ownership_by_run");
 const ARTIFACT_TEMP_OWNERS: TableDefinition<'static, &'static str, &'static str> =
     TableDefinition::new("milkdrift.v1.artifacts.temp_owners");
 const ARTIFACT_PUBLICATIONS: TableDefinition<'static, &'static str, &'static [u8]> =
@@ -48,23 +38,6 @@ const ARTIFACT_ACCOUNTING: TableDefinition<'static, &'static str, &'static [u8]>
     TableDefinition::new("milkdrift.v1.artifacts.accounting");
 const WORKSPACE_USAGE: TableDefinition<'static, &'static str, &'static [u8]> =
     TableDefinition::new("milkdrift.v1.workspace.usage");
-const REVISIONS: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.revisions.by_id");
-const REVISIONS_BY_DIGEST: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.revisions.by_digest_and_id");
-const RUN_HEADS: TableDefinition<'static, &'static str, u64> =
-    TableDefinition::new("milkdrift.v1.runs.heads");
-const RUN_EVENTS: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.runs.events");
-const COMMAND_RESULTS: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.commands.results");
-const EVENT_HISTORY_DIGESTS: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.runs.event_history_digests");
-const RUN_HISTORY_HEADS: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v2.runs.history_heads");
-const SNAPSHOT_LATEST: TableDefinition<'static, &'static str, &'static str> =
-    TableDefinition::new("milkdrift.v1.snapshots.latest_by_run");
-
 fn assert_corruption<T: std::fmt::Debug>(result: Result<T, PersistenceError>) {
     assert!(
         matches!(
@@ -97,10 +70,6 @@ fn exhaustive_integrity_failure_count(store: &RedbStore) -> Result<usize, Persis
         location: "integrity_regression.exhaustive_scan",
         reason: "integrity scan did not exhaust within 10,000 bounded pages".to_owned(),
     })
-}
-
-fn revision_id() -> Result<RevisionId, PersistenceError> {
-    serde_json::from_value(json!(format!("rev_{}", "0".repeat(64)))).map_err(PersistenceError::Json)
 }
 
 fn artifact_metadata(
@@ -413,274 +382,6 @@ fn artifact_commit_rejects_missing_authoritative_provenance_targets()
     Ok(())
 }
 
-fn double_charge_request(
-    publication: &BeginArtifactPublication,
-) -> Result<AtomicRunCommitRequest, Box<dyn std::error::Error>> {
-    let command = CommandId::new("command-double-charge")?;
-    let receipt = CommandReceipt::new(
-        command.clone(),
-        publication
-            .owner()
-            .run()
-            .ok_or("fixture requires a workflow publication")?
-            .clone(),
-        ActorRef::new("actor-integrity")?,
-        RunSequence::ZERO,
-        TimestampMillis::new(20),
-        br#"{"schema_version":1,"type":"double_charge"}"#.to_vec(),
-    )?;
-    let event = RunEventEnvelope::new(
-        EventId::new("event-double-charge")?,
-        publication
-            .owner()
-            .run()
-            .ok_or("fixture requires a workflow publication")?
-            .clone(),
-        RunSequence::FIRST,
-        TimestampMillis::new(20),
-        RunEventKind::ArtifactPublished {
-            metadata: publication.metadata().clone(),
-        },
-    )?;
-    let result = CommandResultDocument::new(
-        command,
-        publication
-            .owner()
-            .run()
-            .ok_or("fixture requires a workflow publication")?
-            .clone(),
-        receipt.fingerprint().clone(),
-        CommandDisposition::Accepted,
-        RunSequence::FIRST,
-        vec![event.event_id().clone()],
-        BoundedJson::new(json!({"accepted": true}))?,
-    )?;
-    let resulting_usage = publication
-        .budget()
-        .admit_artifact(&publication.resulting_usage(), publication.metadata())?;
-    Ok(AtomicRunCommitRequest::new(
-        receipt,
-        vec![event],
-        Vec::new(),
-        Some(WorkspaceAccounting {
-            budget: publication.budget().clone(),
-            expected_usage: publication.resulting_usage(),
-            resulting_usage,
-        }),
-        vec![publication.metadata().reference().clone()],
-        vec![publication.metadata().reference().clone()],
-        None,
-        result,
-        RunIndexUpdate::new(
-            Some(RunSummaryIndex {
-                run: publication
-                    .owner()
-                    .run()
-                    .ok_or("fixture requires a workflow publication")?
-                    .clone(),
-                workflow: WorkflowId::new("workflow-integrity")?,
-                revision: revision_id()?,
-                state: IndexedRunState::Active,
-                through_sequence: RunSequence::FIRST,
-                updated_at: TimestampMillis::new(20),
-            }),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        ),
-    )?)
-}
-
-fn start_request(run: &str) -> Result<AtomicRunCommitRequest, Box<dyn std::error::Error>> {
-    let run = RunId::new(run)?;
-    let command = CommandId::new(format!("command-{run}"))?;
-    let receipt = CommandReceipt::new(
-        command.clone(),
-        run.clone(),
-        ActorRef::new("actor-integrity")?,
-        RunSequence::ZERO,
-        TimestampMillis::new(10),
-        br#"{"schema_version":1,"type":"start"}"#.to_vec(),
-    )?;
-    let event = RunEventEnvelope::new(
-        EventId::new(format!("event-{run}"))?,
-        run.clone(),
-        RunSequence::FIRST,
-        TimestampMillis::new(10),
-        RunEventKind::RunStarted,
-    )?;
-    let result = CommandResultDocument::new(
-        command,
-        run.clone(),
-        receipt.fingerprint().clone(),
-        CommandDisposition::Accepted,
-        RunSequence::FIRST,
-        vec![event.event_id().clone()],
-        BoundedJson::new(json!({"accepted": true}))?,
-    )?;
-    Ok(AtomicRunCommitRequest::new(
-        receipt,
-        vec![event],
-        Vec::new(),
-        Some(WorkspaceAccounting {
-            budget: WorkspaceBudget::new(0, 0, 0, 0, 0, 0)?,
-            expected_usage: WorkspaceUsage::EMPTY,
-            resulting_usage: WorkspaceUsage::EMPTY,
-        }),
-        Vec::new(),
-        Vec::new(),
-        None,
-        result,
-        RunIndexUpdate::new(
-            Some(RunSummaryIndex {
-                run,
-                workflow: WorkflowId::new("workflow-integrity")?,
-                revision: revision_id()?,
-                state: IndexedRunState::Active,
-                through_sequence: RunSequence::FIRST,
-                updated_at: TimestampMillis::new(10),
-            }),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        ),
-    )?)
-}
-
-fn continuation_request(
-    run: &RunId,
-    sequence: u64,
-) -> Result<AtomicRunCommitRequest, Box<dyn std::error::Error>> {
-    let expected = RunSequence::new(sequence.checked_sub(1).ok_or("sequence underflow")?);
-    let resulting = RunSequence::new(sequence);
-    let command = CommandId::new(format!("command-continuity-{sequence}"))?;
-    let receipt = CommandReceipt::new(
-        command.clone(),
-        run.clone(),
-        ActorRef::new("actor-integrity")?,
-        expected,
-        TimestampMillis::new(10 + sequence),
-        format!(r#"{{"schema_version":1,"type":"continuity-{sequence}"}}"#).into_bytes(),
-    )?;
-    let event = RunEventEnvelope::new(
-        EventId::new(format!("event-continuity-{sequence}"))?,
-        run.clone(),
-        resulting,
-        TimestampMillis::new(10 + sequence),
-        RunEventKind::RunStarted,
-    )?;
-    let result = CommandResultDocument::new(
-        command,
-        run.clone(),
-        receipt.fingerprint().clone(),
-        CommandDisposition::Accepted,
-        resulting,
-        vec![event.event_id().clone()],
-        BoundedJson::new(json!({"accepted": true}))?,
-    )?;
-    Ok(AtomicRunCommitRequest::new(
-        receipt,
-        vec![event],
-        Vec::new(),
-        Some(WorkspaceAccounting {
-            budget: WorkspaceBudget::new(0, 0, 0, 0, 0, 0)?,
-            expected_usage: WorkspaceUsage::EMPTY,
-            resulting_usage: WorkspaceUsage::EMPTY,
-        }),
-        Vec::new(),
-        Vec::new(),
-        None,
-        result,
-        RunIndexUpdate::new(
-            Some(RunSummaryIndex {
-                run: run.clone(),
-                workflow: WorkflowId::new("workflow-integrity")?,
-                revision: revision_id()?,
-                state: IndexedRunState::Active,
-                through_sequence: resulting,
-                updated_at: TimestampMillis::new(10 + sequence),
-            }),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        ),
-    )?)
-}
-
-fn pair_key(first: &str, second: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let mut key = Vec::new();
-    for component in [first, second] {
-        key.extend_from_slice(&u32::try_from(component.len())?.to_be_bytes());
-        key.extend_from_slice(component.as_bytes());
-    }
-    Ok(key)
-}
-
-fn event_key(run: &RunId, sequence: RunSequence) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let mut key = Vec::new();
-    key.extend_from_slice(&u32::try_from(run.as_str().len())?.to_be_bytes());
-    key.extend_from_slice(run.as_str().as_bytes());
-    key.extend_from_slice(&sequence.get().to_be_bytes());
-    Ok(key)
-}
-
-#[test]
-fn paired_artifact_reference_loss_cannot_reopen_double_charging()
--> Result<(), Box<dyn std::error::Error>> {
-    let directory = TempDir::new()?;
-    let budget = WorkspaceBudget::new(0, 0, 0, 10, 1_024, 1_024)?;
-    let request = publication_request(
-        "artifact-owned",
-        "publication-owned",
-        "run-owned",
-        b"owned",
-        budget,
-        WorkspaceUsage::EMPTY,
-    )?;
-    {
-        let store = RedbStore::open(directory.path())?;
-        publish(&store, &request, b"owned")?;
-    }
-    let database = Database::open(directory.path().join("milkdrift.redb"))?;
-    let write = database.begin_write()?;
-    {
-        let mut references = write.open_table(ARTIFACT_REFERENCES)?;
-        let keys = references
-            .iter()?
-            .map(|item| item.map(|(key, _)| key.value().to_vec()))
-            .collect::<Result<Vec<_>, _>>()?;
-        for key in keys {
-            assert!(references.remove(key.as_slice())?.is_some());
-        }
-    }
-    {
-        let mut ownership = write.open_table(RUN_ARTIFACT_OWNERSHIP)?;
-        let keys = ownership
-            .iter()?
-            .map(|item| item.map(|(key, _)| key.value().to_vec()))
-            .collect::<Result<Vec<_>, _>>()?;
-        for key in keys {
-            assert!(ownership.remove(key.as_slice())?.is_some());
-        }
-    }
-    write.commit()?;
-    drop(database);
-
-    let store = RedbStore::open(directory.path())?;
-    assert_corruption(
-        store.is_referenced_by_run(
-            request
-                .owner()
-                .run()
-                .ok_or("fixture requires a workflow publication")?,
-            request.metadata().reference(),
-        ),
-    );
-    assert_corruption(store.commit_command(&double_charge_request(&request)?));
-    assert!(exhaustive_integrity_failure_count(&store)? > 0);
-    Ok(())
-}
-
 #[test]
 fn artifact_only_usage_requires_a_complete_workspace_domain()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -719,14 +420,13 @@ fn artifact_only_usage_requires_a_complete_workspace_domain()
     drop(database);
 
     let store = RedbStore::open(directory.path())?;
-    assert_corruption(
-        store.workspace_usage(
-            first
-                .owner()
-                .run()
-                .ok_or("fixture requires a workflow publication")?,
-        ),
-    );
+    assert_corruption(usage(
+        &store,
+        first
+            .owner()
+            .run()
+            .ok_or("fixture requires a workflow publication")?,
+    ));
     assert_eq!(
         store.health(TimestampMillis::new(20))?.status,
         StorageHealthStatus::Degraded
@@ -748,7 +448,7 @@ fn artifact_only_usage_requires_a_complete_workspace_domain()
 }
 
 #[test]
-fn artifact_and_revision_primary_digest_pairs_fail_closed_after_deletion()
+fn artifact_primary_digest_pairs_fail_closed_after_deletion()
 -> Result<(), Box<dyn std::error::Error>> {
     for delete_primary in [true, false] {
         let directory = TempDir::new()?;
@@ -796,41 +496,6 @@ fn artifact_and_revision_primary_digest_pairs_fail_closed_after_deletion()
         );
     }
 
-    for delete_primary in [true, false] {
-        let directory = TempDir::new()?;
-        let fixture = include_bytes!("../../../crates/blueprint/tests/fixtures/revision-v3.json");
-        let (_, revision) = BlueprintRevisionDocument::from_json(fixture)?;
-        {
-            let store = RedbStore::open(directory.path())?;
-            store.put_revision(&revision)?;
-        }
-        let database = Database::open(directory.path().join("milkdrift.redb"))?;
-        let write = database.begin_write()?;
-        if delete_primary {
-            let mut revisions = write.open_table(REVISIONS)?;
-            assert!(revisions.remove(revision.id().as_str())?.is_some());
-        } else {
-            let mut by_digest = write.open_table(REVISIONS_BY_DIGEST)?;
-            let key = by_digest
-                .iter()?
-                .next()
-                .transpose()?
-                .ok_or("revision digest index is empty")?
-                .0
-                .value()
-                .to_vec();
-            assert!(by_digest.remove(key.as_slice())?.is_some());
-        }
-        write.commit()?;
-        drop(database);
-        let store = RedbStore::open(directory.path())?;
-        assert_corruption(store.revision(revision.id()));
-        assert!(exhaustive_integrity_failure_count(&store)? > 0);
-        assert_eq!(
-            store.health(TimestampMillis::new(30))?.status,
-            StorageHealthStatus::Degraded
-        );
-    }
     Ok(())
 }
 
@@ -1019,5 +684,6 @@ fn aggregate_artifact_counter_deletion_lowering_and_real_limit_are_fail_closed()
     Ok(())
 }
 
-#[path = "integrity_regressions/journal.rs"]
-mod journal;
+fn usage(store: &RedbStore, run: &RunId) -> Result<WorkspaceUsage, PersistenceError> {
+    store.artifact_usage(&milkdrift_workspace::ArtifactOwner::from(run))
+}

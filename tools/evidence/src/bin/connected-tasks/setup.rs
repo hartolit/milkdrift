@@ -27,7 +27,12 @@ pub(super) fn fresh_root(path: &Path) -> EvidenceResult<PathBuf> {
     Ok(path.canonicalize()?)
 }
 
-pub(super) fn configure(root: &Path, executable: &Path, name: &str) -> EvidenceResult<Configured> {
+pub(super) fn configure(
+    root: &Path,
+    executable: &Path,
+    name: &str,
+    model: &super::model::Model,
+) -> EvidenceResult<Configured> {
     let directory = root.join(format!("daemon-{name}"));
     fs::create_dir(&directory)?;
     private_directory(&directory)?;
@@ -95,7 +100,27 @@ pub(super) fn configure(root: &Path, executable: &Path, name: &str) -> EvidenceR
     set(
         &mut configuration,
         "/actors/0/authority/resources/capability/identities",
-        json!({"type":"only","values":["cargo-report"]}),
+        json!({"type":"only","values":["cargo-report","controlled-model"]}),
+    )?;
+    set(
+        &mut configuration,
+        "/actors/0/authority/resources/capability/maximum_side_effect",
+        json!("unknown"),
+    )?;
+    set(
+        &mut configuration,
+        "/actors/0/authority/resources/capability/operations",
+        json!({"type":"only","values":["process.execute","model.generate"]}),
+    )?;
+    set(
+        &mut configuration,
+        "/actors/0/authority/resources/capability/trust_zones",
+        json!({"type":"only","values":["local-process","operator-configured-local-model"]}),
+    )?;
+    set(
+        &mut configuration,
+        "/actors/0/authority/resources/network",
+        json!({"profiles":["controlled-model-profile"],"destinations":[model.server.address().to_string()]}),
     )?;
     set(
         &mut configuration,
@@ -123,7 +148,7 @@ pub(super) fn configure(root: &Path, executable: &Path, name: &str) -> EvidenceR
     set(
         &mut configuration,
         "/adapters",
-        json!({"process_profiles":[profile],"model_profiles":[]}),
+        json!({"process_profiles":[profile],"model_profiles":[{"capability_id":"controlled-model","profile":model.profile(&directory)?}]}),
     )?;
     let validated: milkdrift_daemon::DaemonConfig = serde_json::from_value(configuration)?;
     validated.clone().validate(&directory)?;
@@ -192,14 +217,17 @@ mod tests {
     #[test]
     fn generated_browser_config_compiles_complete_serving_defaults() -> EvidenceResult {
         let root = tempfile::tempdir()?;
+        let mut model = super::super::model::Model::start(root.path())?;
         let configured = configure(
             root.path(),
             &std::env::current_exe()?.canonicalize()?,
             "fixture",
+            &model,
         )?;
         let plan = milkdrift_daemon::DaemonConfig::load(&configured.config)?;
         assert!(plan.bind().ip().is_loopback());
         assert!(!configured.token.is_empty());
+        model.finish()?;
         Ok(())
     }
 }

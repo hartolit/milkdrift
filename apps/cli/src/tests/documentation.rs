@@ -142,7 +142,7 @@ fn maintained_cli_command_examples_parse_and_bound_waits() -> TestResult {
 
 #[test]
 fn documentation_parser_preserves_quoted_values_and_detects_obsolete_flags() -> TestResult {
-    let docs = "```sh\nmilkdrift --reason 'two words' \\\n run show RUN_ID | consumer\nmilkdrift run show RUN_ID --obsolete-option\n```\n";
+    let docs = "```sh\nmilkdrift --reason 'two words' \\\n workflow show WORKFLOW_ID | consumer\nmilkdrift workflow show WORKFLOW_ID --obsolete-option\n```\n";
     let examples = commands(docs)?;
     let [valid, obsolete] = examples.as_slice() else {
         return Err("expected exactly two command examples".into());

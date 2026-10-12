@@ -22,7 +22,7 @@ separate HTTP servers over one host have separate continuation domains as well.
 Fresh subscriptions receive the latest complete set. Reconnects replay snapshots within the retained
 item/byte window; expired windows or snapshots outside the document bounds require resynchronization.
 Polling observes current state and does not promise to retain every intermediate lifecycle change.
-The [control contract](../reference/control-api.md#cursors-and-sse) owns exact bounds and client use.
+The [control contract](../reference/control-api.md#reads-pages-and-streams) owns exact bounds and client use.
 
 The closed observation vocabulary replaces `capability` with `capability_snapshot`; older protocol
 minors and the old variant are refused. Milkdrift is unreleased and upgrades daemon and clients

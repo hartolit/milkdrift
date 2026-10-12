@@ -1,4 +1,5 @@
 //! Owned actual-daemon browser fixture and an input-dependent trusted Cargo report tool.
+mod model;
 mod report;
 mod setup;
 
@@ -133,11 +134,22 @@ async fn serve(root: &Path, daemon: &Path, lifetime_secs: u64) -> EvidenceResult
         (30..=14_400).contains(&lifetime_secs),
         "fixture lifetime must be 30..=14400 seconds",
     )?;
-    let daemon = daemon.canonicalize()?;
+    let daemon_source = daemon.canonicalize()?;
     let fixture_source = std::env::current_exe()?.canonicalize()?;
     let root = setup::fresh_root(root)?;
     let tool_root = root.join("tools");
     fs::create_dir(&tool_root)?;
+    let daemon = tool_root.join(if cfg!(windows) {
+        "milkdrift-daemon.exe"
+    } else {
+        "milkdrift-daemon"
+    });
+    fs::copy(&daemon_source, &daemon)?;
+    ensure(
+        milkdrift_evidence::application::hash_file(&daemon_source)?
+            == milkdrift_evidence::application::hash_file(&daemon)?,
+        "immutable daemon executable copy differs from the built daemon",
+    )?;
     let fixture = tool_root.join(if cfg!(windows) {
         "cargo-report.exe"
     } else {
@@ -150,9 +162,10 @@ async fn serve(root: &Path, daemon: &Path, lifetime_secs: u64) -> EvidenceResult
         "immutable report executable copy differs from the built tool",
     )?;
     let mut instances = Vec::new();
+    let mut model = model::Model::start(&root)?;
     let mut connections = serde_json::Map::new();
     for name in ["a", "b"] {
-        let configured = setup::configure(&root, &fixture, name)?;
+        let configured = setup::configure(&root, &fixture, name, &model)?;
         let log = root.join(format!("daemon-{name}.log"));
         write_private(&log, b"")?;
         let child = start(&daemon, &configured.config, &log)?;
@@ -171,6 +184,11 @@ async fn serve(root: &Path, daemon: &Path, lifetime_secs: u64) -> EvidenceResult
         .join("../..")
         .canonicalize()?;
     connections.insert("capability".into(), json!("cargo-report"));
+    connections.insert("model_capability".into(), json!("controlled-model"));
+    connections.insert(
+        "model_expect".into(),
+        json!(["Controlled analysis", "detected_sections", "input_digest"]),
+    );
     connections.insert("input_a".into(), json!(repository.join("Cargo.toml")));
     connections.insert(
         "input_b".into(),
@@ -198,7 +216,7 @@ async fn serve(root: &Path, daemon: &Path, lifetime_secs: u64) -> EvidenceResult
     write_private(
         &root.join("ready.json"),
         &serde_json::to_vec_pretty(&json!({
-            "daemon_binary":daemon,"fixture_binary":fixture,"fixture_source_binary":fixture_source,"root":root,
+            "daemon_binary":daemon,"daemon_source_binary":daemon_source,"fixture_binary":fixture,"fixture_source_binary":fixture_source,"root":root,
             "daemons":instances.iter().map(|instance|json!({"endpoint":instance.endpoint,"pid":instance.child.id()})).collect::<Vec<_>>(),
             "lifetime_secs":lifetime_secs,"browser_config":root.join("browser.json")
         }))?,
@@ -251,5 +269,6 @@ async fn serve(root: &Path, daemon: &Path, lifetime_secs: u64) -> EvidenceResult
     for instance in &mut instances {
         instance.child.shutdown()?;
     }
+    model.finish()?;
     Ok(())
 }

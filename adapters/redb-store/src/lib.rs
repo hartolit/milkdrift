@@ -7,30 +7,24 @@
 //! [`RedbStoreConfig`] selects storage/read bounds, retention, and the clock used for
 //! fresh observations. Runtime recovery is a separate step after storage opens.
 //!
-//! Journal commands commit their receipt, events, workspace/account changes, and indexes
-//! together. Artifacts publish verified content before metadata acceptance; replay and
-//! cleanup handle interrupted publication. Application receipt archival and peer
-//! tombstones preserve their respective replay contracts. Use the persistence admin port
-//! for explicit historical verification beyond the ordinary bounded health sample.
+//! Task generations commit snapshots, exact receipts, resource holds and capacity together.
+//! Artifacts publish verified content before metadata acceptance; replay and cleanup recover
+//! interrupted publication. Peer tombstones preserve durable remote acceptance and outcomes.
+//! Use the persistence admin port for historical verification beyond bounded health samples.
 
 mod admin;
-mod application;
 mod artifact;
 mod clock;
 mod codec;
-mod controller_account;
 mod error;
 mod fault;
-mod journal;
 mod json;
 mod managed;
 mod native_paths;
 pub mod offline;
 mod peer;
-mod published;
-mod revision;
 mod schema;
-mod snapshot;
+mod security;
 mod store;
 mod task;
 

@@ -1,26 +1,22 @@
-use crate::{AttemptId, NodeExecutionId, RunSequence};
 use milkdrift_capability::InvocationId;
 use milkdrift_capability::managed::{ManagedBinding, ManagedBlocker, ManagedName};
 use milkdrift_peer_protocol::PeerExecutionId;
-use milkdrift_workspace::RunId;
 use serde::{Deserialize, Serialize};
 
 /// The existing owner of an accepted operation. This link is not another execution ledger.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ManagedExecution {
-    /// One runtime-owned local attempt.
-    Local {
-        /// Owning run.
-        run: RunId,
-        /// Logical execution.
-        execution: NodeExecutionId,
-        /// Exact attempt.
-        attempt: AttemptId,
-        /// Invocation identity used by the adapter.
+    /// One task runtime's immutable accepted start.
+    Task {
+        /// Owning workflow.
+        workflow: milkdrift_blueprint::WorkflowId,
+        /// Exact task identity.
+        task: milkdrift_blueprint::TaskId,
+        /// Adapter invocation identity.
         invocation: InvocationId,
-        /// Journal acceptance boundary.
-        accepted_at: RunSequence,
+        /// First frozen-start acceptance generation.
+        accepted_generation: u64,
     },
     /// One durable direct or delegated serving acceptance.
     Serving {
@@ -36,7 +32,7 @@ impl ManagedExecution {
     #[must_use]
     pub const fn invocation(&self) -> &InvocationId {
         match self {
-            Self::Local { invocation, .. } | Self::Serving { invocation, .. } => invocation,
+            Self::Task { invocation, .. } | Self::Serving { invocation, .. } => invocation,
         }
     }
     /// Stable use key derived from the accepted invocation, without PID or lease reuse.
@@ -96,12 +92,6 @@ pub enum QuiescenceEvidence {
         observation_digest: String,
         /// Fencing ended resource use without establishing the prior operation outcome.
         disrupted: bool,
-    },
-    /// The caller transaction selected durable continuation and never entered adapter code.
-    /// Only that transaction can establish this fact; adapter stop reports cannot manufacture it.
-    NoExternalEntry {
-        /// Exact authoritative publication acceptance that owns the waiting resource hold.
-        source: crate::published::PublishedInvocationSource,
     },
 }
 
@@ -199,8 +189,8 @@ impl ManagedUse {
         ManagedBlocker {
             use_id: self.id.clone(),
             execution: match &self.execution {
-                ManagedExecution::Local { run, attempt, .. } => {
-                    format!("run:{run}/attempt:{attempt}")
+                ManagedExecution::Task { workflow, task, .. } => {
+                    format!("workflow:{workflow}/task:{task}")
                 }
                 ManagedExecution::Serving { execution, .. } => format!("serving:{execution}"),
             },

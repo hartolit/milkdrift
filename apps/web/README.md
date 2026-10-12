@@ -7,15 +7,25 @@ identity and scoped bearer credential; it discovers permitted workflows without 
 or a previously known workflow ID.
 
 The task form supplies instructions, a named `brief` input and an optional captured UTF-8 `file`
-input. Select a capability offered by the connected daemon. The form shows the daemon's effective
+input. Captured files are bounded by the connected daemon's advertised limit, currently 16 KiB.
+The daemon also bounds the combined instructions and selected input text before admission.
+Select a capability offered by the connected daemon. The form shows the daemon's effective
 workflow limits before submission. A configured trusted process can inspect a supplied project;
 model capabilities receive the same named context through their maintained adapter.
+Leave **Supply brief now** unchecked to submit work that waits for its required input. The queued
+task inspector can then supply that input; the daemon decides when the task becomes ready.
 
 The timeline orders dependency columns from left to right. Parallel tasks share a column, and
 queued tasks show no invented start time. The list offers the same inspector and actions. Future
 edits carry the observed workflow generation and task version. A requested stop remains separate
 from proof that execution stopped. Results retain content and selected-input digests. Failed,
 forbidden, expired and uncertain responses come from the daemon and remain visible.
+Workflow discovery and task lists display bounded pages with explicit navigation. Selecting a
+task fetches its full inspector separately. Large inputs and results show a labelled preview;
+**Download result** requests the complete retained text from the daemon and displays any refusal.
+If the current grant denies retained content, the inspector labels that restriction while keeping
+the permitted lifecycle visible. Non-UTF-8 output retains its artifact identities and byte digest
+with an explicit notice that it cannot be shown as text.
 
 ## Run locally
 
@@ -39,6 +49,8 @@ identity on subsequent task requests. Credentials stay in memory. Disconnect abo
 observation streams, clears the credential and removes that connection's data. Browser storage
 contains only connection names, origins and installation identities. A second connection has its
 own actor, requests, cursor, search and selected workflow.
+The client retains at most 16 named connections. **Forget** disconnects a connection and removes
+its saved non-secret settings, so another connection can be added without dropping existing names.
 
 If a submission reply is lost, use **Find submission receipt** or **Replay exact submission**.
 The current form retains the exact request while it is open. After a complete browser restart,
@@ -89,6 +101,8 @@ Rust evidence harness. Supply its private configuration file through `MILKDRIFT_
 The configuration names each daemon's URL, identity and credential, the `cargo-report` capability,
 two captured Cargo inputs and expected report terms. Backend launching, process fixtures and fault
 orchestration stay in Rust. The TypeScript tests only operate and inspect the client.
+When the harness supplies `model_capability` and `model_expect`, the suite also exercises the
+controlled external model through the same task form and verifies the retained response.
 
 Install the matching browser once with `npx playwright install chromium`. Browser tests produce
 desktop and phone result screenshots under ignored `test-results/`; traces are disabled because

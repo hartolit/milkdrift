@@ -21,9 +21,13 @@ pub(crate) async fn execute(session: &CliSession, args: &WorkflowArgs) -> Result
                 .workflows(search, cursor.as_deref(), *limit)
                 .await?,
         ),
-        WorkflowCommand::Show { workflow } => {
-            session.output("workflow.show", &session.client().workflow(workflow).await?)
-        }
+        WorkflowCommand::Show { workflow, cursor } => session.output(
+            "workflow.show",
+            &session
+                .client()
+                .workflow_page(workflow, cursor.as_deref())
+                .await?,
+        ),
         WorkflowCommand::Create { file } => {
             let request: CreateWorkflowRequest = serde_json::from_value(
                 session
@@ -70,11 +74,7 @@ pub(crate) async fn execute(session: &CliSession, args: &WorkflowArgs) -> Result
         ),
         WorkflowCommand::Stop { workflow, task } => {
             let snapshot = session.client().workflow(workflow).await?;
-            let selected = snapshot
-                .tasks
-                .iter()
-                .find(|candidate| &candidate.id == task)
-                .ok_or_else(|| CliError::Invalid("task is absent from this workflow".into()))?;
+            let selected = session.client().task(workflow, task).await?;
             session.output(
                 "workflow.stop",
                 &session
@@ -92,7 +92,11 @@ pub(crate) async fn execute(session: &CliSession, args: &WorkflowArgs) -> Result
         }
         WorkflowCommand::Upload { file, request } => {
             let bytes = session
-                .read_bounded(file, 1_048_576, "task text file")
+                .read_bounded(
+                    file,
+                    milkdrift_blueprint::MAX_TASK_TEXT_BYTES,
+                    "task text file",
+                )
                 .await?;
             let text = String::from_utf8(bytes)
                 .map_err(|_| CliError::Invalid("task file must contain UTF-8 text".into()))?;

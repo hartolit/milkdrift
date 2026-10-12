@@ -22,14 +22,12 @@ use milkdrift_capability::{
 use milkdrift_capability::{
     CapabilityCategory, InvocationEventKind, InvocationTerminal, TerminalStatus,
 };
-use milkdrift_persistence::{
-    AttemptId, ControllerReservationId, LeaseId, NodeExecutionId, TimestampMillis,
-};
+use milkdrift_persistence::{AttemptId, LeaseId, NodeExecutionId, TimestampMillis};
 use milkdrift_workspace::RunId;
 use thiserror::Error;
 
 /// Maximum executor reports accepted from one dispatch before backpressure rejects it.
-pub const MAX_REPORTS_PER_DISPATCH: usize = 1_024;
+pub(crate) const MAX_REPORTS_PER_DISPATCH: usize = 1_024;
 
 /// Error at the narrow capability-execution boundary.
 #[derive(Debug, Error)]
@@ -62,6 +60,9 @@ pub enum ExecutorError {
     /// A generation is unhealthy, stale, draining for resolution, or otherwise unavailable.
     #[error("capability unavailable: {0}")]
     Unavailable(String),
+    /// No immediate generation permit was available; this invocation did not enter or acquire one.
+    #[error("capability capacity unavailable before entry: {0}")]
+    CapacityUnavailable(String),
     /// This worker's admission was refused; another worker may own the same invocation.
     #[error("capability generation overloaded: {0}")]
     Overloaded(String),
@@ -184,8 +185,9 @@ pub struct CapabilityResolutionContext {
     basis: ExecutionAuthorityBasis,
     revision: RevisionId,
     node: NodeId,
-    execution: Option<NodeExecutionId>,
-    attempt: Option<AttemptId>,
+    execution: NodeExecutionId,
+    attempt: AttemptId,
+    filesystem: Vec<milkdrift_authority::FilesystemScope>,
 }
 
 impl CapabilityResolutionContext {
@@ -202,33 +204,18 @@ impl CapabilityResolutionContext {
             basis,
             revision,
             node,
-            execution: Some(execution),
-            attempt: Some(attempt),
+            execution,
+            attempt,
+            filesystem: Vec::new(),
         }
     }
 
-    /// A prospective revision check has no scheduled execution or invented attempt identity.
-    pub(crate) fn for_revision(
-        basis: ExecutionAuthorityBasis,
-        revision: RevisionId,
-        node: NodeId,
+    pub(crate) fn with_filesystem(
+        mut self,
+        filesystem: Vec<milkdrift_authority::FilesystemScope>,
     ) -> Self {
-        Self {
-            basis,
-            revision,
-            node,
-            execution: None,
-            attempt: None,
-        }
-    }
-
-    /// Whether resolution checks future revision authority without scheduling an attempt.
-    ///
-    /// Hosts still check the current implementation and grant, but defer transient health and
-    /// permit capacity checks until ordinary scheduling. This probe acquires no permit.
-    #[must_use]
-    pub const fn is_prospective(&self) -> bool {
-        self.execution.is_none()
+        self.filesystem = filesystem;
+        self
     }
 
     /// Frozen run-level authority inherited by this attempt.
@@ -264,6 +251,7 @@ impl CapabilityResolutionContext {
         resources.peer = descriptor.peer().cloned();
         resources.side_effect = contract.side_effect();
         resources.filesystem = requirements.filesystem.clone();
+        resources.filesystem.extend(self.filesystem.iter().cloned());
         resources.network_profiles = requirements.network_profiles.clone();
         resources.network_destinations = requirements.network_destinations.clone();
         resources.secrets = requirements.secrets.clone();
@@ -289,12 +277,8 @@ impl CapabilityResolutionContext {
             self.basis.digest(),
             self.revision,
             self.node,
-            self.execution
-                .as_ref()
-                .map_or_else(|| "revision-check".into(), ToString::to_string),
-            self.attempt
-                .as_ref()
-                .map_or_else(|| "unscheduled".into(), ToString::to_string),
+            self.execution,
+            self.attempt,
             descriptor.identity(),
             boundary,
         );
@@ -310,8 +294,8 @@ impl CapabilityResolutionContext {
             AuthorityExecutionProvenance {
                 revision: Some(self.revision.clone()),
                 node: Some(self.node.clone()),
-                execution: self.execution.as_ref().map(ToString::to_string),
-                attempt: self.attempt.as_ref().map(ToString::to_string),
+                execution: Some(self.execution.to_string()),
+                attempt: Some(self.attempt.to_string()),
                 descriptor_revision: Some(descriptor.descriptor_revision()),
                 peer: descriptor.peer().cloned(),
                 idempotency: Some(contract.idempotency()),
@@ -337,7 +321,6 @@ pub struct ExecutionDispatch {
     task_artifact_budget: Option<milkdrift_workspace::WorkspaceBudget>,
     #[serde(default)]
     native_path_claims: Vec<milkdrift_blueprint::TaskPathAccess>,
-    publication_ancestry: Vec<milkdrift_capability::PublicationAncestor>,
     run: RunId,
     revision: RevisionId,
     node: NodeId,
@@ -379,7 +362,6 @@ impl ExecutionDispatch {
             task_inputs: false,
             task_artifact_budget: None,
             native_path_claims: Vec::new(),
-            publication_ancestry: Vec::new(),
             run,
             revision,
             node,
@@ -437,11 +419,16 @@ impl ExecutionDispatch {
             dispatch.task_inputs = self.task_inputs;
             dispatch.task_artifact_budget = self.task_artifact_budget.clone();
             dispatch.native_path_claims = self.native_path_claims.clone();
-            dispatch.with_publication_ancestry(self.publication_ancestry.clone())
+            dispatch
         })
     }
 
-    pub(crate) fn for_task(
+    /// Attaches an ordinary task's accepted artifact budget and native path declarations.
+    ///
+    /// The trusted runtime composition supplies these facts after admission; this mechanical
+    /// constructor does not grant access, reserve storage, or authorize adapter entry.
+    #[must_use]
+    pub fn for_task(
         mut self,
         budget: milkdrift_workspace::WorkspaceBudget,
         paths: Vec<milkdrift_blueprint::TaskPathAccess>,
@@ -464,23 +451,20 @@ impl ExecutionDispatch {
         self.task_artifact_budget.as_ref()
     }
 
+    /// Per-invocation output ceiling, separate from the workflow owner's aggregate artifact budget.
+    #[must_use]
+    pub const fn task_output_bytes(&self) -> Option<u64> {
+        if self.task_inputs {
+            Some(crate::tasks::TASK_OUTPUT_BYTES)
+        } else {
+            None
+        }
+    }
+
     /// Native filesystem access claims requested by this exact task definition.
     #[must_use]
     pub fn native_path_claims(&self) -> &[milkdrift_blueprint::TaskPathAccess] {
         &self.native_path_claims
-    }
-
-    pub(crate) fn with_publication_ancestry(
-        mut self,
-        ancestry: Vec<milkdrift_capability::PublicationAncestor>,
-    ) -> Self {
-        self.publication_ancestry = ancestry;
-        self
-    }
-    /// Exact enclosing accepted publications, retained when delegating work to another host.
-    #[must_use]
-    pub fn publication_ancestry(&self) -> &[milkdrift_capability::PublicationAncestor] {
-        &self.publication_ancestry
     }
 
     /// Owning run.
@@ -637,13 +621,7 @@ pub trait ExecutionReporter: Send + Sync {
 }
 
 type PreparedEntry<'a> = Box<
-    dyn FnOnce(
-            &ExecutionDispatch,
-            Option<&ControllerReservationId>,
-            &dyn ExecutionReporter,
-        ) -> Result<(), ExecutorError>
-        + Send
-        + 'a,
+    dyn FnOnce(&ExecutionDispatch, &dyn ExecutionReporter) -> Result<(), ExecutorError> + Send + 'a,
 >;
 
 /// One-shot exact-generation entry prepared before the durable final-entry commit.
@@ -656,58 +634,10 @@ type PreparedEntry<'a> = Box<
 pub struct PreparedExecution<'a> {
     dispatch: ExecutionDispatch,
     envelope: InvocationAdmissionEnvelope,
-    action: PreparedExecutionAction<'a>,
-}
-
-enum PreparedExecutionAction<'a> {
-    External(PreparedEntry<'a>),
-    Published {
-        plan: Box<milkdrift_persistence::published::PublishedInvocationPlan>,
-        accept: Box<dyn FnOnce() -> Result<(), ExecutorError> + Send + 'a>,
-    },
+    action: PreparedEntry<'a>,
 }
 
 impl<'a> PreparedExecution<'a> {
-    /// Retain an exact generation until runtime commits the child association. The acceptance
-    /// callback transfers its permit to durable continuation ownership without starting a child.
-    pub fn published(
-        dispatch: &ExecutionDispatch,
-        envelope: InvocationAdmissionEnvelope,
-        plan: milkdrift_persistence::published::PublishedInvocationPlan,
-        accept: impl FnOnce() -> Result<(), ExecutorError> + Send + 'a,
-    ) -> Self {
-        Self {
-            dispatch: dispatch.clone(),
-            envelope,
-            action: PreparedExecutionAction::Published {
-                plan: Box::new(plan),
-                accept: Box::new(accept),
-            },
-        }
-    }
-
-    pub(crate) fn published_plan(
-        &self,
-    ) -> Option<&milkdrift_persistence::published::PublishedInvocationPlan> {
-        match &self.action {
-            PreparedExecutionAction::Published { plan, .. } => Some(plan),
-            PreparedExecutionAction::External(_) => None,
-        }
-    }
-
-    pub(crate) fn accept_published(
-        self,
-        dispatch: &ExecutionDispatch,
-    ) -> Result<(), ExecutorError> {
-        self.require_final_dispatch(dispatch)?;
-        match self.action {
-            PreparedExecutionAction::Published { accept, .. } => accept(),
-            PreparedExecutionAction::External(_) => Err(ExecutorError::InvalidDispatch(
-                "external work has no continuation".to_owned(),
-            )),
-        }
-    }
-
     fn require_final_dispatch(&self, dispatch: &ExecutionDispatch) -> Result<(), ExecutorError> {
         let exact = self
             .dispatch
@@ -728,27 +658,10 @@ impl<'a> PreparedExecution<'a> {
         + Send
         + 'a,
     ) -> Self {
-        Self::new_with_controller_reservation(dispatch, envelope, move |dispatch, _, reporter| {
-            entry(dispatch, reporter)
-        })
-    }
-
-    /// Constructs a prepared handle whose adapter context consumes a committed reservation.
-    pub fn new_with_controller_reservation(
-        dispatch: &ExecutionDispatch,
-        envelope: InvocationAdmissionEnvelope,
-        entry: impl FnOnce(
-            &ExecutionDispatch,
-            Option<&ControllerReservationId>,
-            &dyn ExecutionReporter,
-        ) -> Result<(), ExecutorError>
-        + Send
-        + 'a,
-    ) -> Self {
         Self {
             dispatch: dispatch.clone(),
             envelope,
-            action: PreparedExecutionAction::External(Box::new(entry)),
+            action: Box::new(entry),
         }
     }
 
@@ -761,34 +674,15 @@ impl<'a> PreparedExecution<'a> {
     /// Consumes this handle and enters the exact prepared generation once.
     ///
     /// # Errors
-    /// Rejects a dispatch that differs from the prepared facts or a published continuation;
+    /// Rejects a dispatch that differs from the prepared facts;
     /// propagates external-entry and reporter failures without implying safe replay.
     pub fn enter(
         self,
         dispatch: &ExecutionDispatch,
         reporter: &dyn ExecutionReporter,
     ) -> Result<(), ExecutorError> {
-        self.enter_with_controller_reservation(dispatch, None, reporter)
-    }
-
-    /// Consumes this handle with the exact reservation committed at final entry.
-    ///
-    /// # Errors
-    /// Rejects mismatched final dispatch facts or a durable published continuation; propagates
-    /// entry/reporting failures. A supplied reservation does not replace committed authority.
-    pub fn enter_with_controller_reservation(
-        self,
-        dispatch: &ExecutionDispatch,
-        reservation: Option<&ControllerReservationId>,
-        reporter: &dyn ExecutionReporter,
-    ) -> Result<(), ExecutorError> {
         self.require_final_dispatch(dispatch)?;
-        match self.action {
-            PreparedExecutionAction::External(entry) => entry(dispatch, reservation, reporter),
-            PreparedExecutionAction::Published { .. } => Err(ExecutorError::InvalidDispatch(
-                "published work must retain its durable continuation".to_owned(),
-            )),
-        }
+        (self.action)(dispatch, reporter)
     }
 }
 
@@ -803,50 +697,6 @@ pub trait TaskExecutor: Send + Sync {
     /// # Errors
     /// Returns a failure to release the exact settled attempt's retained resources.
     fn settle(&self, _dispatch: &ExecutionDispatch) -> Result<(), ExecutorError> {
-        Ok(())
-    }
-
-    /// Recheck an incoming published call with its serving owner before internal work enters.
-    /// Runtime checks local callers itself; an unavailable serving owner must fail closed.
-    ///
-    /// # Errors
-    /// Returns an error when the serving authority owner is unavailable or cannot verify this
-    /// exact accepted plan. The caller must refuse entry on error.
-    fn published_serving_entry_allowed(
-        &self,
-        _plan: &milkdrift_persistence::published::PublishedInvocationPlan,
-    ) -> Result<bool, ExecutorError> {
-        Err(ExecutorError::Unavailable(
-            "published serving authority is unavailable".to_owned(),
-        ))
-    }
-
-    /// Advance the exact already-durable child association without waiting for internal work.
-    /// A missing terminal leaves the operation pending, including across restart.
-    ///
-    /// # Errors
-    /// Returns an error when the continuation owner is unavailable or cannot advance/read the
-    /// retained child association. Failure must not authorize replacement of that child.
-    fn continue_published(
-        &self,
-        _plan: &milkdrift_persistence::published::PublishedInvocationPlan,
-        _cancel: bool,
-        _next_sequence: u64,
-    ) -> Result<Option<InvocationEvent>, ExecutorError> {
-        Err(ExecutorError::Unavailable(
-            "published workflow continuation is unavailable".to_owned(),
-        ))
-    }
-
-    /// Release live generation ownership only after the caller has committed terminal evidence.
-    ///
-    /// # Errors
-    /// Returns an error if retained generation ownership cannot be released consistently.
-    /// Callers must already have durable terminal evidence before requesting release.
-    fn complete_published(
-        &self,
-        _plan: &milkdrift_persistence::published::PublishedInvocationPlan,
-    ) -> Result<(), ExecutorError> {
         Ok(())
     }
 

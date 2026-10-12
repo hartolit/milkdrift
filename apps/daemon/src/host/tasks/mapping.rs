@@ -95,6 +95,20 @@ impl Owner {
                 OperationId::new(definition.capability.operation).map_err(failure)?,
             )
             .exact(CapabilityId::new(definition.capability.id).map_err(failure)?),
+            outputs: definition
+                .outputs
+                .into_iter()
+                .map(|(name, output)| {
+                    (
+                        name,
+                        milkdrift_blueprint::TaskOutputDeclaration {
+                            required: output.required,
+                            media_type: output.media_type,
+                            max_bytes: output.max_bytes,
+                        },
+                    )
+                })
+                .collect(),
             inputs,
             dependencies: definition
                 .dependencies
@@ -185,6 +199,20 @@ pub(super) fn definition(value: &TaskDefinition) -> Result<TaskDefinitionDto, Pu
                 .to_string(),
             operation: value.capability.operation().to_string(),
         },
+        outputs: value
+            .outputs
+            .iter()
+            .map(|(name, output)| {
+                (
+                    name.clone(),
+                    milkdrift_control_protocol::tasks::TaskOutputDeclarationDto {
+                        required: output.required,
+                        media_type: output.media_type.clone(),
+                        max_bytes: output.max_bytes,
+                    },
+                )
+            })
+            .collect(),
         inputs,
         dependencies: value.dependencies.iter().map(ToString::to_string).collect(),
         required: value.required,

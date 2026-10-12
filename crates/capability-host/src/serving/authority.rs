@@ -8,8 +8,8 @@ use milkdrift_authority::{
     AuthorityExecutionProvenance, AuthorityGrant, AuthorityGrantBuilder, AuthorityOperation,
     AuthorityRequest, BoundaryTimeMillis, CapabilityAuthorityScope,
     CapabilityAuthorityScopeBuilder, CapabilityExecutionRequirements, DaemonAuthorityScope,
-    DecisionId, GrantId, LayoutAuthorityScope, NetworkScope, PeerAuthorityScope,
-    RequestedResourceFacts, ResourceScope, Selection, WorkflowRunScope, WorkspaceAuthorityScope,
+    DecisionId, GrantId, NetworkScope, PeerAuthorityScope, RequestedResourceFacts, ResourceScope,
+    Selection, WorkflowRunScope, WorkspaceAuthorityScope,
 };
 use milkdrift_blueprint::{NodeId, RevisionId};
 use milkdrift_capability::{CapabilityDescriptor, PeerId};
@@ -390,7 +390,7 @@ pub(crate) fn adapter_execution_context(
                 .map_err(|error| ServingError::Protocol(error.to_string()))?;
         return Ok(AdapterExecutionContext::direct(selection));
     };
-    Ok(AdapterExecutionContext::new(
+    Ok(AdapterExecutionContext::originated(
         RunId::new(provenance.run.clone())
             .map_err(|error| ServingError::Protocol(error.to_string()))?,
         parse_revision(&provenance.revision)?,
@@ -399,6 +399,8 @@ pub(crate) fn adapter_execution_context(
         NodeExecutionId::new(provenance.execution.clone())
             .map_err(|error| ServingError::Protocol(error.to_string()))?,
         AttemptId::new(provenance.attempt.clone())
+            .map_err(|error| ServingError::Protocol(error.to_string()))?,
+        crate::DirectInputSelection::new(&request.request, request.limits.artifact_bytes)
             .map_err(|error| ServingError::Protocol(error.to_string()))?,
     ))
 }
@@ -484,7 +486,6 @@ pub(super) fn peer_authority_grant(
         } else {
             ArtifactAuthorityScope::none()
         },
-        layouts: LayoutAuthorityScope::none(),
         peers: PeerAuthorityScope::new(BTreeSet::from([relationship.remote_peer.clone()]), false)
             .map_err(|error| ServingError::Configuration(error.to_string()))?,
         daemon: DaemonAuthorityScope::default(),

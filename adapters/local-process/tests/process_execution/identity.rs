@@ -87,7 +87,7 @@ fn registration_binds_bytes_profile_policy_trust_and_attempt_provenance() -> Tes
         adapter.descriptor().extensions()
     );
     let request = request(&profile, "invocation-admission-envelope", Vec::new())?;
-    let context = context()?;
+    let context = context(&request)?;
     let invocation = AdapterInvocation::with_context(&snapshot, &request, &context);
     let first_envelope = adapter.admission_envelope(&invocation)?;
     let second_envelope = adapter.admission_envelope(&invocation)?;
@@ -291,8 +291,12 @@ fn pre_spawn_replacement_is_rejected_before_child_entry_and_remains_invalidated(
 
     fs::write(&executable, b"changed executable bytes")?;
     let first_reporter = TestReporter::default();
-    let refused =
-        host.execute_exact_with_context(&snapshot, &first_request, &context()?, &first_reporter);
+    let refused = host.execute_exact_with_context(
+        &snapshot,
+        &first_request,
+        &context(&first_request)?,
+        &first_reporter,
+    );
     assert!(
         matches!(refused, Err(milkdrift_runtime::ExecutorError::BoundaryBeforeEntry(detail)) if detail.starts_with("tool_size_mismatch:"))
     );
@@ -303,8 +307,12 @@ fn pre_spawn_replacement_is_rejected_before_child_entry_and_remains_invalidated(
     fs::write(&executable, original)?;
     let second_request = request(&profile, "invocation-restored-stale-generation", Vec::new())?;
     let second_reporter = TestReporter::default();
-    let refused =
-        host.execute_exact_with_context(&snapshot, &second_request, &context()?, &second_reporter);
+    let refused = host.execute_exact_with_context(
+        &snapshot,
+        &second_request,
+        &context(&second_request)?,
+        &second_reporter,
+    );
     assert!(
         matches!(refused, Err(milkdrift_runtime::ExecutorError::BoundaryBeforeEntry(detail)) if detail.starts_with("tool_size_mismatch:"))
     );

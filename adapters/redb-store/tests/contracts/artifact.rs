@@ -103,56 +103,21 @@ fn artifact_commit_accepts_an_authoritative_invocation_provenance_fact()
     let directory = TempDir::new()?;
     let run = RunId::new("run-invocation-provenance")?;
     let budget = WorkspaceBudget::new(0, 0, 0, 1, 1024, 1024)?;
-    let initial = accepted_request(
-        run.as_str(),
-        "command-invocation-provenance-start",
-        "event-invocation-provenance-start",
-        "start",
-    )?;
-    let initial = AtomicRunCommitRequest::new(
-        initial.receipt().clone(),
-        initial.events().to_vec(),
-        initial.workspace().to_vec(),
-        Some(WorkspaceAccounting {
-            budget: budget.clone(),
-            expected_usage: WorkspaceUsage::EMPTY,
-            resulting_usage: WorkspaceUsage::EMPTY,
-        }),
-        initial.required_artifacts().to_vec(),
-        initial.newly_referenced_artifacts().to_vec(),
-        initial.expected_lease_revision().cloned(),
-        initial.result().clone(),
-        initial.indexes().clone(),
-    )?;
     let invocation = milkdrift_capability::InvocationId::new("invocation-provenance-known")?;
-    let followup = accepted_workspace_followup_request(
-        run.clone(),
-        RunSequence::FIRST,
-        "command-invocation-provenance-scheduled",
-        "event-invocation-provenance-scheduled",
-        vec![RunEventKind::NodeScheduled {
-            node: NodeId::new("node-invocation-provenance")?,
-            execution: NodeExecutionId::new("execution-invocation-provenance")?,
-            attempt: AttemptId::new("attempt-invocation-provenance")?,
-            invocation: invocation.clone(),
-            idempotency_key: None,
-            request: InvocationRequest::new(
-                invocation.clone(),
-                CapabilityId::new("capability-invocation-provenance")?,
-                OperationId::new("operation.invoke")?,
-                None,
-                None,
-                Vec::new(),
-                std::collections::BTreeMap::new(),
-            )?,
-        }],
-        Vec::new(),
-        WorkspaceAccounting {
-            budget: budget.clone(),
-            expected_usage: WorkspaceUsage::EMPTY,
-            resulting_usage: WorkspaceUsage::EMPTY,
-        },
-    )?;
+    let snapshot = WorkflowSnapshot {
+        workflow: WorkflowId::new(run.as_str())?,
+        generation: 1,
+        title: "Provenance".into(),
+        description: String::new(),
+        owner_actor: "actor-test".into(),
+        updated_at: TimestampMillis::new(1),
+        document: json!({}),
+        entered_invocations: vec![invocation.clone()],
+        managed_executions: Vec::new(),
+        artifact_capacity: 0,
+        reserved_bytes: 0,
+        reserved_receipts: 0,
+    };
     let bytes = b"invocation-produced";
     let base = artifact_metadata(
         "artifact-invocation-provenance",
@@ -174,8 +139,11 @@ fn artifact_commit_accepts_an_authoritative_invocation_provenance_fact()
     )?;
 
     let store = RedbStore::open(directory.path())?;
-    store.commit_command(&initial)?;
-    store.commit_command(&followup)?;
+    store.commit_workflow(WorkflowCommit {
+        expected_generation: None,
+        snapshot,
+        command: None,
+    })?;
     store.begin_publication(&publication)?;
     store.write_chunk(publication.publication(), 0, bytes)?;
     store.commit_publication(publication.publication())?;
@@ -766,7 +734,8 @@ fn artifact_publication_resumes_deduplicates_verifies_and_cleans_orphans()
         )?
     );
     assert_eq!(
-        store.workspace_usage(
+        usage(
+            &store,
             request
                 .owner()
                 .run()
@@ -832,7 +801,8 @@ fn artifact_publication_resumes_deduplicates_verifies_and_cleans_orphans()
         )?
     );
     assert_eq!(
-        store.workspace_usage(
+        usage(
+            &store,
             request
                 .owner()
                 .run()

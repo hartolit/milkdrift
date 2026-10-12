@@ -1,14 +1,13 @@
-# Peer protocol v1.5
+# Peer protocol v1.6
 
-Version 1.5 carries bounded publication ancestry and nested process/model allowances alongside
-origin-bound invocation authority. Terminal usage can report the internal admissions and artifact
-bytes needed to settle a published service reservation. Direct calls retain request-bound input
-transfer and host-invocation artifact provenance.
+Version 1.6 carries origin-bound task authority and independent invocation allowances. Retired
+workflow-publication ancestry and controller reservation fields are refused. Direct calls retain
+request-bound input transfer and host-invocation artifact provenance.
 Both peers use this exact version in a coordinated deployment;
 previous protocol generations and snapshot formats are refused. Current durable acceptance/replay
 and tombstone contracts remain exact across restart.
 
-`milkdrift-peer-protocol` is transport neutral. Every JSON control message uses a `ProtocolEnvelope` with selected `{major, minor}`, one typed message, and at most 32 explicitly ignorable DNS-namespaced extensions. Major 1/minor 5 is the only implemented version. It includes typed archived replay and observation-history dispositions and the exact queried request identity in every lookup result, so clients can bind authenticated responses to the URL they requested. Peers implementing earlier minors are rejected instead of guessing the changed shape or meaning. Unknown majors and unknown typed message fields fail closed. Decoding preflights encoded bytes, depth, container items, string/key sizes, duplicates, and document size before domain deserialization.
+`milkdrift-peer-protocol` is transport neutral. Every JSON control message uses a `ProtocolEnvelope` with selected `{major, minor}`, one typed message, and at most 32 explicitly ignorable DNS-namespaced extensions. Major 1/minor 6 is the only implemented version. It includes typed archived replay and observation-history dispositions and the exact queried request identity in every lookup result, so clients can bind authenticated responses to the URL they requested. Peers implementing earlier minors are rejected instead of guessing the changed shape or meaning. Unknown majors and unknown typed message fields fail closed. Decoding preflights encoded bytes, depth, container items, string/key sizes, duplicates, and document size before domain deserialization.
 
 ## Authentication and session
 

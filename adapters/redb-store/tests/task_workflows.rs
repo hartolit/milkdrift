@@ -38,10 +38,13 @@ fn commit(
             updated_at: TimestampMillis::new(10),
             document: serde_json::json!({"state":"queued"}),
             entered_invocations: Vec::new(),
+            managed_executions: Vec::new(),
+            artifact_capacity: 0,
             reserved_bytes: 4096,
             reserved_receipts: 1,
         },
         command: key.map(|key| WorkflowCommandAcceptance {
+            reserved_action: None,
             actor: "alice".to_owned(),
             key: key.to_owned(),
             canonical_request: br#"{"input":"one"}"#.to_vec(),
@@ -197,7 +200,13 @@ fn receipt_exhaustion_still_allows_reserved_stop_and_settlement()
         store.commit_workflow(commit("workflow-b", 1, Some("request-b"))?),
         Err(PersistenceError::Bounds { .. })
     ));
-    let mut stop = commit("workflow-a", 2, Some("stop-workflow-a"))?;
+    let ordinary = commit("workflow-a", 2, Some("another-ordinary"))?;
+    assert!(store.commit_workflow(ordinary.clone()).is_err());
+    let mut stop = commit("workflow-a", 2, Some("stop:workflow-a:task-a"))?;
+    stop.command
+        .as_mut()
+        .ok_or("stop missing receipt")?
+        .reserved_action = Some("stop:workflow-a:task-a".into());
     stop.snapshot.reserved_receipts = 0;
     stop.snapshot.document = serde_json::json!({"state":"stop_requested"});
     store.commit_workflow(stop)?;
@@ -234,7 +243,7 @@ fn old_schema_refusal_preserves_database_bytes_and_modification_time()
         Err(PersistenceError::UnsupportedVersion {
             document: "storage",
             found: 17,
-            supported: 18
+            supported: 19
         })
     ));
     assert_eq!(std::fs::read(&path)?, before);
@@ -278,5 +287,305 @@ fn lost_commit_response_recovers_the_exact_acceptance_without_another_transition
             1
         );
     }
+    Ok(())
+}
+
+fn output_request(
+    store: &RedbStore,
+    identity: &str,
+    owner: &str,
+    bytes: &[u8],
+    invocation: Option<&str>,
+    output_limit: Option<u64>,
+) -> Result<milkdrift_persistence::BeginArtifactPublication, Box<dyn std::error::Error>> {
+    use milkdrift_persistence::ArtifactStore;
+    use milkdrift_workspace::*;
+    let run = RunId::new(owner)?;
+    let producer = match invocation {
+        Some(invocation) => CausalReference::Invocation {
+            invocation: milkdrift_capability::InvocationId::new(invocation)?,
+        },
+        None => CausalReference::External {
+            source: CausalId::new("test-input")?,
+        },
+    };
+    let metadata = ArtifactMetadata::new(
+        ArtifactReference::new(
+            ArtifactId::new(identity)?,
+            ContentDigest::for_bytes(bytes),
+            MediaType::new("text/plain")?,
+            bytes.len() as u64,
+        ),
+        ArtifactSensitivity::Public,
+        ArtifactRetention::WhileReferenced,
+        ArtifactProvenance::new(producer, Vec::new())?,
+    )?;
+    let request = milkdrift_persistence::BeginArtifactPublication::new(
+        milkdrift_persistence::ArtifactPublicationId::new(format!("publication-{identity}"))?,
+        run.clone(),
+        metadata,
+        WorkspaceBudget::new(0, 0, 0, 64, 60_000, 60_000)?,
+        store.artifact_usage(&ArtifactOwner::from(&run))?,
+    )?;
+    Ok(match output_limit {
+        Some(limit) => request.with_task_output_limit(limit)?,
+        None => request,
+    })
+}
+
+#[test]
+fn artifact_uploads_share_capacity_with_protected_work_and_pending_writes_survive_reopen()
+-> Result<(), Box<dyn std::error::Error>> {
+    use milkdrift_persistence::ArtifactStore;
+    let root = tempfile::tempdir()?;
+    let settings = || {
+        config(root.path()).with_workflow_limits(WorkflowStorageLimits {
+            history_bytes: 60_000,
+            receipt_bytes: 50_000,
+            receipt_entries: 8,
+        })
+    };
+    let store = RedbStore::open_with_config(settings())?;
+    let mut accepted = commit("capacity-workflow", 1, Some("capacity-create"))?;
+    accepted.snapshot.artifact_capacity = 30_000;
+    accepted
+        .snapshot
+        .entered_invocations
+        .push(milkdrift_capability::InvocationId::new(
+            "capacity-invocation",
+        )?);
+    store.commit_workflow(accepted.clone())?;
+    let reserve = store.workflow_storage_usage()?;
+    assert_eq!(reserve.artifact_reserved_bytes, 30_000);
+    let excessive = output_request(
+        &store,
+        "excess-input",
+        "input-owner",
+        &vec![b'x'; 30_000],
+        None,
+        None,
+    )?;
+    assert!(matches!(
+        store.begin_publication(&excessive),
+        Err(PersistenceError::Bounds { .. })
+    ));
+    assert_eq!(store.workflow_storage_usage()?, reserve);
+    let input = output_request(
+        &store,
+        "pending-input",
+        "input-owner",
+        &vec![b'i'; 20_000],
+        None,
+        None,
+    )?;
+    store.begin_publication(&input)?;
+    store.write_chunk(input.publication(), 0, b"prefix")?;
+    assert_eq!(
+        store.workflow_storage_usage()?.pending_artifact_bytes,
+        20_000
+    );
+    drop(store);
+    let store = RedbStore::open_with_config(settings())?;
+    assert_eq!(
+        store.workflow_storage_usage()?.pending_artifact_bytes,
+        20_000
+    );
+    let report_bytes = vec![b'r'; 16_000];
+    let report = output_request(
+        &store,
+        "bounded-report",
+        "capacity-workflow",
+        &report_bytes,
+        Some("capacity-invocation"),
+        Some(22_000),
+    )?;
+    store.begin_publication(&report)?;
+    assert_eq!(
+        store.workflow_storage_usage()?.artifact_reserved_bytes,
+        14_000
+    );
+    store.abort_publication(report.publication())?;
+    assert_eq!(
+        store.workflow_storage_usage()?.artifact_reserved_bytes,
+        30_000
+    );
+    let report = output_request(
+        &store,
+        "bounded-report-retry",
+        "capacity-workflow",
+        &report_bytes,
+        Some("capacity-invocation"),
+        Some(22_000),
+    )?;
+    store.begin_publication(&report)?;
+    store.write_chunk(report.publication(), 0, &report_bytes)?;
+    store.commit_publication(report.publication())?;
+    let after_output = store.workflow_storage_usage()?;
+    assert_eq!(after_output.artifact_content_bytes, 16_000);
+    assert_eq!(after_output.pending_artifact_bytes, 20_000);
+    assert_eq!(after_output.artifact_reserved_bytes, 14_000);
+    let too_much = output_request(
+        &store,
+        "second-output",
+        "capacity-workflow",
+        &vec![b's'; 10_000],
+        Some("capacity-invocation"),
+        Some(22_000),
+    )?;
+    assert!(matches!(
+        store.begin_publication(&too_much),
+        Err(PersistenceError::Bounds { .. })
+    ));
+    store.abort_publication(input.publication())?;
+    assert_eq!(store.workflow_storage_usage()?.pending_artifact_bytes, 0);
+    let mut settled = accepted;
+    settled.expected_generation = Some(1);
+    settled.snapshot.generation = 2;
+    settled.command = None;
+    settled.snapshot.artifact_capacity = 0;
+    settled.snapshot.reserved_bytes = 0;
+    settled.snapshot.reserved_receipts = 0;
+    store.commit_workflow(settled)?;
+    let final_usage = store.workflow_storage_usage()?;
+    assert_eq!(final_usage.artifact_reserved_bytes, 0);
+    assert_eq!(final_usage.artifact_content_bytes, 16_000);
+    assert!(store.is_committed(report.metadata().reference())?);
+    drop(store);
+    assert_eq!(
+        RedbStore::open_with_config(settings())?.workflow_storage_usage()?,
+        final_usage
+    );
+    Ok(())
+}
+
+#[test]
+fn pending_outputs_remain_charged_after_workflow_releases_its_reservation()
+-> Result<(), Box<dyn std::error::Error>> {
+    use milkdrift_persistence::ArtifactStore;
+    let root = tempfile::tempdir()?;
+    let store = RedbStore::open_with_config(config(root.path()))?;
+    let mut accepted = commit("pending-workflow", 1, None)?;
+    accepted.snapshot.artifact_capacity = 1000;
+    accepted
+        .snapshot
+        .entered_invocations
+        .push(milkdrift_capability::InvocationId::new(
+            "pending-invocation",
+        )?);
+    store.commit_workflow(accepted.clone())?;
+    let report = output_request(
+        &store,
+        "pending-report",
+        "pending-workflow",
+        &[b'p'; 500],
+        Some("pending-invocation"),
+        Some(1000),
+    )?;
+    store.begin_publication(&report)?;
+    accepted.expected_generation = Some(1);
+    accepted.snapshot.generation = 2;
+    accepted.snapshot.artifact_capacity = 0;
+    store.commit_workflow(accepted)?;
+    let pending = store.workflow_storage_usage()?;
+    assert_eq!(pending.artifact_reserved_bytes, 0);
+    assert_eq!(pending.pending_artifact_bytes, 500);
+    store.abort_publication(report.publication())?;
+    let released = store.workflow_storage_usage()?;
+    assert_eq!(released.artifact_reserved_bytes, 0);
+    assert_eq!(released.pending_artifact_bytes, 0);
+    Ok(())
+}
+
+#[test]
+fn deleted_task_accounting_refuses_reopen_before_a_new_admission()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = RedbStore::open_with_config(config(root.path()))?;
+    store.commit_workflow(commit("accounted", 1, Some("accounted-create"))?)?;
+    drop(store);
+    let database = redb::Database::open(root.path().join("milkdrift.redb"))?;
+    let write = database.begin_write()?;
+    write
+        .open_table(redb::TableDefinition::<&str, &[u8]>::new(
+            "milkdrift.v1.tasks.accounting",
+        ))?
+        .remove("global")?;
+    write.commit()?;
+    drop(database);
+    assert!(RedbStore::open_with_config(config(root.path())).is_err());
+    Ok(())
+}
+
+#[test]
+fn mandatory_stop_reservation_has_one_durable_actor_owner() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    let store = RedbStore::open_with_config(config(root.path()))?;
+    let mut first = commit("workflow-stops", 1, Some("create-stops"))?;
+    first.snapshot.reserved_receipts = 2;
+    store.commit_workflow(first)?;
+    let mut stop = commit("workflow-stops", 2, Some("stop:workflow-stops:first"))?;
+    stop.command
+        .as_mut()
+        .ok_or("receipt missing")?
+        .reserved_action = Some("stop:workflow-stops:first".into());
+    let accepted = store.commit_workflow(stop.clone())?;
+    assert!(matches!(accepted, WorkflowCommitOutcome::Applied(Some(_))));
+    drop(store);
+    let store = RedbStore::open_with_config(config(root.path()))?;
+    assert!(matches!(
+        store.commit_workflow(stop.clone())?,
+        WorkflowCommitOutcome::Replay(_)
+    ));
+    let before = store.workflow_storage_usage()?;
+    let mut duplicate = stop;
+    duplicate.expected_generation = Some(2);
+    duplicate.snapshot.generation = 3;
+    duplicate.snapshot.reserved_receipts = 0;
+    duplicate.command.as_mut().ok_or("receipt missing")?.actor = "bob".into();
+    assert!(store.commit_workflow(duplicate.clone()).is_err());
+    assert_eq!(store.workflow_storage_usage()?, before);
+    // The second actor may retain an ordinary receipt, but cannot consume the other task's slot.
+    duplicate.snapshot.reserved_receipts = 1;
+    duplicate
+        .command
+        .as_mut()
+        .ok_or("receipt missing")?
+        .reserved_action = None;
+    store.commit_workflow(duplicate)?;
+    assert_eq!(store.workflow_storage_usage()?.reserved_receipts, 1);
+    assert!(
+        store
+            .workflow_receipt("bob", "stop:workflow-stops:first")?
+            .is_some()
+    );
+    Ok(())
+}
+
+#[test]
+fn workflow_discovery_bounds_page_bytes_without_losing_large_records()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = RedbStore::open_with_config(config(root.path()))?;
+    for (id, size) in [
+        ("page-a", 2 * 1024 * 1024),
+        ("page-b", 2 * 1024 * 1024),
+        ("page-c", 5 * 1024 * 1024),
+    ] {
+        let mut value = commit(id, 1, None)?;
+        value.snapshot.document = serde_json::json!({"large_retained_document": "x".repeat(size)});
+        store.commit_workflow(value)?;
+    }
+    let first = store.workflows(None, 200)?;
+    assert_eq!(first.items.len(), 1);
+    assert_eq!(first.items[0].workflow.as_str(), "page-a");
+    assert_eq!(first.next.as_deref(), Some("page-a"));
+    let second = store.workflows(first.next.as_deref(), 200)?;
+    assert_eq!(second.items.len(), 1);
+    assert_eq!(second.items[0].workflow.as_str(), "page-b");
+    let last = store.workflows(second.next.as_deref(), 200)?;
+    assert_eq!(last.items.len(), 1);
+    assert_eq!(last.items[0].workflow.as_str(), "page-c");
+    assert!(last.next.is_none());
     Ok(())
 }

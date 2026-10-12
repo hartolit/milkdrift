@@ -10,7 +10,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use milkdrift_blueprint::NodeId;
 use milkdrift_capability::{
     ArtifactReference, CapabilityObservation, InvocationId, InvocationRequest,
     ResolvedCapabilitySnapshot, TerminalStatus,
@@ -22,8 +21,6 @@ use milkdrift_capability_host::{
     MaterializationLimits, MaterializedExecution,
 };
 use milkdrift_local_process::{LocalProcessAdapter, PlatformSupport, ProcessProfileDocument};
-use milkdrift_persistence::{AttemptId, NodeExecutionId};
-use milkdrift_workspace::RunId;
 
 use crate::{EvidenceResult, ScenarioMeasurement};
 
@@ -182,12 +179,8 @@ pub fn local_process_stream_drain() -> EvidenceResult<ScenarioMeasurement> {
         BTreeMap::new(),
     )?;
     let reporter = RecordingReporter::default();
-    let context = AdapterExecutionContext::new(
-        RunId::new("run-operational-evidence")?,
-        serde_json::from_value(serde_json::json!(format!("rev_{}", "0".repeat(64))))?,
-        NodeId::new("node-operational-evidence")?,
-        NodeExecutionId::new("execution-operational-evidence")?,
-        AttemptId::new("attempt-operational-evidence")?,
+    let context = AdapterExecutionContext::direct(
+        milkdrift_capability_host::DirectInputSelection::new(&request, 1_048_576)?,
     );
     host.execute_exact_with_context(&snapshot, &request, &context, &reporter)?;
     let events = reporter.events()?;

@@ -1,1 +1,39 @@
-{"revision":{"author":"human:operator","content_digest":"b3_cf8c9443f6c1402ca5380b90d2a08ac757ed985aac67f0aad8e483cc2014db45","id":"rev_cb4033bc7eedc5e93033e7b6f82d33e8f610fdf4cdc455ae52827ce3edc3fd5c","parents":[],"reason":"Maintained starter operator example","semantic":{"agreement":null,"blueprint":"operator-starter","edges":{},"interface":{"inputs":{},"outputs":{}},"metadata":{"description":"","extensions":{},"labels":[],"name":"operator-starter"},"nodes":{"done":{"control_inputs":[],"control_outputs":[],"data_inputs":{},"data_outputs":{},"id":"done","kind":{"outcome":"success","type":"terminal"}}},"workflow":"operator-starter"},"sequence":1},"schema_version":3}
+{
+  "request_id": "operator-starter-1",
+  "title": "Operator starter",
+  "description": "One ordinary daemon task",
+  "tasks": [
+    {
+      "alias": "work",
+      "definition": {
+        "title": "Inspect supplied content",
+        "description": "Use the configured capability",
+        "instructions": "Inspect the supplied brief and produce a useful report.",
+        "capability": {
+          "id": "operator-process",
+          "operation": "process.execute"
+        },
+        "inputs": {
+          "brief": {
+            "kind": "supplied",
+            "name": "brief",
+            "optional": false
+          }
+        },
+        "outputs": {},
+        "dependencies": [],
+        "required": true,
+        "corrective_of": null,
+        "paths": []
+      }
+    }
+  ],
+  "inputs": {
+    "brief": {
+      "kind": "text",
+      "text": "Summarize the supplied project and explain the result."
+    }
+  },
+  "finish_when_settled": true,
+  "limits": null
+}

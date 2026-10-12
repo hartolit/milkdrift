@@ -197,14 +197,6 @@ pub(super) fn verify(store: &RedbStore) -> Result<(), PersistenceError> {
                 .ok_or_else(|| corruption("peer integrity per-peer count overflowed"))?;
         }
         match &record.phase {
-            PeerExecutionPhase::AwaitingWorkflow { .. }
-            | PeerExecutionPhase::CancellationRequested {
-                claim: None,
-                evidence: Some(_),
-            } if record.published_invocation.is_some() => {}
-            PeerExecutionPhase::AwaitingWorkflow { .. } => {
-                return Err(corruption("pending workflow has no saved association"));
-            }
             PeerExecutionPhase::DispatchAvailable { .. }
             | PeerExecutionPhase::CancellationRequested {
                 claim: None,

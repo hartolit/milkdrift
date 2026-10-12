@@ -166,7 +166,10 @@ fn stable_parent_aliases_and_private_staging_permissions() -> TestResult {
             & 0o777,
         0o600
     );
-    output.write_complete(b"complete")?;
+    let mut output = output;
+    output.write_all(b"complete")?;
+    output.commit()?;
+    output.finish(Ok(()))?;
     assert_eq!(fs::read(parent.join("result"))?, b"complete");
     assert_eq!(fs::read(alias.join("result"))?, b"complete");
     assert!(PendingFile::create(&root.path().join("missing/result")).is_err());

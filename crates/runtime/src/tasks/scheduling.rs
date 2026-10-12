@@ -28,6 +28,9 @@ impl TaskRuntime {
             .gate
             .lock()
             .map_err(|_| invalid("task scheduler lock unavailable"))?;
+        if self.is_closed() {
+            return Ok(Vec::new());
+        }
         let mut cursor = self
             .cursor
             .lock()
@@ -54,7 +57,15 @@ impl TaskRuntime {
             for task_id in candidates {
                 if dispatches.len() >= usize::from(maximum)
                     || active
-                        >= usize::try_from(workflow.limits.concurrent_tasks).map_err(invalid)?
+                        >= usize::try_from(
+                            workflow.limits.concurrent_tasks.min(
+                                workflow
+                                    .allowance
+                                    .concurrency
+                                    .unwrap_or(workflow.limits.concurrent_tasks),
+                            ),
+                        )
+                        .map_err(invalid)?
                 {
                     break;
                 }
@@ -63,6 +74,27 @@ impl TaskRuntime {
                     .get(&task_id)
                     .ok_or_else(|| invalid("queued task disappeared"))?
                     .clone();
+                if let Some(frozen) = &task.frozen {
+                    if !frozen.entered && !task.stop_requested {
+                        let dispatch = frozen.dispatch.clone();
+                        let selected = workflow
+                            .tasks
+                            .get_mut(&task_id)
+                            .ok_or_else(|| invalid("retained start disappeared"))?;
+                        selected.state = TaskState::Running;
+                        selected.reason = None;
+                        let expected = self.advance(&mut workflow)?;
+                        self.save(&workflow, Some(expected), None)?;
+                        dispatches.push(dispatch);
+                        active = active
+                            .checked_add(1)
+                            .ok_or_else(|| invalid("task concurrency overflow"))?;
+                    }
+                    continue;
+                }
+                if self.active_task_count()? >= u64::from(self.maximum_active_tasks) {
+                    break;
+                }
                 let inputs = match resolve_inputs(&workflow, &task) {
                     Ok(inputs) => inputs,
                     Err(reason) => {
@@ -99,6 +131,10 @@ impl TaskRuntime {
                         selected.started_at = Some(now);
                         selected.reason = None;
                         selected.frozen = Some(FrozenTaskStart {
+                            accepted_generation: workflow
+                                .generation
+                                .checked_add(1)
+                                .ok_or_else(|| invalid("workflow generation exhausted"))?,
                             definition: task.definition,
                             inputs,
                             dispatch: dispatch.clone(),
@@ -111,6 +147,24 @@ impl TaskRuntime {
                         active = active
                             .checked_add(1)
                             .ok_or_else(|| invalid("task concurrency overflow"))?;
+                    }
+                    Err(
+                        error @ RuntimeError::Executor(
+                            crate::ExecutorError::CapacityUnavailable(_)
+                            | crate::ExecutorError::Unavailable(_),
+                        ),
+                    ) => {
+                        let reason =
+                            milkdrift_contracts::truncate_utf8(&error.to_string(), 4096).to_owned();
+                        if task.reason.as_ref() != Some(&reason) {
+                            workflow
+                                .tasks
+                                .get_mut(&task_id)
+                                .ok_or_else(|| invalid("task disappeared"))?
+                                .reason = Some(reason);
+                            let expected = self.advance(&mut workflow)?;
+                            self.save(&workflow, Some(expected), None)?;
+                        }
                     }
                     Err(error) => {
                         let selected = workflow
@@ -138,6 +192,21 @@ impl TaskRuntime {
         inputs: &BTreeMap<String, TaskInputValue>,
         now: TimestampMillis,
     ) -> Result<ExecutionDispatch, RuntimeError> {
+        let mut resolved_definition = task.definition.clone();
+        resolved_definition.inputs = inputs
+            .iter()
+            .map(|(name, value)| {
+                (
+                    name.clone(),
+                    TaskInputBinding::Inline {
+                        value: value.clone(),
+                    },
+                )
+            })
+            .collect();
+        resolved_definition
+            .validate_supplied_inputs(&BTreeMap::new())
+            .map_err(invalid)?;
         let revision = super::admission::revision_identity(&serde_json::to_vec(&task.definition)?)?;
         let node = NodeId::new(task.id.as_str()).map_err(invalid)?;
         let execution = NodeExecutionId::new(format!("execution_{}", task.id)).map_err(invalid)?;
@@ -148,6 +217,22 @@ impl TaskRuntime {
             node.clone(),
             execution.clone(),
             attempt.clone(),
+        )
+        .with_filesystem(
+            task.definition
+                .paths
+                .iter()
+                .map(|access| {
+                    milkdrift_authority::FilesystemScope::new(
+                        access.path.clone(),
+                        std::collections::BTreeSet::from([if access.write {
+                            milkdrift_authority::AccessMode::Write
+                        } else {
+                            milkdrift_authority::AccessMode::Read
+                        }]),
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?,
         );
         let resolved = self.executor.resolve_authorized(
             &task.definition.capability,
@@ -181,10 +266,17 @@ impl TaskRuntime {
                     TaskInputValue::Absent => {
                         content.push_str("[explicitly absent optional input]")
                     }
-                    TaskInputValue::Artifact { .. } => {
-                        return Err(invalid(
-                            "model task output binding requires a captured text result",
-                        ));
+                    TaskInputValue::Artifact { reference } => {
+                        content.push_str("[immutable named artifact supplied with this request]");
+                        invocation_inputs.push(
+                            InputReference::new(
+                                name,
+                                InvocationValueReference::Artifact {
+                                    reference: reference.clone(),
+                                },
+                            )
+                            .map_err(invalid)?,
+                        );
                     }
                 }
             }
@@ -254,8 +346,20 @@ impl TaskRuntime {
         if !entry.is_allowed() {
             return Err(invalid("grant was revoked before task start"));
         }
-        let budget = WorkspaceBudget::new(0, 0, 0, 256, 1_048_576, 2_097_152).map_err(invalid)?;
-        Ok(ExecutionDispatch::from_snapshot(
+        let budget = WorkspaceBudget::new(
+            0,
+            0,
+            0,
+            u64::from(workflow.limits.tasks)
+                .checked_mul(64)
+                .ok_or_else(|| invalid("output count overflow"))?,
+            super::TASK_OUTPUT_BYTES,
+            u64::from(workflow.limits.tasks)
+                .checked_mul(super::TASK_OUTPUT_BYTES)
+                .ok_or_else(|| invalid("output capacity overflow"))?,
+        )
+        .map_err(invalid)?;
+        let dispatch = ExecutionDispatch::from_snapshot(
             RunId::new(workflow.id.as_str()).map_err(invalid)?,
             revision,
             node,
@@ -269,7 +373,13 @@ impl TaskRuntime {
             entry,
             request,
         )?
-        .for_task(budget, task.definition.paths.clone()))
+        .for_task(budget, task.definition.paths.clone());
+        if serde_json::to_vec(&dispatch)?.len() > super::capacity::MAX_DISPATCH_BYTES {
+            return Err(invalid(
+                "frozen external dispatch exceeds its reserved 64 KiB allowance",
+            ));
+        }
+        Ok(dispatch)
     }
 }
 
@@ -287,6 +397,17 @@ fn resolve_inputs(
     workflow: &WorkflowRecord,
     task: &TaskRecord,
 ) -> Result<BTreeMap<String, TaskInputValue>, String> {
+    if let Some(original) = &task.definition.corrective_of {
+        if workflow
+            .tasks
+            .get(original)
+            .is_none_or(|value| !value.state.is_settled())
+        {
+            return Err(format!(
+                "corrected task {original} has not settled; replacement effects cannot enter"
+            ));
+        }
+    }
     for dependency in &task.definition.dependencies {
         let producer = workflow
             .tasks

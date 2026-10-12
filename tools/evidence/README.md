@@ -1,64 +1,50 @@
 # Verification evidence tools
 
-This unpublished package exercises Milkdrift through product APIs and actual application
-binaries. Use it to reproduce an operational claim, measure a bounded path, or check an external
-integration. It depends on the product; product packages do not depend on this harness.
+This unpublished Rust package exercises product APIs and actual binaries. Use a lane whose
+observations support the claim being made. Product crates never depend on the evidence harness.
 
-Choose the lane whose observations support the claim you need:
-
-| Tool | What it establishes and where to run it |
+| Tool | Purpose |
 | --- | --- |
-| `strict-checks` | Compiler/Clippy/default-feature, repository, dependency, workflow and redacted secret checks, with retained per-command status and deduplicated diagnostics. Runs no product scenarios. [Static gate](../../docs/development/workflow.md#strict-static-gate). |
-| `client-workflow-evidence` | Authors the maintained release-notes workflow through the CLI, runs both briefs, downloads results, replays after daemon restart and edits independent copies. Controlled mode also repairs a rejected final response and an unavailable model, checks restricted result reads and refuses overwrite on export. [Journey and live budgets](../../docs/development/verification-evidence.md#authored-workflow-journey). |
-| `headless-cli-evidence` | Actual CLI/daemon setup, replay/conflict, control, inspection, downloads, and restart uncertainty using deterministic processes and a controlled model endpoint. [Commands](../../docs/development/verification-evidence.md#actual-binary-scenarios). |
-| `headless-cli-evidence --independent-host-only` | Direct process/fresh model calls, public upload/prepare/download, and a second daemon's controlled workflow using the same serving operations. External counters, allowance settlement and lost-response/restart assertions. [Independent-host lane](../../docs/development/verification-evidence.md#independent-host-execution). |
-| `headless-cli-evidence --installed-hosts MANIFEST --installed-output DIRECTORY` | The same direct and workflow operations on operator-started hosts, with exact peer selection, retained paged evidence and explicit restart replay. Physical identity and external counters remain separate observations. [Manifest and prerequisites](../../docs/development/verification-evidence.md#independent-host-execution). |
-| `local-model-evidence` | Model context, stream, output, and restart observations through actual applications. Deterministic mode checks the harness; real mode uses an operator-supplied loopback profile. Neither qualifies the combined agent/model gate. [Guide](../../docs/guides/local-model-endpoint.md#run-the-maintained-daemoncli-lane). |
-| `milkdrift-external-evidence` | A real byte-pinned coding agent and supported model endpoint, with strict redacted report validation. Fixture mode remains non-qualifying. [Prerequisites and report meaning](../../docs/guides/external-evidence.md). |
-| `core_paths` benchmark | Timing of selected journal, projection, receipt, peer, context, artifact, process, model-parser, and daemon paths. These measurements are not correctness budgets. [Benchmark lane](../../docs/development/verification-evidence.md#benchmarks-and-operations). |
-| `operational-evidence` | Storage turnover/reopen, bounded current state, queue overload/recovery, stream reconnect, and graceful shutdown observations. The signal lane requires Unix; thread counts use Linux `/proc` when available. [Operational lane](../../docs/development/verification-evidence.md#benchmarks-and-operations). |
-| `mutation-evidence` | Whether selected tests detect particular implementation mutations. Baseline failures, timeouts, and unrelated fixture failures do not qualify a mutant as caught. [Campaign and classification rules](../../docs/development/verification-evidence.md#mutation). |
-| `evidence-process-helper` | Deterministic bytes and process behavior used by the harness, never a real coding-agent qualification. |
-| `slotbook-evidence`, `slotbook-verifier` | Prepare and qualify the native application, develop source through bounded real-model proposals, evaluate selected-evidence learning, produce isolated variants and stage tool recipes through real managed resources. Six finite checks use an independently pinned executable; the explicit model fixture remains distinct from real responses. [Commands and boundaries](../../examples/adaptive-slotbook/README.md). |
+| `strict-checks` | Compiler, Clippy, feature, dependency, repository and redacted secret checks with retained command status. It runs no product scenarios. |
+| `connected-tasks` | Two isolated production daemons, a trusted input-dependent Cargo report process and controlled model endpoint for the standalone browser journey. Backend setup and lifecycle control remain Rust-owned. |
+| `milkdrift-external-evidence` | Real coding-process/model interoperability through ordinary daemon tasks, corrective work and strict redacted schema-2 reports. Explicit fixture mode never qualifies. |
+| `operational-evidence` | Bounded storage, queue, observation and shutdown measurements through maintained owners. Platform-specific observations identify their platform. |
+| `core_paths` | Timing selected maintained storage, capability and daemon paths; measurements are not correctness budgets. |
+| `mutation-evidence` | Whether focused tests detect particular implementation mutations. A baseline failure, timeout or unrelated fixture failure does not qualify a mutation as caught. |
+| `evidence-process-helper` | Deterministic native process behavior used by tests; it is never a real coding-agent qualification. |
 
-Build the daemon before isolated application-evidence tests. The maintained commands identify any
-additional CLI/helper binaries and Rust/Git prerequisites. Put logs, generated profiles, stores,
-and reports under ignored `target/` or a private external directory. Scenario output can contain
-sensitive data even when its report is redacted; follow the chosen guide before sharing it.
+Build the production binaries before actual-application scenarios. Choose a fresh ignored output
+root or private external directory and preserve existing stores. The connected browser setup is:
+
+```sh
+cargo build -p milkdrift-daemon --bin milkdrift-daemon -p milkdrift-evidence --bin connected-tasks
+cargo connected-tasks serve --root target/connected-browser --daemon target/debug/milkdrift-daemon
+```
+
+The owner writes a private `browser.json` only after both daemons are ready. Supply its absolute path
+as `MILKDRIFT_BROWSER_CONFIG` to the [web browser suite](../../apps/web/README.md). The fixture's
+`control --root DIRECTORY` subcommand requests bounded restart/crash/stop actions from its live Rust
+owner. Tokens and private request bodies must not be printed or retained in browser traces.
+
+The [external guide](../../docs/guides/external-evidence.md) owns real profile prerequisites,
+qualification and report handling. Passing a local fixture says that the harness worked, not that
+a real provider or installed process qualified.
 
 ## Extend an observation
 
-The library's `application` module owns child launch, bounded capture, readiness, deadlines, and
-restart helpers. `OwnedChild::terminate` kills and reaps for an abrupt restart boundary;
-`OwnedChild::shutdown` separately checks public Ctrl-C shutdown on Unix. A settled-work restart
-scenario using the former does not prove graceful process shutdown.
-Command capture and authenticated startup explicitly combine failure with child cleanup evidence.
-An unsuccessful termination remains unconfirmed; Drop does not silently retry a reported failure.
-Cancellation/unwind cleanup reports uncertainty on stderr because it cannot return a result.
-Unrepresentable command and observation deadlines are refused before launching a child.
-CLI waits derive their outer watchdog from the requested work budget. Polling callers pass their
-existing deadline to nested commands, and failed observations collect bounded public state before
-temporary evidence disappears. The [application lane](../../docs/development/verification-evidence.md#actual-binary-scenarios)
-explains those budgets, diagnostics and cleanup limits.
+`application` owns child launch, bounded capture, readiness, deadlines and lifecycle cleanup.
+`OwnedChild::terminate` kills and reaps for abrupt restart. `shutdown` separately checks public signal
+shutdown where supported; these observations are not interchangeable. Failure retains cleanup
+uncertainty, and Drop does not silently retry a failed explicit cleanup. An observation's overall
+deadline includes nested daemon reads and child commands.
 
-The context, persistence, adapter, peer, and daemon modules exercise their corresponding product
-owners. `ScenarioMeasurement` keeps result bytes observable through a checksum; report fields
-state which counts, bytes, and timings were measured. `http_fixture` supplies controlled loopback
-framing, not provider behavior.
-`http_fixture::LoopbackServer` owns controlled endpoint shutdown for the headless, local-model,
-and external runners. Handlers use bounded I/O; a handler error, panic, or failed join prevents
-successful fixture completion, and repeated finish calls retain that failure. The local-model
-endpoint captures exactly one request through a bounded channel, without sending a synthetic
-shutdown request that could be mistaken for model entry. Timeline followers separately reap their
-CLI child and bound the reader join before accepting page/update observations.
+`http_fixture` supplies bounded loopback framing. A handler failure, panic or failed join prevents
+successful fixture completion. The fixture never manufactures workflow outcomes; it is an external
+capability driven by the production daemon. Backend executables and helper operations stay in Rust.
 
-The external runner's profile, workflow, scenario, and report
-modules keep operator inputs separate from generated work and qualification checks.
-
-`repository_contracts` checks repository boundaries, maintained links, version cells, and example
-readers. `operational_contracts` checks fast local fixtures; `external_evidence` checks the external
-harness with deterministic inputs and injected failures. Retain useful failure evidence and trace
-assertions to the product boundary they observe. The
-[verification policy](../../docs/development/workflow.md#choose-verification-for-the-change)
-determines which checks a change requires; [status](../../docs/product/status.md) records executed
-qualification rather than treating a configured lane as a successful run.
+The external runner separates profile validation, generated task requests, scenario execution and
+report qualification. `repository_contracts`, operational contracts and external integration tests
+check different boundaries. Preserve useful failure output under the selected evidence root and
+follow the [verification policy](../../docs/development/workflow.md#choose-verification-for-the-change).
+The current [verification evidence](../../docs/development/verification-evidence.md) identifies
+executed qualification and its limits; configured tools are not themselves passing evidence.

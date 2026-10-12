@@ -1,23 +1,14 @@
 use redb::TableDefinition;
 
-pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 18;
+pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 19;
 pub(crate) const SCHEMA_VERSION_KEY: &str = "storage_schema_version";
 pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION: u64 = 20;
 pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION_KEY: &str = "internal_document_format_version";
 pub(crate) const CLOCK_WATERMARK_UNIX_MS_KEY: &str = "boundary_clock_high_water_unix_ms";
-pub(crate) const LEASE_SET_REVISION_KEY: &str = "lease_set_revision";
-pub(crate) const NONTERMINAL_SET_COUNT_KEY: &str = "nonterminal_set_count";
-pub(crate) const APPLICATION_HOT_RECEIPT_COUNT_KEY: &str = "application_hot_receipt_count";
-pub(crate) const APPLICATION_COLD_RECEIPT_COUNT_KEY: &str = "application_cold_receipt_count";
-pub(crate) const APPLICATION_RECEIPT_ARCHIVE_GENERATION_KEY: &str =
-    "application_receipt_archive_generation";
-pub(crate) const APPLICATION_RECEIPT_LAST_ARCHIVED_AT_KEY: &str =
-    "application_receipt_last_archived_at";
 pub(crate) const SECURITY_AUDIT_NEXT_SEQUENCE_KEY: &str = "security_audit_next_sequence";
 pub(crate) const SECURITY_AUDIT_COUNT_KEY: &str = "security_audit_count";
 pub(crate) const MANAGED_ACTIVE_COUNT_KEY: &str = "managed_active_count";
 pub(crate) const EVALUATION_PENDING_COUNT_KEY: &str = "evaluation_pending_count";
-pub(crate) const PUBLICATION_ACTIVE_COUNT_KEY: &str = "publication_active_count";
 pub(crate) const PEER_EXECUTION_GLOBAL_ACCOUNTING_KEY: &str = "global";
 
 // One declaration owns physical names, types, initialization and exact membership.
@@ -53,13 +44,9 @@ physical_tables! {
 TASK_WORKFLOWS: &'static str, &'static [u8] = "milkdrift.v1.tasks.workflows";
 TASK_RECEIPTS: &'static str, &'static [u8] = "milkdrift.v1.tasks.receipts";
 TASK_ACCOUNTING: &'static str, &'static [u8] = "milkdrift.v1.tasks.accounting";
+TASK_ACTION_OWNERS: &'static str, &'static str = "milkdrift.v1.tasks.action_owners";
+TASK_OUTPUT_USAGE: &'static str, &'static [u8] = "milkdrift.v1.tasks.output_usage";
 NATIVE_PATH_CLAIMS: &'static str, &'static [u8] = "milkdrift.v1.host.native_path_claims";
-PUBLISHED_LOCAL_LINKS: &'static str, u64 = "milkdrift.v1.published.local_links";
-PUBLISHED_LOCAL_PENDING: &'static str, u64 = "milkdrift.v1.published.local_pending";
-PUBLISHED_METHODS: &'static str, &'static [u8] = "milkdrift.v1.published.methods";
-PUBLISHED_ACTIVE_METHODS: &'static str, u64 = "milkdrift.v1.published.active_methods";
-PUBLISHED_METHOD_HEADS: &'static str, u64 = "milkdrift.v1.published.heads";
-MANAGED_LOCAL_USES: &'static str, &'static str = "milkdrift.v1.managed.local_uses";
 // Resource authority outlives serving observation compaction and invocation leases.
 MANAGED_INSTALLATIONS: &'static str, &'static [u8] = "milkdrift.v1.managed.installations";
 MANAGED_ACTIVE_INSTALLATIONS: &'static str, u64 = "milkdrift.v1.managed.active_installations";
@@ -68,7 +55,6 @@ MANAGED_EVALUATIONS: &'static str, &'static [u8] = "milkdrift.v1.managed.evaluat
 MANAGED_PENDING_EVALUATIONS: &'static str, u64 = "milkdrift.v1.managed.pending_evaluations";
 MANAGED_TRANSITIONS: &'static str, &'static [u8] = "milkdrift.v1.managed.transitions";
 MANAGED_USES: &'static str, &'static str = "milkdrift.v1.managed.uses";
-MANAGED_LINKS: &'static str, &'static [u8] = "milkdrift.v1.managed.links";
 // Every durable family has a distinct, permanently named table. Keys that need
 // ordering use the closed binary encodings in `codec`; documents are canonical
 // JSON owned by the inward contracts.
@@ -76,57 +62,8 @@ MANAGED_LINKS: &'static str, &'static [u8] = "milkdrift.v1.managed.links";
 METADATA: &'static str, u64 = "milkdrift.v1.metadata";
 // Installation identity is independent of role, configured callers and process boot.
 SERVING_HOST_IDENTITY: &'static str, &'static str = "milkdrift.v1.serving.host_identity";
-// Authoritative immutable revision documents plus a derived and verifiable digest index.
-REVISIONS: &'static str, &'static [u8] = "milkdrift.v1.revisions.by_id";
-REVISIONS_BY_DIGEST: &'static [u8], &'static [u8] = "milkdrift.v1.revisions.by_digest_and_id";
-REVISIONS_BY_WORKFLOW: &'static [u8], &'static [u8] = "milkdrift.v1.revisions.by_workflow_and_id";
-// Authoritative journal aggregates, immutable events, cumulative chain checkpoints,
-// chain heads, and atomically accepted command results.
-RUN_HEADS: &'static str, u64 = "milkdrift.v1.runs.heads";
-RUN_EVENTS: &'static [u8], &'static [u8] = "milkdrift.v1.runs.events";
-EVENT_HISTORY_DIGESTS: &'static [u8], &'static [u8] = "milkdrift.v1.runs.event_history_digests";
-RUN_HISTORY_HEADS: &'static str, &'static [u8] = "milkdrift.v2.runs.history_heads";
-COMMAND_RESULTS: &'static [u8], &'static [u8] = "milkdrift.v1.commands.results";
-// Exact-current continuous-controller accounts, immutable run bindings, and transition receipts.
-CONTROLLER_ACCOUNTS: &'static str, &'static [u8] = "milkdrift.v1.controllers.accounts";
-CONTROLLER_ACCOUNT_REVISIONS: &'static str, &'static [u8] = "milkdrift.v1.controllers.account_revisions";
-CONTROLLER_RUN_BINDINGS: &'static str, &'static str = "milkdrift.v1.controllers.run_bindings";
-CONTROLLER_TRANSITIONS: &'static str, &'static [u8] = "milkdrift.v1.controllers.transitions";
-CONTROLLER_ARTIFACT_CHARGES: &'static str, &'static [u8] = "milkdrift.v1.controllers.artifact_charges";
-// Daemon-owned application receipts have exactly one authoritative physical placement.
-// The completion index is derived bounded operational state for the hot tier only.
-APPLICATION_COMMAND_RECEIPTS_HOT: &'static [u8], &'static [u8] = "milkdrift.v2.application.command_receipts.hot";
-APPLICATION_COMMAND_RECEIPTS_COLD: &'static [u8], &'static [u8] = "milkdrift.v2.application.command_receipts.cold";
-APPLICATION_HOT_RECEIPTS_BY_COMPLETION: &'static [u8], &'static [u8] = "milkdrift.v2.application.command_receipts.hot_by_completion";
-// Presentation layout is authoritative application state but never semantic revision content.
-APPLICATION_LAYOUTS: &'static [u8], &'static [u8] = "milkdrift.v1.application.layouts";
-// Rebuildable proposal discovery projection. Exact state remains in control/runtime facts.
-APPLICATION_PROPOSALS: &'static [u8], &'static [u8] = "milkdrift.v1.application.proposals";
-// Independently retained protected-operation audit. Receipt retention is never affected.
+// Independently retained protected-operation audit.
 SECURITY_AUDIT: u64, &'static [u8] = "milkdrift.v1.application.security_audit";
-// Stable signal identities are indexed back to their authoritative receipt event.
-SIGNAL_RECEIPTS: &'static [u8], u64 = "milkdrift.v1.runs.signal_receipts";
-// Derived and verifiable discoverability/index state. These rows never substitute
-// for an absent authoritative event, head, or command result.
-RUN_SUMMARIES: &'static str, &'static [u8] = "milkdrift.v1.discovery.run_summaries";
-NONTERMINAL_RUNS: &'static str, u8 = "milkdrift.v1.discovery.nonterminal_runs";
-RUNNABLE_ENTRIES: &'static [u8], &'static [u8] = "milkdrift.v1.discovery.runnable_by_identity";
-RUNNABLE_INDEX: &'static [u8], &'static [u8] = "milkdrift.v1.discovery.runnable";
-RUNNABLE_RUN_HEADS: &'static str, &'static [u8] = "milkdrift.v1.discovery.runnable_run_heads";
-TIMER_ENTRIES: &'static [u8], &'static [u8] = "milkdrift.v1.discovery.timers_by_identity";
-TIMER_INDEX: &'static [u8], &'static [u8] = "milkdrift.v1.discovery.timers";
-LEASE_ENTRIES: &'static [u8], &'static [u8] = "milkdrift.v1.discovery.leases_by_identity";
-LEASE_INDEX: &'static [u8], &'static [u8] = "milkdrift.v1.discovery.leases";
-// Optional snapshots and their derived latest pointer. Snapshots may be discarded;
-// authoritative events remain sufficient for replay.
-SNAPSHOTS: &'static [u8], &'static [u8] = "milkdrift.v1.snapshots.by_run_and_id";
-SNAPSHOT_LATEST: &'static str, &'static str = "milkdrift.v1.snapshots.latest_by_run";
-// Authoritative workspace scope/value documents and aggregate accounting, with
-// derived root/value-head lookup indexes.
-SCOPES: &'static [u8], &'static [u8] = "milkdrift.v1.workspace.scopes";
-ROOT_SCOPES: &'static str, &'static str = "milkdrift.v1.workspace.root_scopes";
-VALUES: &'static [u8], &'static [u8] = "milkdrift.v1.workspace.values";
-WORKSPACE_VALUE_HEADS: &'static [u8], &'static [u8] = "milkdrift.v1.workspace.value_heads";
 // Authoritative artifact metadata/publication coordination and derived/verifiable
 // digest, age, ownership, reference, and temporary-path indexes.
 ARTIFACT_METADATA: &'static str, &'static [u8] = "milkdrift.v1.artifacts.metadata_by_id";

@@ -341,40 +341,13 @@ type AdapterEntry = Box<
 /// Adapter-owned request preparation retained by the host's exact one-shot dispatch.
 ///
 /// Only the host can consume this handle. Its runtime dispatch binds request, context,
-/// generation, and authority; the closure receives the final context including any committed
-/// controller reservation. Dropping an unentered handle releases its ephemeral data.
+/// generation, and authority; the closure receives the final durably accepted entry context. Dropping an unentered handle releases its ephemeral data.
 pub struct PreparedAdapterExecution {
     envelope: InvocationAdmissionEnvelope,
-    action: PreparedAdapterAction,
-}
-
-enum PreparedAdapterAction {
-    External(AdapterEntry),
-    Published(Box<milkdrift_persistence::published::PublishedInvocationPlan>),
+    entry: AdapterEntry,
 }
 
 impl PreparedAdapterExecution {
-    /// Arrange a real internal workflow through the caller's durable continuation owner.
-    /// This preparation performs no child creation; the association must first be committed.
-    #[must_use]
-    pub fn published(
-        envelope: InvocationAdmissionEnvelope,
-        plan: milkdrift_persistence::published::PublishedInvocationPlan,
-    ) -> Self {
-        Self {
-            envelope,
-            action: PreparedAdapterAction::Published(Box::new(plan)),
-        }
-    }
-    pub(crate) fn published_plan(
-        &self,
-    ) -> Option<&milkdrift_persistence::published::PublishedInvocationPlan> {
-        match &self.action {
-            PreparedAdapterAction::Published(plan) => Some(plan),
-            PreparedAdapterAction::External(_) => None,
-        }
-    }
-
     /// Captures bounded local preparation and the only operation that may submit it.
     pub fn new(
         envelope: InvocationAdmissionEnvelope,
@@ -384,7 +357,7 @@ impl PreparedAdapterExecution {
     ) -> Self {
         Self {
             envelope,
-            action: PreparedAdapterAction::External(Box::new(entry)),
+            entry: Box::new(entry),
         }
     }
 
@@ -393,8 +366,7 @@ impl PreparedAdapterExecution {
     /// one-shot entry cannot escape before that boundary, and the original admission envelope stays fixed.
     ///
     /// # Errors
-    /// Rejects published workflow continuations, whose durable lifetime cannot be wrapped in
-    /// a synchronous external-entry guard.
+    /// The wrapper may refuse entry when its resource guard cannot be established.
     pub fn with_entry_wrapper(
         self,
         wrapper: impl FnOnce(
@@ -405,16 +377,9 @@ impl PreparedAdapterExecution {
         + Send
         + 'static,
     ) -> Result<Self, AdapterError> {
-        match self.action {
-            PreparedAdapterAction::External(entry) => {
-                Ok(Self::new(self.envelope, move |invocation, reporter| {
-                    wrapper(invocation, reporter, entry)
-                }))
-            }
-            PreparedAdapterAction::Published(_) => Err(AdapterError::rejected(
-                "synchronous entry guards cannot wrap a durable continuation",
-            )),
-        }
+        Ok(Self::new(self.envelope, move |invocation, reporter| {
+            wrapper(invocation, reporter, self.entry)
+        }))
     }
 
     pub(crate) fn envelope(&self) -> &InvocationAdmissionEnvelope {
@@ -426,11 +391,6 @@ impl PreparedAdapterExecution {
         invocation: &AdapterInvocation<'_>,
         reporter: &dyn AdapterReporter,
     ) -> Result<(), AdapterError> {
-        match self.action {
-            PreparedAdapterAction::External(entry) => entry(invocation, reporter),
-            PreparedAdapterAction::Published(_) => Err(AdapterError::rejected(
-                "published work must use its durable continuation",
-            )),
-        }
+        (self.entry)(invocation, reporter)
     }
 }

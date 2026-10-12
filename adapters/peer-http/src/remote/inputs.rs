@@ -24,7 +24,6 @@ impl RemoteCapabilityAdapter {
             .inputs()
             .iter()
             .filter_map(|input| input.value().artifact())
-            .chain(invocation.request().context_manifest())
             .collect::<Vec<_>>();
         if invocation.request().inputs().iter().any(|input| {
             matches!(

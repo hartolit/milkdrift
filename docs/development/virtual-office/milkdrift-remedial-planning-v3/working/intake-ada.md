@@ -102,9 +102,9 @@ canvas or needs a separate product noun.
    as proposals with a rationale, rather than used to make the review converge automatically.
    See the [then-current vision sections 2 and 24](https://github.com/hartolit/milkdrift/blob/f821ce093742246390f17edc77252ceb75672f97/docs/product/vision.md#2-the-product-thesis), preserved at the pre-reset checkpoint.
 2. U05's text-input/output explanation is narrower than the implementation I inspected.
-   [NodeKind](../../../../../crates/blueprint/src/model/node.rs) includes capability tasks,
+   [NodeKind](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/blueprint/src/model/node.rs) includes capability tasks,
    typed branching, fork, join, reducer, repeat, waits, subworkflow and terminal semantics;
-   [EdgeKind](../../../../../crates/blueprint/src/model/graph.rs) separates control and typed
+   [EdgeKind](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/blueprint/src/model/graph.rs) separates control and typed
    data. These distinctions can be justified by observable behavior, but their existence is
    not that justification. Replacing them with generic text instructions would require a
    credible owner for each deterministic responsibility; retaining them requires an

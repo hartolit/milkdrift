@@ -433,7 +433,6 @@ fn durable_drain_and_relationship_generation_close_the_adapter_entry_race() -> T
     store.set_peer_admission_open(false)?;
     let authority = allowed_decision(&peer)?;
     let entry_request = PeerEntryRequest {
-        published_invocation: None,
         owner: &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
         execution: &execution,
         worker: &worker,

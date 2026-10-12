@@ -269,23 +269,12 @@ must settle first. An attachment resolution relinquishes only this host's depend
 request owner leaves; it cannot stop the remote server. Neither path manufactures an execution result.
 A lost fence reply leaves a retained blocker; inspect its new claim before another resolution.
 
-Editing handoff/return additionally require exact parent/child uses, generation, both claims and the
-accepted `parent-run:event-sequence` association. The parent must have physical stop evidence before
-handoff. Both retain lifetime holds; only the child can edit. Return requires child stop evidence
-and, for `--resume-parent`, the parent's current authority and uncancelled execution. The returned
-parent receives a new claim. Old callbacks cannot enter. A cancelled parent can settle a child
-without resuming, then resolve/release its remaining hold. These resource transactions are available
-through the normal resource command path. Published calls use their saved invocation association
-instead of a subworkflow event. Their wrapper has never entered a physical writer: the same
-acceptance/entry transaction records that evidence, and only the exact linked service child can
-receive its editing claim. Actual worker children still require physical stop/fencing evidence.
-The wrapper cannot release a suspended hold merely because its internal workflow became terminal.
-After resolving an uncertain published child, return its editing claim using the saved publication
-association. Resuming requires the original caller's current grant, including for direct and peer
-calls; the child's service grant or an unrelated administrator cannot substitute for it. A returned
-wrapper keeps its no-entry proof, so it can pass editing to another child or release its hold when
-the invocation completes. A cancelled wrapper must be returned without resuming.
-See [published methods](../guides/published-methods.md) for service authority and recovery.
+The retired graph child/publication editing-handoff routes are unavailable. Existing protected
+installations retain their generation checks, physical fencing, uncertain-use blockers and lifetime
+holds. Removing the workflow publication engine does not grant an unprotected writer or erase an
+old installation. Preserve old installations and inspect them with the matching executable; the
+new task store is an explicit fresh-root cutover. Ordinary task reservations and independent
+serving reservations use the same managed-resource owner before entry.
 
 ## Protection and retained state
 
@@ -381,9 +370,9 @@ the immutable candidate at `/candidate/app`, the service's direct executable ent
 Verifier files are capped at 64 MiB to bound the host's verified executable copies. Use a build
 without debug information for deployment; the candidate's separate byte ceiling belongs to its policy.
 The policy fixes the producer, check names, maximum candidate bytes and validity interval. It is
-committed by the blueprint agreement. Operator files stay outside the editable worker's mounts.
-The [adaptive Slotbook example](../../examples/adaptive-slotbook/README.md) generates complete input
-files and runs the supported authoring, failure, repair, verification, publication and reopen path.
+part of the approved managed recipe and exact protected candidate request. Operator files stay
+outside the editable worker's mounts. The task cutover retires the former adaptive application
+workflow; independent verifier, generation and deployment protections remain.
 
 Schema 1 and `linux-protected-service-v1` are unsupported: the native mechanism cannot reinterpret
 an earlier interpreter-based approval. Preserve old stores and evidence with their matching binary.

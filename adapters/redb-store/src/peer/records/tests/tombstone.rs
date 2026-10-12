@@ -11,11 +11,10 @@ use milkdrift_persistence::{
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 fn tombstone() -> TestResult<PeerExecutionTombstone> {
-    let record = published::record()?;
+    let record = serving::record()?;
     let authority = record.authority.request();
     Ok(PeerExecutionTombstone {
         schema_version: milkdrift_persistence::SERVING_EXECUTION_TOMBSTONE_SCHEMA_VERSION,
-        published_invocation: record.published_invocation,
         output_observations: Vec::new(),
         caller: record.caller,
         authorization: record.request.authorization.clone(),
@@ -83,9 +82,10 @@ fn output(execution: &PeerExecutionId, sequence: u64) -> TestResult<PeerObservat
 fn archived_readers_refuse_cross_bound_links_and_malformed_output_manifests() -> TestResult {
     for case in [
         "valid",
-        "source",
-        "invocation",
         "capability",
+        "operation",
+        "request",
+        "artifact-allowance",
         "generation",
         "count",
         "maximum",
@@ -112,41 +112,17 @@ fn archived_readers_refuse_cross_bound_links_and_malformed_output_manifests() ->
         value.accounting.observations = u32::try_from(count)?;
         // Change the enclosing facts where they have no other role in output validation.
         match case {
-            "source" => {
-                value
-                    .published_invocation
-                    .as_mut()
-                    .ok_or("plan absent")?
-                    .source =
-                    milkdrift_persistence::published::PublishedInvocationSource::Serving {
-                        caller: value.caller.clone(),
-                        execution: PeerExecutionId::new("execution:other")?,
-                    };
-            }
-            "invocation" => {
-                let plan = value.published_invocation.as_mut().ok_or("plan absent")?;
-                plan.invocation = InvocationId::new("invocation:other")?;
-                plan.allowance =
-                    milkdrift_persistence::ControllerAccountDeclaration::for_published_invocation(
-                        plan.child_run.clone(),
-                        plan.invocation.clone(),
-                        plan.method_digest.clone(),
-                        plan.allowance.budget().clone(),
-                    )?;
-                plan.request = milkdrift_capability::InvocationRequest::new(
-                    plan.invocation.clone(),
-                    plan.capability.clone(),
-                    plan.request.operation().clone(),
-                    None,
-                    None,
-                    Vec::new(),
-                    Default::default(),
-                )?;
-            }
             "capability" => {
                 value.capability = milkdrift_capability::CapabilityId::new("method:other")?
             }
-            "generation" => value.capability_generation += 1,
+            "operation" => {
+                value.operation = milkdrift_capability::OperationId::new("other.execute")?
+            }
+            "request" => {
+                value.request_id = milkdrift_peer_protocol::PeerRequestId::new("other-request")?
+            }
+            "artifact-allowance" => value.accounting.artifact_bytes = 1025,
+            "generation" => value.capability_generation = 0,
             "count" => value.accounting.outputs -= 1,
             "execution" => {
                 value
@@ -190,15 +166,11 @@ fn archived_readers_refuse_cross_bound_links_and_malformed_output_manifests() ->
                 )?;
             }
             "caller" => {
-                value.published_invocation = None;
                 value.caller =
                     ServingCaller::peer(&PeerId::new("serving")?, &PeerId::new("other")?);
             }
             "actor" => value.authority.actor = milkdrift_authority::ActorRef::new("peer:other")?,
             _ => {}
-        }
-        if let Some(plan) = &value.published_invocation {
-            plan.validate()?;
         }
         for observation in &value.output_observations {
             observation.validate()?;

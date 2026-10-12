@@ -105,13 +105,6 @@ pub(super) fn begin_resolution(
                     physical_identity, ..
                 },
         } => physical_identity.clone(),
-        ManagedUsePhase::Quiescent {
-            evidence: QuiescenceEvidence::NoExternalEntry { .. },
-        } => {
-            return Err(busy(
-                "a pending workflow has no physical writer to fence; cancel its exact invocation",
-            ));
-        }
         ManagedUsePhase::Suspended { .. } => {
             return Err(busy("suspended use requires child settlement"));
         }
@@ -249,12 +242,7 @@ pub(super) fn quiesce(
         physical_identity: stopped_identity,
         observation_digest,
         ..
-    } = evidence
-    else {
-        return Err(invalid(
-            "only the publication acceptance transaction can prove no external entry",
-        ));
-    };
+    } = evidence;
     if !milkdrift_contracts::is_canonical_blake3_digest(observation_digest) {
         return Err(invalid("invalid stop evidence"));
     }
@@ -316,20 +304,12 @@ pub(super) fn release(store: &RedbStore, id: &str, claim: u64) -> Result<(), Per
     if u.claim != claim
         || !matches!(u.phase, ManagedUsePhase::Quiescent { .. })
         || u.parent.is_some()
-        || (!u.execution_terminal
-            && matches!(
-                u.phase,
-                ManagedUsePhase::Quiescent {
-                    evidence: QuiescenceEvidence::NoExternalEntry { .. }
-                }
-            ))
         || record.uses.iter().any(|c| c.parent.as_deref() == Some(id))
     {
         return Err(busy(
             "physical quiescence and settled child ownership are required",
         ));
     }
-    super::execution::remove_index(&write, u)?;
     record.uses.remove(i);
     write
         .open_table(MANAGED_USES)
@@ -342,191 +322,11 @@ pub(super) fn release(store: &RedbStore, id: &str, claim: u64) -> Result<(), Per
 }
 
 pub(super) fn transfer(
-    store: &RedbStore,
-    request: &milkdrift_capability::managed::ManagedRequest,
-    authorization: &milkdrift_authority::AuthorityDecisionSnapshot,
+    _store: &RedbStore,
+    _request: &milkdrift_capability::managed::ManagedRequest,
+    _authorization: &milkdrift_authority::AuthorityDecisionSnapshot,
 ) -> Result<milkdrift_persistence::managed::ResourceReceipt, PersistenceError> {
-    use milkdrift_capability::managed::{MANAGED_SCHEMA_VERSION, ManagedAction};
-    use milkdrift_persistence::managed::ResourceReceipt;
-    request.validate().map_err(|e| invalid(&e.to_string()))?;
-    super::validate_authorization(request, authorization)?;
-    if !authorization.is_allowed() {
-        return Err(conflict("transfer requires current authorization"));
-    }
-    let (h, returning) = match &request.action {
-        ManagedAction::Handoff { transfer } => (transfer, None),
-        ManagedAction::Return {
-            transfer,
-            resume_parent,
-        } => (transfer, Some(*resume_parent)),
-        _ => return Err(invalid("editing transfer action required")),
-    };
-    let write = store.database().begin_write().map_err(error::redb)?;
-    let key = crate::codec::pair(
-        authorization.request().actor.as_str(),
-        request.command.as_str(),
-    )?;
-    if let Some(bytes) = write
-        .open_table(super::MANAGED_RECEIPTS)
-        .map_err(error::redb)?
-        .get(key.as_slice())
-        .map_err(error::redb)?
-    {
-        let prior: ResourceReceipt = crate::json::decode(bytes.value(), "managed receipt")?;
-        if !super::same_receipt_scope(&prior, request, authorization) {
-            return Err(conflict("transfer command conflict"));
-        }
-        return Ok(prior);
-    }
-    let mut record = read_record(&write, h.installation.as_str())?
-        .ok_or_else(|| conflict("missing installation"))?;
-    if record.version != request.expected_version
-        || record.pending.is_some()
-        || !record.admission_open
-        || record.generation != h.generation
-        || h.parent == h.child
-    {
-        return Err(conflict("handoff generation or admission conflict"));
-    }
-    let pi = record
-        .uses
-        .iter()
-        .position(|u| u.id == h.parent)
-        .ok_or_else(|| conflict("missing parent hold"))?;
-    let ci = record
-        .uses
-        .iter()
-        .position(|u| u.id == h.child)
-        .ok_or_else(|| conflict("missing child hold"))?;
-    let [parent, child] = record
-        .uses
-        .get_disjoint_mut([pi, ci])
-        .map_err(|_| invalid("handoff requires distinct parent and child holds"))?;
-    if parent.claim != h.parent_claim
-        || child.claim != h.child_claim
-        || parent.binding.generation != child.binding.generation
-        || !super::execution::linked(&write, parent, child, Some(&h.association))?
-    {
-        return Err(conflict(
-            "handoff requires exact claims and accepted inherited lineage",
-        ));
-    }
-    if let Some(resume) = returning {
-        if !matches!(&parent.phase, ManagedUsePhase::Suspended { child, .. } if child == &h.child)
-            || child.parent.as_deref() != Some(&h.parent)
-            || !matches!(child.phase, ManagedUsePhase::Quiescent { .. })
-        {
-            return Err(busy(
-                "child physical quiescence is required before returning editing",
-            ));
-        }
-        if resume
-            && (parent.execution_terminal
-                || super::execution::parent_cancelled(&write, parent)?
-                || !super::execution::parent_authorized(&write, parent, authorization)?)
-        {
-            return Err(busy("cancelled parent cannot resume editing"));
-        }
-        let evidence = match &parent.phase {
-            ManagedUsePhase::Suspended { evidence, .. } => evidence.clone(),
-            _ => return Err(conflict("parent not suspended")),
-        };
-        parent.claim = parent
-            .claim
-            .checked_add(1)
-            .ok_or_else(|| invalid("claim exhausted"))?;
-        parent.editing = if resume {
-            parent
-                .binding
-                .resources
-                .iter()
-                .filter(|r| r.mutation)
-                .map(|r| r.resource.clone())
-                .collect()
-        } else {
-            Vec::new()
-        };
-        // Only a physical parent needs a new entry epoch. A publication wrapper cannot enter
-        // a writer: retain its accepted no-entry proof so later children and terminal settlement
-        // use the same resource path as uninterrupted publication.
-        parent.phase = if resume && matches!(evidence, QuiescenceEvidence::PhysicalStop { .. }) {
-            ManagedUsePhase::Reserved {}
-        } else {
-            ManagedUsePhase::Quiescent { evidence }
-        };
-        super::execution::remove_index(&write, child)?;
-        record.uses.remove(ci);
-        write
-            .open_table(MANAGED_USES)
-            .map_err(error::redb)?
-            .remove(h.child.as_str())
-            .map_err(error::redb)?;
-    } else {
-        if parent.execution_terminal
-            || super::execution::parent_cancelled(&write, parent)?
-            || !super::execution::parent_authorized(&write, parent, authorization)?
-        {
-            return Err(busy(
-                "handoff requires a live parent and its current authority",
-            ));
-        }
-        let ManagedUsePhase::Quiescent { evidence } = &parent.phase else {
-            return Err(busy(
-                "parent writer must physically stop before child entry",
-            ));
-        };
-        if !matches!(child.phase, ManagedUsePhase::Reserved {})
-            || child.entry_committed
-            || child.parent.is_some()
-        {
-            return Err(conflict("child already entered or linked"));
-        }
-        let requested: Vec<_> = child
-            .binding
-            .resources
-            .iter()
-            .filter(|r| r.mutation)
-            .map(|r| r.resource.clone())
-            .collect();
-        if requested.is_empty() || requested.iter().any(|r| !parent.editing.contains(r)) {
-            return Err(conflict("child mutation exceeds the exact parent claim"));
-        }
-        parent.editing.retain(|r| !requested.contains(r));
-        parent.claim = parent
-            .claim
-            .checked_add(1)
-            .ok_or_else(|| invalid("claim exhausted"))?;
-        parent.phase = ManagedUsePhase::Suspended {
-            child: h.child.clone(),
-            evidence: evidence.clone(),
-        };
-        child.editing = requested;
-        child.claim = child
-            .claim
-            .checked_add(1)
-            .ok_or_else(|| invalid("claim exhausted"))?;
-        child.parent = Some(h.parent.clone());
-    }
-    bump(&mut record)?;
-    let receipt = ResourceReceipt {
-        schema_version: MANAGED_SCHEMA_VERSION,
-        request: request.clone(),
-        authorization: authorization.clone(),
-        response: record.view(),
-    };
-    let bytes = crate::json::encode(&receipt, "managed receipt")?;
-    write
-        .open_table(super::MANAGED_RECEIPTS)
-        .map_err(error::redb)?
-        .insert(key.as_slice(), bytes.as_slice())
-        .map_err(error::redb)?;
-    put_record(&write, &record)?;
-    store
-        .faults
-        .check(crate::fault::FaultPoint::BeforeManagedCommit)?;
-    write.commit().map_err(error::redb)?;
-    store
-        .faults
-        .check(crate::fault::FaultPoint::AfterManagedCommit)?;
-    Ok(receipt)
+    Err(conflict(
+        "editing transfer requires an accepted parent relationship; task workflows do not support this operation",
+    ))
 }

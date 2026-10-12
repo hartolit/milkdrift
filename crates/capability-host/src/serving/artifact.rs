@@ -98,7 +98,6 @@ pub trait PeerArtifactStore: Send + Sync {
         caller: &PeerId,
         offer: &ArtifactMetadataOffer,
         maximum_artifact_bytes: u64,
-        controller: Option<&milkdrift_persistence::ControllerArtifactOwner>,
     ) -> Result<ArtifactTransferDecision, PeerArtifactError>;
 
     /// Appends one exact bounded chunk and publishes only through the core artifact authority.
@@ -153,7 +152,6 @@ struct TransferState {
     offer: ArtifactMetadataOffer,
     publication: Option<ArtifactPublicationId>,
     next_offset: u64,
-    controller: Option<milkdrift_persistence::ControllerArtifactOwner>,
 }
 
 /// Stage peer transfers through the ordinary core artifact publication and read ports.
@@ -215,7 +213,6 @@ impl CorePeerArtifactStore {
         &self,
         caller: &PeerId,
         offer: &ArtifactMetadataOffer,
-        controller: Option<&milkdrift_persistence::ControllerArtifactOwner>,
     ) -> Result<BeginArtifactPublication, PeerArtifactError> {
         let provenance = imported_provenance(caller, offer)?;
         let metadata = ArtifactMetadata::new(
@@ -226,11 +223,6 @@ impl CorePeerArtifactStore {
         )
         .map_err(|error| PeerArtifactError::Rejected(error.to_string()))?;
         if let ArtifactTransferBinding::Input { request } = &offer.binding {
-            if controller.is_some() {
-                return Err(PeerArtifactError::Rejected(
-                    "input staging cannot choose a controller account".to_owned(),
-                ));
-            }
             let host = request.authorization.host().clone();
             let owner = milkdrift_workspace::ArtifactOwner::PeerInput {
                 host: host.clone(),
@@ -264,7 +256,6 @@ impl CorePeerArtifactStore {
             metadata,
             self.budget.clone(),
             WorkspaceUsage::EMPTY,
-            controller.cloned(),
         )
         .map_err(map_persistence)
     }
@@ -374,18 +365,7 @@ impl PeerArtifactStore for CorePeerArtifactStore {
         caller: &PeerId,
         offer: &ArtifactMetadataOffer,
         maximum_artifact_bytes: u64,
-        controller: Option<&milkdrift_persistence::ControllerArtifactOwner>,
     ) -> Result<ArtifactTransferDecision, PeerArtifactError> {
-        if controller.is_some_and(|owner| {
-            !matches!(
-                owner,
-                milkdrift_persistence::ControllerArtifactOwner::RemoteInvocationReservation { .. }
-            ) || offer.direction != ArtifactTransferDirection::Upload
-        }) {
-            return Err(PeerArtifactError::Rejected(
-                "controller reservation is only valid for an origin-owned output import".to_owned(),
-            ));
-        }
         offer
             .validate()
             .map_err(|error| PeerArtifactError::Rejected(error.to_string()))?;
@@ -420,10 +400,7 @@ impl PeerArtifactStore for CorePeerArtifactStore {
             .lock()
             .map_err(|_| PeerArtifactError::Unavailable)?;
         if let Some(existing) = transfers.get(&(caller.clone(), offer.transfer.clone())) {
-            if existing.caller != *caller
-                || existing.offer != *offer
-                || existing.controller.as_ref() != controller
-            {
+            if existing.caller != *caller || existing.offer != *offer {
                 return Err(PeerArtifactError::Conflict(
                     "transfer identity was reused with different metadata".to_owned(),
                 ));
@@ -454,12 +431,6 @@ impl PeerArtifactStore for CorePeerArtifactStore {
                             .is_committed(&offer.artifact)
                             .map_err(map_persistence)?
                     {
-                        if controller.is_some() {
-                            let request = self.publication_request(caller, offer, controller)?;
-                            self.core
-                                .begin_publication(&request)
-                                .map_err(map_persistence)?;
-                        }
                         return Ok(ArtifactTransferDecision::AlreadyPresent);
                     }
                     return Err(PeerArtifactError::Conflict(
@@ -467,7 +438,7 @@ impl PeerArtifactStore for CorePeerArtifactStore {
                             .to_owned(),
                     ));
                 }
-                let request = self.publication_request(caller, offer, controller)?;
+                let request = self.publication_request(caller, offer)?;
                 match self
                     .core
                     .begin_publication(&request)
@@ -545,7 +516,6 @@ impl PeerArtifactStore for CorePeerArtifactStore {
                 offer: offer.clone(),
                 publication,
                 next_offset,
-                controller: controller.cloned(),
             },
         );
         Ok(ArtifactTransferDecision::Transfer {

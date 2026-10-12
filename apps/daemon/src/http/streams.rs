@@ -4,19 +4,18 @@
 //! feeds; capability observations retain only a bounded window per exact authority. Closing a
 //! connection ends disclosure, not the underlying run or invocation.
 use super::{
-    ApiError, AppState, CAPABILITY_FEED_ITEMS, ListQuery, STREAM_PAGE_ITEMS, authenticate,
-    bearer_header, owner_error, protocol_error,
+    ApiError, AppState, CAPABILITY_FEED_ITEMS, ListQuery, authenticate, bearer_header, owner_error,
 };
 use crate::{auth::ActorSession, host::StreamAuthority};
 use async_stream::stream;
 use axum::{
-    extract::Path, extract::Query, extract::State, http::HeaderMap, response::Sse,
-    response::sse::Event, response::sse::KeepAlive,
+    extract::Query, extract::State, http::HeaderMap, response::Sse, response::sse::Event,
+    response::sse::KeepAlive,
 };
 use futures_util::Stream;
 use milkdrift_control_protocol::{
-    CapabilityRead, Cursor, CursorBinding, ErrorCode, MAX_DOCUMENT_BYTES, Observation,
-    ObservationEnvelope, ProtocolVersion,
+    CapabilityRead, Cursor, CursorBinding, MAX_DOCUMENT_BYTES, Observation, ObservationEnvelope,
+    ProtocolVersion,
 };
 use std::{collections::VecDeque, convert::Infallible, time::Duration};
 use tracing::{info, warn};
@@ -85,152 +84,6 @@ impl CapabilityFeeds {
         };
         self.0.get_mut(index).map(|(_, feed)| feed)
     }
-}
-
-pub(super) async fn run_stream(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(run): Path<String>,
-    Query(query): Query<ListQuery>,
-) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    let (request_id, initial_session) = authenticate(&state, &headers)?;
-    let bearer =
-        bearer_header(&headers).ok_or_else(|| ApiError::unauthenticated(request_id.clone()))?;
-    let feed = format!("run:{run}");
-    let initial_decision = stream_authority(
-        &state,
-        initial_session.clone(),
-        StreamAuthority::Run(run.clone()),
-        &request_id,
-    )
-    .await?;
-    let initial_binding = initial_session.cursor_binding(&feed);
-    let mut stream_position = query
-        .cursor
-        .as_ref()
-        .map(|cursor| {
-            cursor.position_for_bound(&feed, &initial_binding, initial_session.cursor_key())
-        })
-        .transpose()
-        .map_err(|error| protocol_error(error, request_id.clone()))?
-        .unwrap_or(0);
-    info!(
-        request_id,
-        feed,
-        resume = query.cursor.is_some(),
-        "run stream subscription established"
-    );
-    let output = stream! {
-        let mut establish = true;
-        'events: loop {
-            let Some(current_session) = state.host.authenticate_header(Some(&bearer))
-                .filter(|session| session.cursor_binding(&feed) == initial_binding) else {
-                if let Ok(event) = observation_event(&state, &feed, stream_position.saturating_add(1), Observation::StreamClosing { reason: "authorization was revoked or rotated".to_owned() }, &initial_session, &initial_decision).await {
-                    yield Ok(event);
-                }
-                break;
-            };
-            let session = current_session;
-            let decision = match stream_authority(
-                &state,
-                session.clone(),
-                StreamAuthority::Run(run.clone()),
-                &request_id,
-            ).await {
-                Ok(decision) => decision,
-                Err(_) => break,
-            };
-            if state.host.health().draining {
-                if let Ok(event) = observation_event(&state, &feed, stream_position.saturating_add(1), Observation::StreamClosing { reason: "daemon is draining".to_owned() }, &session, &decision).await {
-                    yield Ok(event);
-                }
-                break;
-            }
-            if establish {
-                establish = false;
-                let status = match state.host.run(session.clone(), run.clone()).await {
-                    Ok(status) => status,
-                    Err(_) => break,
-                };
-                if stream_position / 2 > status.sequence {
-                    if let Ok(event) = observation_event(&state, &feed, stream_position, Observation::ResyncRequired { reason: "run cursor is ahead of the retained run head".to_owned() }, &session, &decision).await {
-                        yield Ok(event);
-                    }
-                    break;
-                }
-                if stream_position == 0 {
-                    stream_position = status.sequence.saturating_mul(2).saturating_add(1);
-                    let Ok(event) = observation_event(&state, &feed, stream_position, Observation::RunStatus(status), &session, &decision).await else { break; };
-                    yield Ok(event);
-                }
-            }
-            let last_sequence = stream_position / 2;
-            if stream_position != 0 && stream_position % 2 == 0 {
-                match state.host.run(session.clone(), run.clone()).await {
-                    Ok(status) => {
-                        stream_position = stream_position.saturating_add(1);
-                        let Ok(event) = observation_event(&state, &feed, stream_position, Observation::RunStatus(status), &session, &decision).await else {
-                            break 'events;
-                        };
-                        yield Ok(event);
-                    }
-                    _ => break,
-                }
-            }
-            let timeline_cursor = if last_sequence == 0 {
-                None
-            } else {
-                let timeline_feed = format!("timeline:{run}");
-                Some(session.cursor_binding(&timeline_feed))
-                    .and_then(|binding| Cursor::new_bound(
-                        &timeline_feed,
-                        last_sequence,
-                        binding,
-                        &decision,
-                        session.cursor_key(),
-                    ).ok())
-            };
-            match state.host.timeline(
-                session.clone(),
-                run.clone(),
-                timeline_cursor,
-                STREAM_PAGE_ITEMS,
-            ).await {
-                Ok(page) if !page.items.is_empty() => {
-                    for entry in page.items {
-                        stream_position = entry.sequence.saturating_mul(2);
-                        let Ok(event) = observation_event(&state, &feed, stream_position, Observation::Timeline(entry), &session, &decision).await else {
-                            break 'events;
-                        };
-                        yield Ok(event);
-                    }
-                    match state.host.run(session.clone(), run.clone()).await {
-                        Ok(status) => {
-                            stream_position = stream_position.saturating_add(1);
-                            let Ok(event) = observation_event(&state, &feed, stream_position, Observation::RunStatus(status), &session, &decision).await else {
-                                break 'events;
-                            };
-                            yield Ok(event);
-                        }
-                        _ => break,
-                    }
-                }
-                Ok(_) => tokio::time::sleep(Duration::from_millis(250)).await,
-                Err(error) => {
-                    let reason = if error.code == ErrorCode::Unauthorized { "authorization changed" } else { "timeline cursor must be resynchronized" };
-                    if let Ok(event) = observation_event(&state, &feed, stream_position.saturating_add(1), Observation::ResyncRequired { reason: reason.to_owned() }, &session, &decision).await {
-                        yield Ok(event);
-                    }
-                    break;
-                }
-            }
-        }
-    };
-    Ok(Sse::new(output).keep_alive(
-        KeepAlive::new()
-            .interval(Duration::from_secs(15))
-            .text("heartbeat"),
-    ))
 }
 
 pub(super) async fn capability_stream(

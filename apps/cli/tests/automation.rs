@@ -237,25 +237,6 @@ fn http(status: u16, body: String) -> String {
         body.len()
     )
 }
-fn run_state(terminal: Option<&str>) -> Value {
-    let lifecycle = if terminal.is_some() {
-        "terminal"
-    } else {
-        "running"
-    };
-    json!({
-        "run_id": "run-one",
-        "sequence": 10,
-        "lifecycle": lifecycle,
-        "terminal": terminal,
-        "workflow_id": "workflow-one",
-        "revision_id": "revision-one",
-        "semantic_digest": null,
-        "nodes": [],
-        "governing_agreement": null, "agreement_adoptions": 0, "uncertainty_count": 0
-    })
-}
-
 fn invoke(
     endpoint: &str,
     arguments: &[&str],
@@ -326,15 +307,21 @@ fn invoke_mode(
 #[test]
 fn uncertain_commands_preserve_unknown_outcomes_and_never_resubmit() -> TestResult {
     use std::sync::atomic::AtomicUsize;
+    let root = tempfile::tempdir()?;
+    let path = root.path().join("change.json");
+    std::fs::write(
+        &path,
+        serde_json::to_vec(
+            &json!({"request_id":"command-fixture","expected_generation":1,"changes":[{"kind":"finish"}]}),
+        )?,
+    )?;
     let arguments = [
-        "--yes",
         "--timeout-secs",
         "3",
-        "--expected-sequence",
-        "10",
-        "run",
-        "pause",
-        "run-one",
+        "workflow",
+        "edit",
+        "workflow-one",
+        path.to_str().ok_or("request path")?,
     ];
     for retryable in [false, true] {
         let error = json!({"protocol":ProtocolVersion::CURRENT,"request_id":"unknown-result","code":"uncertain","message":"private-fixture-token-do-not-echo","retryable":retryable,"details":{}});
@@ -549,83 +536,26 @@ fn help_and_version_are_json_without_a_session() -> TestResult {
 }
 
 #[test]
-fn wait_has_typed_terminal_results_and_bounded_polling() -> TestResult {
-    for (terminal, exit) in [("succeeded", 0), ("failed", 8), ("cancelled", 8)] {
-        let server = Server::new(vec![
-            negotiation(),
-            response(run_state(None)),
-            response(run_state(Some(terminal))),
-        ])?;
-        let (actual, records, stderr) = server.invoke(
-            &[
-                "--timeout-secs",
-                "3",
-                "run",
-                "wait",
-                "run-one",
-                "--poll-ms",
-                "10",
-            ],
-            false,
-        )?;
-        assert_eq!(actual, exit);
-        assert!(stderr.is_empty());
-        assert_eq!(records.len(), 1);
-        assert_eq!(
-            records
-                .first()
-                .ok_or("missing fixture record")?
-                .pointer("/type")
-                .ok_or("missing fixture field")?,
-            "run.wait"
-        );
-        assert_eq!(
-            records
-                .first()
-                .ok_or("missing fixture record")?
-                .pointer("/value/terminal")
-                .ok_or("missing fixture field")?,
-            terminal
-        );
-        assert_eq!(
-            records
-                .first()
-                .ok_or("missing fixture record")?
-                .pointer("/command_id")
-                .ok_or("missing fixture field")?,
-            "command-fixture"
-        );
-    }
-    let server = Server::new(vec![negotiation(), response(run_state(None))])?;
-    let (exit, records, _) = server.invoke(
-        &[
-            "--timeout-secs",
-            "3",
-            "run",
-            "wait",
-            "run-one",
-            "--max-polls",
-            "1",
-        ],
-        false,
-    )?;
-    assert_eq!(exit, 10);
-    assert_eq!(
-        records
-            .first()
-            .ok_or("missing fixture record")?
-            .pointer("/error/retryable")
-            .ok_or("missing fixture field")?,
-        &Value::Null
-    );
+fn workflow_result_preserves_retained_evidence() -> TestResult {
+    let value = json!({"text":"useful report", "text_truncated":false, "text_unavailable":false, "digest":format!("b3_{}",blake3::hash(b"useful report")),"artifacts":["report"],"input_digests":{"brief":"captured"}});
+    let server = Server::new(vec![negotiation(), response(value.clone())])?;
+    let (exit, records, stderr) =
+        server.invoke(&["workflow", "result", "workflow-one", "task-one"], false)?;
+    assert_eq!(exit, 0);
+    assert!(stderr.is_empty());
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["value"], value);
+    assert_eq!(records[0]["final"], true);
     Ok(())
 }
 
 #[test]
 fn deadline_includes_negotiation_and_blocked_document_input() -> TestResult {
     let server = Server::new(vec![])?;
-    let (exit, records, _) =
-        server.invoke(&["--timeout-secs", "1", "run", "show", "run-one"], false)?;
+    let (exit, records, _) = server.invoke(
+        &["--timeout-secs", "1", "workflow", "show", "workflow-one"],
+        false,
+    )?;
     assert_eq!(exit, 10);
     assert_eq!(
         records
@@ -635,26 +565,13 @@ fn deadline_includes_negotiation_and_blocked_document_input() -> TestResult {
             .ok_or("missing fixture field")?,
         "timeout"
     );
-    let root = tempfile::tempdir()?;
-    let output = root.path().join("blueprint.json");
     let (exit, records, _) = invoke(
         "http://127.0.0.1:1/",
-        &[
-            "--timeout-secs",
-            "1",
-            "sequence",
-            "compile",
-            "-",
-            "--author",
-            "human:fixture",
-            "--output",
-            output.to_str().ok_or("output path is not UTF-8")?,
-        ],
+        &["--timeout-secs", "1", "artifact", "digest", "-"],
         true,
     )?;
     assert_eq!(exit, 10);
     assert_eq!(records.len(), 1);
-    assert!(!output.exists());
     Ok(())
 }
 
@@ -728,7 +645,7 @@ fn lost_stream_and_malformed_protocol_are_finite() -> TestResult {
         negotiation(),
         http(200, "not-json-secret-fixture".to_owned()),
     ])?;
-    let (exit, records, _) = server.invoke(&["run", "show", "run-one"], false)?;
+    let (exit, records, _) = server.invoke(&["workflow", "show", "workflow-one"], false)?;
     assert_eq!(exit, 9);
     assert!(
         !records
@@ -802,68 +719,6 @@ fn artifact_download_verifies_ranges_digest_and_preserves_existing_files() -> Te
     )?;
     assert_ne!(exit, 0);
     assert_eq!(std::fs::read_to_string(&path)?, "keep");
-    Ok(())
-}
-
-#[test]
-fn result_download_reports_one_final_outcome_after_verification() -> TestResult {
-    let root = tempfile::tempdir()?;
-    let path = root.path().join("notes.txt");
-    let metadata = json!({"artifact_id":"notes", "digest":blake3::hash(b"notes").to_hex().to_string(), "size":5, "content_type":"text/plain", "disposition_name":null, "sensitivity":"restricted"});
-    let result = json!({"run":run_state(Some("succeeded")), "workflow_name":"Release notes", "version":1, "truncated":false, "outputs":[{"name":"notes", "artifact":metadata, "preview":"notes", "preview_truncated":false}], "outputs_restricted":false, "actions":[]});
-    for (body, succeeds) in [("notes", true), ("wrong", false)] {
-        let server = Server::new(vec![
-            negotiation(),
-            response(result.clone()),
-            response(metadata.clone()),
-            format!(
-                "HTTP/1.1 206 Partial Content\r\nContent-Type: text/plain\r\nContent-Range: bytes 0-4/5\r\nContent-Length: 5\r\nConnection: close\r\n\r\n{body}"
-            ),
-        ])?;
-        let (exit, records, _) = server.invoke(
-            &[
-                "run",
-                "result",
-                "run-one",
-                "--field",
-                "notes",
-                "--output",
-                path.to_str().ok_or("path")?,
-            ],
-            false,
-        )?;
-        assert_eq!(exit == 0, succeeds, "{records:?}");
-        assert_eq!(records.len(), 1, "{records:?}");
-        assert_eq!(
-            records
-                .first()
-                .ok_or("missing fixture record")?
-                .pointer("/final")
-                .ok_or("missing fixture field")?,
-            true
-        );
-        assert_eq!(
-            records
-                .first()
-                .ok_or("missing fixture record")?
-                .pointer("/type")
-                .ok_or("missing fixture field")?,
-            "run.result"
-        );
-        assert_eq!(path.exists(), succeeds);
-        if succeeds {
-            assert_eq!(
-                records
-                    .first()
-                    .ok_or("missing fixture record")?
-                    .pointer("/value/download/digest")
-                    .ok_or("missing fixture field")?,
-                metadata.pointer("/digest").ok_or("missing fixture field")?
-            );
-            assert_eq!(std::fs::read_to_string(&path)?, body);
-            std::fs::remove_file(&path)?;
-        }
-    }
     Ok(())
 }
 
@@ -960,10 +815,10 @@ fn stream_duplicates_and_expired_cursors_use_a_fresh_authorized_view() -> TestRe
     let event = |position, observation: Value| -> TestResult<String> {
         Ok(format!(
             "data: {}\n\n",
-            json!({"protocol":ProtocolVersion::CURRENT,"cursor":Cursor::new("run:run-one",position)?,"feed":"run:run-one","observed_at_ms":1,"observation":observation})
+            json!({"protocol":ProtocolVersion::CURRENT,"cursor":Cursor::new("capability-health",position)?,"feed":"capability-health","observed_at_ms":1,"observation":observation})
         ))
     };
-    let status = json!({"type":"run_status","value":run_state(None)});
+    let status = json!({"type":"capability_snapshot","value":[]});
     let sse = |body: String| {
         format!(
             "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -981,7 +836,7 @@ fn stream_duplicates_and_expired_cursors_use_a_fresh_authorized_view() -> TestRe
         )?,
     ]
     .concat();
-    let fresh = json!({"run":run_state(None),"workflow_name":"Example","version":1,"truncated":false,"outputs":[],"outputs_restricted":false,"actions":["pause"]});
+    let fresh = json!([]);
     let next = [
         event(20, status)?,
         event(
@@ -992,32 +847,25 @@ fn stream_duplicates_and_expired_cursors_use_a_fresh_authorized_view() -> TestRe
     .concat();
     let server = Server::new(vec![
         negotiation(),
-        response(json!({"items":[],"next_cursor":null,"observed_cursor":null})),
+        response(json!([])),
         sse(body),
         response(fresh),
         sse(next),
     ])?;
     let (exit, records, _) = server.invoke(
-        &[
-            "--timeout-secs",
-            "5",
-            "run",
-            "timeline",
-            "run-one",
-            "--follow",
-        ],
+        &["--timeout-secs", "5", "capability", "list", "--follow"],
         false,
     )?;
     assert_ne!(exit, 0);
     let observations = records
         .iter()
-        .filter(|r| r.get("type").and_then(Value::as_str) == Some("run.observation"))
+        .filter(|r| r.get("type").and_then(Value::as_str) == Some("capability.observation"))
         .collect::<Vec<_>>();
     assert_eq!(observations.len(), 5, "{records:?}");
     assert_eq!(
         records
             .iter()
-            .filter(|r| r.get("type").and_then(Value::as_str) == Some("run.result.fresh"))
+            .filter(|r| r.get("type").and_then(Value::as_str) == Some("capability.list.fresh"))
             .count(),
         1
     );
@@ -1042,21 +890,18 @@ fn stream_duplicates_and_expired_cursors_use_a_fresh_authorized_view() -> TestRe
 
 #[test]
 fn cli_refuses_mismatched_negotiation_success_and_error_versions() -> TestResult {
-    for minor in [
-        ProtocolVersion::CURRENT.minor - 1,
-        ProtocolVersion::CURRENT.minor + 1,
-    ] {
+    for minor in [u16::MAX, ProtocolVersion::CURRENT.minor + 1] {
         let protocol = ProtocolVersion {
             major: ProtocolVersion::CURRENT.major,
             minor,
         };
         for replies in [
             vec![response(json!({"protocol": protocol, "service":"milkdrift"}))],
-            vec![negotiation(), http(200, json!({"protocol": protocol, "request_id":"fixture", "value":run_state(None)}).to_string())],
+            vec![negotiation(), http(200, json!({"protocol": protocol, "request_id":"fixture", "value":json!({})}).to_string())],
             vec![negotiation(), http(403, json!({"protocol": protocol, "request_id":null, "code":"unauthorized", "message":"unsupported-error-fixture", "retryable":false, "details":{}}).to_string())],
         ] {
             let server = Server::new(replies)?;
-            let (exit, records, stderr) = server.invoke(&["run", "show", "run-one"], false)?;
+            let (exit, records, stderr) = server.invoke(&["workflow", "show", "workflow-one"], false)?;
             assert_eq!(exit, 9);
             assert!(stderr.is_empty());
             assert_eq!(records.len(), 1);

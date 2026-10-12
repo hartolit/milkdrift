@@ -1,11 +1,11 @@
 use std::{collections::BTreeSet, path::Path};
 
-use milkdrift_blueprint::{RevisionId, WorkflowId};
+use milkdrift_blueprint::WorkflowId;
 use milkdrift_capability::PeerId;
 use milkdrift_workspace::{ArtifactId, ArtifactSensitivity, RunId, ScopeId};
 use serde::{Deserialize, Serialize, Serializer};
 
-use crate::{ActorRef, AuthorityError, NetworkProfileRef, SecretRef, Selection};
+use crate::{AuthorityError, NetworkProfileRef, SecretRef, Selection};
 
 use super::{capability::CapabilityAuthorityScope, decision::RequestedResourceFacts};
 
@@ -36,52 +36,20 @@ impl BoundaryTimeMillis {
 pub enum AuthorityOperation {
     /// Inspect durable run or registry facts.
     Inspect,
-    /// Propose a prospective revision or action.
-    Propose,
-    /// Propose a revision without a live run; controller policy changes remain excluded.
-    ProposeOffline,
-    /// Approve an awaiting decision.
-    Approve,
-    /// Apply an approved prospective change.
+    /// Apply a checked future-task edit.
     Apply,
     /// Create a new run aggregate.
     CreateRun,
     /// Start a created run.
     StartRun,
-    /// Pause new run work.
-    Pause,
-    /// Resume paused work.
-    Resume,
     /// Request cancellation.
     Cancel,
-    /// Authorize a new execution attempt.
-    Retry,
-    /// Force terminal resolution from evidence.
-    Terminate,
-    /// Deliver an external signal.
-    DeliverSignal,
-    /// Submit a caller-clock timer observation.
-    FireTimer,
     /// Resolve and invoke a capability.
     InvokeCapability,
     /// Cancel an exact capability invocation.
     CancelCapability,
-    /// Validate an immutable blueprint document without storing it.
-    ValidateBlueprint,
-    /// Import an immutable blueprint/workflow revision.
-    ImportBlueprint,
-    /// Inspect one revision, its lineage, or a semantic diff.
-    InspectRevision,
     /// Inspect one run summary.
     InspectRun,
-    /// Inspect one run's append-only external timeline.
-    InspectTimeline,
-    /// Inspect one node execution in a run.
-    InspectNodeExecution,
-    /// Inspect one exact execution attempt and its provenance.
-    InspectAttempt,
-    /// Inspect reconciliation, proposal, or approval state.
-    InspectProposal,
     /// List authority-filtered capability descriptor generations.
     ListCapabilities,
     /// Inspect mutable capability health, load, and admission limits.
@@ -106,12 +74,6 @@ pub enum AuthorityOperation {
     AdministerArtifactRetention,
     /// Read a scoped workspace value.
     ReadWorkspaceValue,
-    /// Read presentation-only layout state.
-    ReadLayout,
-    /// Create or replace presentation-only layout state.
-    WriteLayout,
-    /// Delete presentation-only layout state.
-    DeleteLayout,
     /// Inspect an exact configured peer relationship or filtered catalog.
     InspectPeer,
     /// Negotiate an authenticated peer session.
@@ -795,90 +757,6 @@ impl ArtifactAuthorityScope {
     }
 }
 
-/// Presentation-layout visibility within the separately evaluated workflow scope.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(transparent)]
-pub struct LayoutAuthorityScope(LayoutAuthorityScopeKind);
-
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
-enum LayoutAuthorityScopeKind {
-    DenyAll,
-    Shared { revisions: Selection<RevisionId> },
-}
-
-impl Default for LayoutAuthorityScope {
-    fn default() -> Self {
-        Self::none()
-    }
-}
-
-impl LayoutAuthorityScope {
-    /// Constructs a shared-layout allow scope with an explicit revision selector.
-    #[must_use]
-    pub const fn shared(revisions: Selection<RevisionId>) -> Self {
-        Self(LayoutAuthorityScopeKind::Shared { revisions })
-    }
-
-    /// Grants no layout reads or writes.
-    #[must_use]
-    pub fn none() -> Self {
-        Self(LayoutAuthorityScopeKind::DenyAll)
-    }
-
-    /// Deliberately broad shared-layout scope.
-    #[must_use]
-    pub fn dangerous_all() -> Self {
-        Self::shared(Selection::any())
-    }
-
-    /// Revision selector for a shared-layout allow scope.
-    #[must_use]
-    pub const fn revision_selection(&self) -> Option<&Selection<RevisionId>> {
-        match &self.0 {
-            LayoutAuthorityScopeKind::DenyAll => None,
-            LayoutAuthorityScopeKind::Shared { revisions } => Some(revisions),
-        }
-    }
-
-    /// Whether shared layouts are allowed.
-    #[must_use]
-    pub const fn allows_shared(&self) -> bool {
-        matches!(self.0, LayoutAuthorityScopeKind::Shared { .. })
-    }
-
-    /// Whether this shared allow scope uses an explicit revision wildcard.
-    #[must_use]
-    pub const fn has_any_selector(&self) -> bool {
-        match &self.0 {
-            LayoutAuthorityScopeKind::DenyAll => false,
-            LayoutAuthorityScopeKind::Shared { revisions } => revisions.is_any(),
-        }
-    }
-
-    pub(crate) fn matches(&self, revision: &RevisionId, owner: &LayoutOwner) -> bool {
-        matches!(owner, LayoutOwner::Shared)
-            && self
-                .revision_selection()
-                .is_some_and(|selection| selection.matches(revision))
-    }
-}
-
-/// Exact owner class of one layout request.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(
-    rename_all = "snake_case",
-    tag = "type",
-    content = "actor",
-    deny_unknown_fields
-)]
-pub enum LayoutOwner {
-    /// Shared workflow/revision layout.
-    Shared,
-    /// Reserved actor-owned identity; production persistence does not implement private layouts.
-    Actor(ActorRef),
-}
-
 /// Explicit configured-peer scope. Empty identities with `allow_any=false` denies all peers.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -1040,8 +918,6 @@ pub struct ResourceScope {
     pub secrets: BTreeSet<SecretRef>,
     /// Artifact identity and sensitivity scope. Empty sensitivity scope denies metadata and bytes.
     pub artifacts: ArtifactAuthorityScope,
-    /// Presentation-layout revision/owner scope.
-    pub layouts: LayoutAuthorityScope,
     /// Configured peer relationship scope.
     pub peers: PeerAuthorityScope,
     /// Daemon-local read/diagnostic scope.

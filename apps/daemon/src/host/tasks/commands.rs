@@ -1,4 +1,4 @@
-use super::{ActorSession, Owner, PublicFailure, failure, mapping, runtime_failure};
+use super::{ActorSession, Owner, PublicFailure, failure, mapping};
 use milkdrift_authority::AuthorityOperation;
 use milkdrift_blueprint::{NewTask, TaskBatch, TaskChange, TaskId, WorkflowCreate};
 use milkdrift_control_protocol::{
@@ -9,7 +9,6 @@ use milkdrift_control_protocol::{
     },
 };
 use milkdrift_persistence::WorkflowStore;
-use milkdrift_runtime::TaskRuntime;
 use std::collections::BTreeMap;
 
 impl Owner {
@@ -17,6 +16,7 @@ impl Owner {
         &self,
         session: &ActorSession,
         request: CreateWorkflowRequest,
+        canonical_request: &[u8],
     ) -> Result<WorkflowReceipt, PublicFailure> {
         let tasks = request
             .tasks
@@ -47,7 +47,12 @@ impl Owner {
         let receipt = self
             .workflow()?
             .task_control
-            .create(&session.context, &request.request_id, create)
+            .create_exact(
+                &session.context,
+                &request.request_id,
+                create,
+                canonical_request,
+            )
             .map_err(super::super::read_model::public_control)?;
         public_receipt(receipt)
     }
@@ -57,6 +62,7 @@ impl Owner {
         session: &ActorSession,
         workflow: &str,
         request: ChangeWorkflowRequest,
+        canonical_request: &[u8],
     ) -> Result<WorkflowReceipt, PublicFailure> {
         let workflow = milkdrift_blueprint::WorkflowId::new(workflow).map_err(failure)?;
         let changes = request
@@ -91,12 +97,24 @@ impl Owner {
                     TaskChangeDto::Stop { task } => TaskChange::Stop {
                         task: TaskId::new(task).map_err(failure)?,
                     },
-                    TaskChangeDto::AdoptCorrection { task, correction } => {
-                        TaskChange::AdoptCorrection {
-                            task: TaskId::new(task).map_err(failure)?,
-                            correction: TaskId::new(correction).map_err(failure)?,
-                        }
-                    }
+                    TaskChangeDto::AdoptCorrection {
+                        task,
+                        correction,
+                        redirects,
+                    } => TaskChange::AdoptCorrection {
+                        task: TaskId::new(task).map_err(failure)?,
+                        correction: TaskId::new(correction).map_err(failure)?,
+                        redirects: redirects
+                            .into_iter()
+                            .map(|redirect| {
+                                Ok(milkdrift_blueprint::TaskBindingRedirect {
+                                    consumer: TaskId::new(redirect.consumer).map_err(failure)?,
+                                    expected_version: redirect.expected_version,
+                                    input: redirect.input,
+                                })
+                            })
+                            .collect::<Result<_, PublicFailure>>()?,
+                    },
                     TaskChangeDto::Continue => TaskChange::Continue,
                     TaskChangeDto::Wait { question } => TaskChange::Wait { question },
                     TaskChangeDto::Finish => TaskChange::Finish,
@@ -106,7 +124,7 @@ impl Owner {
         let receipt = self
             .workflow()?
             .task_control
-            .edit(
+            .edit_exact(
                 &session.context,
                 &request.request_id,
                 &workflow,
@@ -114,6 +132,7 @@ impl Owner {
                     expected_generation: request.expected_generation,
                     changes,
                 },
+                canonical_request,
             )
             .map_err(super::super::read_model::public_control)?;
         public_receipt(receipt)
@@ -138,6 +157,11 @@ impl Owner {
         session: &ActorSession,
         request: TaskUploadRequest,
     ) -> Result<TaskUploadReceipt, PublicFailure> {
+        if request.text.len() > milkdrift_blueprint::MAX_TASK_TEXT_BYTES {
+            return Err(failure(
+                "task upload exceeds the 16 KiB UTF-8 content bound",
+            ));
+        }
         if !request.media_type.starts_with("text/")
             || request.name.is_empty()
             || request.name.len() > 255

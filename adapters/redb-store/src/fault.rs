@@ -15,10 +15,6 @@ use milkdrift_persistence::StorageFailureClass;
     )
 )]
 pub enum FaultPoint {
-    /// Before a reusable method generation and its head become durable together.
-    BeforePublishedMethodCommit,
-    /// After a method generation commits, before its caller receives the result.
-    AfterPublishedMethodCommit,
     /// Before a managed resource transaction becomes durable.
     BeforeManagedCommit,
     /// After a managed transaction committed but before the caller receives its reply.
@@ -29,40 +25,8 @@ pub enum FaultPoint {
     AfterSchemaCommit,
     /// Immediately before committing a command transaction.
     BeforeCommandCommit,
-    /// Immediately before an event row is inserted into a command transaction.
-    BeforeEventInsert,
-    /// After an event row is inserted but before its chain/index/head state is complete.
-    AfterEventInsert,
-    /// After a history-chain link is updated but before the command transaction commits.
-    AfterHistoryChainUpdate,
     /// Immediately after redb has committed a command transaction.
     AfterCommandCommit,
-    /// Immediately before committing an application receipt/same-store effect transaction.
-    BeforeApplicationCommit,
-    /// Immediately after an application receipt/same-store effect transaction commits.
-    AfterApplicationCommit,
-    /// Immediately before a hot receipt gains cold ownership in an archival transaction.
-    BeforeApplicationReceiptColdInsert,
-    /// After cold ownership is prepared but before hot ownership is removed atomically.
-    AfterApplicationReceiptColdInsert,
-    /// After hot ownership is removed but before its completion index and transaction commit.
-    AfterApplicationReceiptHotRemove,
-    /// Immediately before committing an explicit bounded receipt archival transaction.
-    BeforeApplicationReceiptArchiveCommit,
-    /// Immediately after an explicit bounded receipt archival transaction commits.
-    AfterApplicationReceiptArchiveCommit,
-    /// Immediately before committing an immutable revision transaction.
-    BeforeRevisionCommit,
-    /// Immediately after redb has committed an immutable revision transaction.
-    AfterRevisionCommit,
-    /// Immediately before committing a projection snapshot transaction.
-    BeforeSnapshotCommit,
-    /// Immediately after redb has committed a projection snapshot transaction.
-    AfterSnapshotCommit,
-    /// Immediately before committing a snapshot-discard transaction.
-    BeforeSnapshotDiscardCommit,
-    /// Immediately after redb has committed a snapshot-discard transaction.
-    AfterSnapshotDiscardCommit,
     /// After peer admission rows and accounting are prepared, before their atomic commit.
     BeforePeerAdmissionCommit,
     /// Immediately after durable peer admission commits, before its response is returned.

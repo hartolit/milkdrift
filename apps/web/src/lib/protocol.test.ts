@@ -7,6 +7,7 @@ it('decodes the same golden session envelope exercised by Rust', () => {
   const session = decodeResponse<TaskSessionDto>(fixture);
   expect(session.daemon_id).toBe('fixture-daemon-a');
   expect(session.actor_id).toBe('fixture-actor');
+  expect(session.input_limit_bytes).toBe(16384);
   expect(session.capabilities[0]).toEqual({ id: 'fixture-report', operation: 'process.run' });
   expect(session.limits.tasks).toBe(256);
 });

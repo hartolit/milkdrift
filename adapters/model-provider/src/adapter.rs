@@ -22,9 +22,8 @@ use milkdrift_capability_host::{
     MaterializationLimits, PreparedAdapterExecution, SecretResolver,
 };
 use milkdrift_model::{
-    ContentPart, ContextManifest, ContextManifestDocument, ContextSource, MAX_MODEL_OUTPUT_UNITS,
-    MODEL_GENERATE_OPERATION, MODEL_TASK_INPUT_NAME, ModelTaskRequest, ModelTaskRequestDocument,
-    SessionSelection,
+    ContentPart, MAX_MODEL_OUTPUT_UNITS, MODEL_GENERATE_OPERATION, MODEL_TASK_INPUT_NAME,
+    ModelTaskRequest, ModelTaskRequestDocument, SessionSelection,
 };
 use milkdrift_workspace::ContentDigest;
 use reqwest::header::{HeaderName, HeaderValue};
@@ -41,30 +40,10 @@ mod report;
 
 use report::{ProviderFailure, report_failure, report_uncertain};
 
-const CONTEXT_MEDIA: &str = "application/vnd.milkdrift.context-manifest.v2+json";
 const RESPONSE_MEDIA: &str = "application/vnd.milkdrift.model-response.v1+json";
 const TOOL_CALLS_MEDIA: &str = "application/vnd.milkdrift.model-tool-calls.v1+json";
 const STRUCTURED_MEDIA: &str = "application/vnd.milkdrift.model-structured-output.v1+json";
 const PROVIDER_METADATA_MEDIA: &str = "application/vnd.milkdrift.model-provider-metadata.v1+json";
-
-fn verify_context_bytes(
-    entry: &milkdrift_model::ContextManifestEntry,
-    bytes: &[u8],
-) -> Result<(), AdapterError> {
-    let expected_bytes = if entry.selected_artifact_bytes() > 0 {
-        entry.selected_artifact_bytes()
-    } else {
-        entry.selected_bytes()
-    };
-    if u64::try_from(bytes.len()) != Ok(expected_bytes)
-        || ContentDigest::for_bytes(bytes) != entry.content_digest()
-    {
-        return Err(AdapterError::rejected(
-            "selected context content contradicts the frozen manifest",
-        ));
-    }
-    Ok(())
-}
 
 pub(crate) enum MaterializedContextPart {
     Text {
@@ -244,53 +223,17 @@ impl ModelEndpointAdapter {
         }
         let limits = self.materialization_limits();
         let mut materialization = MaterializationLedger::new(limits);
-        let (selection_text, context_parts, continuation) = match context.selection() {
+        let selection_text = match context.selection() {
             milkdrift_capability_host::AdapterInputSelection::Direct(selection)
             | milkdrift_capability_host::AdapterInputSelection::Task { selection, .. } => {
                 selection
                     .validate_request(request)
                     .map_err(|error| AdapterError::rejected(error.to_string()))?;
-                (selection.canonical_json().to_owned(), Vec::new(), None)
-            }
-            milkdrift_capability_host::AdapterInputSelection::Workflow(workflow) => {
-                let manifest_ref = request.context_manifest().ok_or_else(|| {
-                    AdapterError::rejected("model invocation requires a frozen context manifest")
-                })?;
-                if manifest_ref.media_type() != Some(CONTEXT_MEDIA) {
-                    return Err(AdapterError::rejected(
-                        "context manifest media type is unsupported",
-                    ));
-                }
-                let manifest_bytes = self
-                    .data
-                    .read_artifact_bytes(context, manifest_ref, limits)
-                    .map_err(|error| AdapterError::rejected(error.to_string()))?;
-                materialization.record(manifest_bytes.len())?;
-                let manifest = ContextManifestDocument::from_json(&manifest_bytes)
-                    .map_err(|_| AdapterError::rejected("context manifest is malformed"))?;
-                if manifest.body().run() != workflow.run()
-                    || manifest.body().revision() != workflow.revision()
-                    || manifest.body().node() != workflow.node()
-                    || manifest.body().execution() != workflow.execution()
-                    || manifest.body().attempt() != workflow.attempt()
-                {
-                    return Err(AdapterError::rejected(
-                        "context manifest provenance does not match this exact attempt",
-                    ));
-                }
-                let manifest_text = std::str::from_utf8(&manifest_bytes).map_err(|_| {
-                    AdapterError::rejected("context manifest is not canonical UTF-8")
-                })?;
-                let (context_parts, continuation) = self.load_context_parts(
-                    context,
-                    request,
-                    manifest.body(),
-                    limits,
-                    &mut materialization,
-                )?;
-                (manifest_text.to_owned(), context_parts, continuation)
+                selection.canonical_json().to_owned()
             }
         };
+        let context_parts =
+            self.load_context_parts(context, request, limits, &mut materialization)?;
         let task = self.load_task(context, request, limits, &mut materialization)?;
         if context.direct_selection().is_some()
             && !matches!(task.session(), SessionSelection::Fresh)
@@ -299,22 +242,6 @@ impl ModelEndpointAdapter {
                 "direct model execution supports fresh sessions only",
             ));
         }
-        let task = match (task.session(), continuation) {
-            (SessionSelection::ExplicitContinuation { .. }, Some(history)) => task
-                .with_continuation(&history)
-                .map_err(|error| AdapterError::rejected(error.to_string()))?,
-            (SessionSelection::ExplicitContinuation { .. }, None) => {
-                return Err(AdapterError::rejected(
-                    "explicit continuation requires a runtime-prepared history artifact",
-                ));
-            }
-            (_, Some(_)) => {
-                return Err(AdapterError::rejected(
-                    "non-continuation request contains conversation history",
-                ));
-            }
-            (_, None) => task,
-        };
         self.negotiate(&task, &context_parts)?;
         let materialization = RefCell::new(materialization);
         let load = |reference: &milkdrift_capability::ArtifactReference| {
@@ -572,130 +499,53 @@ impl ModelEndpointAdapter {
         &self,
         context: &milkdrift_capability_host::AdapterExecutionContext,
         request: &InvocationRequest,
-        manifest: &ContextManifest,
         limits: MaterializationLimits,
         materialization: &mut MaterializationLedger,
-    ) -> Result<
-        (
-            Vec<MaterializedContextPart>,
-            Option<milkdrift_model::ContinuationHistory>,
-        ),
-        AdapterError,
-    > {
-        let mut expected = BTreeSet::new();
+    ) -> Result<Vec<MaterializedContextPart>, AdapterError> {
         let mut parts = Vec::new();
-        let mut continuation = None;
-        for entry in manifest.entries() {
-            let (input, media_type) = if let ContextSource::DirectInput { name, reference } =
-                entry.source()
-            {
-                let input = request
-                    .inputs()
-                    .iter()
-                    .find(|input| input.name() == name && input.value() == reference)
-                    .ok_or_else(|| {
-                        AdapterError::rejected(
-                            "direct context input contradicts the frozen manifest",
-                        )
-                    })?;
-                let media = if entry.selected_artifact() && name != MODEL_TASK_INPUT_NAME {
-                    self.data
-                        .resolve_artifact_reference(context, input)
-                        .map_err(|_| {
-                            AdapterError::rejected("direct context artifact is unavailable")
-                        })?
-                        .media_type()
-                        .ok_or_else(|| {
-                            AdapterError::rejected("direct artifact media type is absent")
-                        })?
-                        .to_owned()
-                } else {
-                    "application/json".to_owned()
-                };
-                (input, media)
-            } else {
-                let name = format!(
-                    "{}{:04}",
-                    milkdrift_capability::CONTEXT_ITEM_INPUT_PREFIX,
-                    entry.ordinal()
-                );
-                expected.insert(name.clone());
-                let input = request
-                    .inputs()
-                    .iter()
-                    .find(|input| input.name() == name)
-                    .ok_or_else(|| AdapterError::rejected("selected context input is missing"))?;
-                let media = match entry.source() {
-                    ContextSource::Artifact { reference } => reference.media_type().as_str(),
-                    _ => "application/json",
-                };
-                (input, media.to_owned())
-            };
+        for input in request
+            .inputs()
+            .iter()
+            .filter(|input| input.name() != MODEL_TASK_INPUT_NAME)
+        {
             let bytes = self
                 .data
                 .read_input_bytes(context, input, limits)
-                .map_err(|_| AdapterError::rejected("selected context content is unavailable"))?;
+                .map_err(|error| AdapterError::rejected(error.to_string()))?;
             materialization.record(bytes.len())?;
-            verify_context_bytes(entry, &bytes)?;
-            // The task document is interpreted by load_task, not repeated as user evidence.
-            if input.name() == milkdrift_model::MODEL_TASK_INPUT_NAME {
-                continue;
-            }
-            if entry.reason() == milkdrift_model::ContextInclusionReason::Continuation {
-                if media_type != milkdrift_model::CONTINUATION_MEDIA_TYPE || continuation.is_some()
-                {
+            let media_type = match input.value() {
+                InvocationValueReference::Artifact { reference } => {
+                    reference.media_type().unwrap_or("application/octet-stream")
+                }
+                InvocationValueReference::Inline { .. } => "application/json",
+                InvocationValueReference::WorkspaceValue { .. } => {
                     return Err(AdapterError::rejected(
-                        "unsupported or duplicate continuation history",
+                        "task inputs cannot read mutable workspace values",
                     ));
                 }
-                continuation = Some(
-                    milkdrift_model::ContinuationHistoryDocument::from_json(&bytes)
-                        .map_err(|error| AdapterError::rejected(error.to_string()))?
-                        .body()
-                        .clone(),
-                );
-                continue;
-            }
-            let label = serde_json::to_string(&serde_json::json!({
-                "ordinal": entry.ordinal(),
-                "kind": entry.kind(),
-                "semantic_roles": entry.semantic_roles(),
-                "source": entry.source(),
-                "content_digest": entry.content_digest(),
-            }))
-            .map_err(|_| AdapterError::rejected("context provenance encoding failed"))?;
+            };
+            let label = serde_json::to_string(&json!({"input":input.name(),"source":input.value(),"content_digest":ContentDigest::for_bytes(&bytes)}))
+                .map_err(|_| AdapterError::rejected("input provenance encoding failed"))?;
             if media_type.starts_with("text/")
                 || media_type == "application/json"
                 || media_type.ends_with("+json")
             {
-                let text = String::from_utf8(bytes).map_err(|_| {
-                    AdapterError::rejected("selected textual context is not valid UTF-8")
-                })?;
+                let text = String::from_utf8(bytes)
+                    .map_err(|_| AdapterError::rejected("selected textual input is not UTF-8"))?;
                 parts.push(MaterializedContextPart::Text { label, text });
             } else if media_type.starts_with("image/") {
                 parts.push(MaterializedContextPart::Image {
                     label,
-                    media_type: media_type.clone(),
+                    media_type: media_type.to_owned(),
                     bytes,
                 });
             } else {
                 return Err(AdapterError::rejected(
-                    "selected binary context has no safe provider mapping",
+                    "selected binary input has no safe provider mapping",
                 ));
             }
         }
-        if request.inputs().iter().any(|input| {
-            input
-                .name()
-                .starts_with(milkdrift_capability::CONTEXT_ITEM_INPUT_PREFIX)
-                && input.name() != milkdrift_capability::CONTEXT_MANIFEST_INPUT_NAME
-                && !expected.contains(input.name())
-        }) {
-            return Err(AdapterError::rejected(
-                "invocation contains context outside the frozen manifest",
-            ));
-        }
-        Ok((parts, continuation))
+        Ok(parts)
     }
 
     fn load_task(

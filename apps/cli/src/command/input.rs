@@ -10,23 +10,18 @@ use std::{
 
 #[derive(Clone, Copy)]
 pub(super) enum UploadOperation {
-    Run,
     Invocation,
 }
 
 impl UploadOperation {
     fn maximum(self) -> usize {
         match self {
-            Self::Run => milkdrift_blueprint::WorkflowInterface::MAX_FIELDS,
             Self::Invocation => milkdrift_capability::InvocationRequest::MAX_INPUTS,
         }
     }
 
     fn validate_name(self, name: &str) -> Result<(), CliError> {
         match self {
-            Self::Run => milkdrift_blueprint::FieldId::new(name)
-                .map(|_| ())
-                .map_err(|error| CliError::Invalid(error.to_string())),
             Self::Invocation => milkdrift_capability::InputReference::validate_name(name)
                 .map_err(|error| CliError::Invalid(error.to_string())),
         }
@@ -34,7 +29,6 @@ impl UploadOperation {
 
     fn namespace(self) -> &'static str {
         match self {
-            Self::Run => "run-input",
             Self::Invocation => "invocation-input",
         }
     }
@@ -220,7 +214,7 @@ mod tests {
 
     #[test]
     fn upload_fields_and_operation_have_unambiguous_boundaries() -> TestResult {
-        for operation in [UploadOperation::Run, UploadOperation::Invocation] {
+        for operation in [UploadOperation::Invocation] {
             let first = operation.identity("x", 0, "z:1:y")?;
             assert_ne!(first, operation.identity("x:0:z", 1, "y")?);
             assert_eq!(first, operation.identity("x", 0, "z:1:y")?);
@@ -239,7 +233,7 @@ mod tests {
         // Challenge field boundaries over a finite punctuation-bearing set;
         // this establishes the encoding examples, not a collision-proof hash.
         let mut ids = BTreeSet::new();
-        for operation in [UploadOperation::Run, UploadOperation::Invocation] {
+        for operation in [UploadOperation::Invocation] {
             for command in ["x", "x:0:z", "x:", "x::", "x/1", "x.1"] {
                 for position in [0, 1, 11, 255] {
                     for name in ["y", "z:1:y", ":", "z::", "z.y", "z-y"] {
@@ -253,31 +247,12 @@ mod tests {
 
     #[test]
     fn maximum_valid_fields_keep_a_bounded_upload_identity() -> TestResult {
-        // CommandRequest and PeerRequestId permit 192 bytes. Run fields permit
-        // 96 bytes; invocation inputs permit 128. Neither permits empty names.
-        for (operation, name_limit) in [
-            (UploadOperation::Run, 96),
-            (UploadOperation::Invocation, 128),
-        ] {
+        // Peer request identities permit 192 bytes; invocation inputs permit 128.
+        // Both contracts reject empty names.
+        for (operation, name_limit) in [(UploadOperation::Invocation, 128)] {
             let command = format!("x{}", ":".repeat(191));
             let name = format!("n{}", ":".repeat(name_limit - 1));
-            if matches!(operation, UploadOperation::Invocation) {
-                milkdrift_peer_protocol::PeerRequestId::new(&command)?;
-            } else {
-                milkdrift_blueprint::FieldId::new(&name)?;
-                milkdrift_control_protocol::CommandRequest {
-                    protocol: milkdrift_control_protocol::ProtocolVersion::CURRENT,
-                    command_id: command.clone(),
-                    expected_sequence: None,
-                    expected_revision: None,
-                    reason: "encoding bound".into(),
-                    evidence: vec![],
-                    command: milkdrift_control_protocol::Command::CancelRun {
-                        run_id: "run".into(),
-                    },
-                }
-                .validate()?;
-            }
+            milkdrift_peer_protocol::PeerRequestId::new(&command)?;
             milkdrift_capability::InputReference::new(
                 &name,
                 milkdrift_capability::InvocationValueReference::Artifact {

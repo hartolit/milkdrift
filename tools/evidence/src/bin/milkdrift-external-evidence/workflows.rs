@@ -1,49 +1,27 @@
-//! Builds the disposable repository and ordinary definitions exercised by the external runner.
-//!
-//! Process verification/remediation and model context are explicit workflow inputs. Scenario
-//! execution and report qualification remain with their respective owners.
-
+//! Disposable repository and typed ordinary task requests for external evidence.
+use milkdrift_control_protocol::tasks::{
+    CreateWorkflowRequest, InputBinding, InputValue, NewTaskDto, PathAccess, TaskCapability,
+    TaskDefinitionDto, TaskOutputDeclarationDto,
+};
+use milkdrift_model_provider::EndpointProfile;
+use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     path::Path,
     process::Command,
 };
-
-use milkdrift_blueprint::{
-    AuthorRef, BindingSource, BlueprintRevision, BlueprintRevisionDocument, ContextBudget,
-    ContextCategory, ContextOrdering, ContextSemanticRole, ContextSessionPolicy, ContextTruncation,
-    DataPort, Edge, EdgeId, EdgeKind, Mutation, MutationBatch, Node, NodeId, NodeKind, PortId,
-    SchemaRef, TaskConfig, TaskContextPolicy, TerminalOutcome, WorkflowId,
-};
-use milkdrift_capability::{
-    BoundedJson, CapabilityId, CapabilityRequirement, ExecutionTrustClass, OperationId,
-    ProviderProfileRef, SchemaId, SideEffectClass, StreamingMode,
-};
-use milkdrift_model::{
-    ContentPart, MODEL_TASK_INPUT_NAME, Message, MessageRole, ModelTaskRequest,
-    ModelTaskRequestDocument, SessionSelection, StructuredOutput,
-};
-use milkdrift_model_provider::EndpointProfile;
-use milkdrift_prompt_sequence::PromptSequenceDocument;
-use serde_json::{Value, json};
-
-pub(crate) const PROCESS_WORKFLOW: &str = "external-evidence-process";
-pub(crate) const PROCESS_RUN: &str = "run-external-evidence-process";
-pub(crate) const MODEL_WORKFLOW: &str = "external-evidence-model";
-pub(crate) const MODEL_RUN: &str = "run-external-evidence-model";
-
+pub(crate) const PROCESS_WORKFLOW: &str = "External process interoperability evidence";
+pub(crate) const MODEL_WORKFLOW: &str = "External model interoperability evidence";
 pub(crate) struct ModelProfileFacts {
     pub(crate) profile_id: String,
     pub(crate) revision: u64,
     pub(crate) protocol: String,
     pub(crate) model_alias: String,
     pub(crate) endpoint_origin: String,
-    pub(crate) streaming: bool,
-    pub(crate) structured_output: bool,
+    pub(crate) digest: String,
     pub(crate) secret_refs: BTreeSet<String>,
 }
-
 pub(crate) fn initialize_repository(repository: &Path) -> Result<(String, String), String> {
     fs::create_dir_all(repository).map_err(|error| error.to_string())?;
     fs::write(repository.join(".gitignore"), "/target/\n").map_err(|error| error.to_string())?;
@@ -95,60 +73,6 @@ pub(crate) fn git(repository: &Path, arguments: &[&str]) -> Result<String, Strin
     Ok(output.stdout.trim().to_owned())
 }
 
-pub(crate) fn process_sequence(
-    agent_capability: &str,
-    agent_outputs: &[String],
-) -> Result<PromptSequenceDocument, String> {
-    let outputs = agent_outputs
-        .iter()
-        .map(|name| json!({"name":name,"media_type":"application/octet-stream","required":name == "diff"}))
-        .collect::<Vec<_>>();
-    let value = json!({
-        "schema_version":3,
-        "sequence":{
-            "id":PROCESS_WORKFLOW,
-            "title":"External process interoperability evidence",
-            "workflow_id":PROCESS_WORKFLOW,
-            "repository":{
-                "id":"repository:external-evidence",
-                "root_ref":"workspace:disposable-external-evidence",
-                "starting_revision":"harness-recorded-initial-commit",
-                "allowed_paths":["calculator.rs","test_calculator.rs"],
-                "allowed_operations":["read","write","execute","version_control"],
-                "dirty_tree":"allow_recorded",
-                "isolation":"shared_sequential",
-                "cleanup":"retain_accepted",
-                "artifacts":{"require_starting_state":true,"require_diff":true,"require_verification_evidence":true},
-                "credential_refs":[],"remote_access_refs":[]
-            },
-            "stages":[{
-                "id":"repair",
-                "title":"Repair the disposable calculator",
-                "prompt":{"type":"inline_markdown","content":"Inspect this disposable Rust repository. Fix calculator::add so the existing Rust test passes. Create the ignored target/ directory, compile test_calculator.rs with rustc --test and direct its -o output into target/, then run that test executable. Keep source changes bounded, do not commit, and report the result.\n"},
-                "session":"fresh",
-                "coding":{"capability":agent_capability,"operation":"process.execute","provider_profile":null,"execution_trust":"trusted_host_process","maximum_side_effect":"unknown"},
-                "verification":{
-                    "profile":{"capability":"evidence-verifier-weak","operation":"process.execute","provider_profile":null,"execution_trust":"trusted_host_process","maximum_side_effect":"read_only"},
-                    "checks":["rust.tests","git.diff"],
-                    "result_artifact":"verification_result",
-                    "log_artifact":"verification_logs"
-                },
-                "failure":"pause_for_review",
-                "reviewer":{"capability":"evidence-reviewer","operation":"process.execute","provider_profile":null,"execution_trust":"trusted_host_process","maximum_side_effect":"read_only"},
-                "approval":"shared_control_path",
-                "context_policy_ref":"context:external-evidence-process-v1",
-                "outputs":outputs
-            }],
-            "budget":{"max_review_loops":2},
-            "extensions":{"org.milkdrift/external-evidence":{"controlled_verifier_fault":true}}
-        }
-    });
-    PromptSequenceDocument::from_json(
-        &serde_json::to_vec(&value).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())
-}
-
 pub(crate) fn model_profile_facts(bytes: &[u8]) -> Result<ModelProfileFacts, String> {
     let profile = EndpointProfile::from_json(bytes).map_err(|error| error.to_string())?;
     let value: Value = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
@@ -186,11 +110,6 @@ pub(crate) fn model_profile_facts(bytes: &[u8]) -> Result<ModelProfileFacts, Str
         .map(|value| format!(":{value}"))
         .unwrap_or_default();
     let endpoint_origin = format!("{}://{host}{port}", base.scheme());
-    let features = value
-        .get("features")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "model features are absent".to_owned())?;
-    let has = |feature: &str| features.iter().any(|value| value.as_str() == Some(feature));
     let mut secret_refs = BTreeSet::new();
     if let Some(secret) = value
         .get("auth")
@@ -205,351 +124,221 @@ pub(crate) fn model_profile_facts(bytes: &[u8]) -> Result<ModelProfileFacts, Str
         protocol,
         model_alias,
         endpoint_origin,
-        streaming: has("streaming"),
-        structured_output: has("structured_output"),
+        digest: format!("b3_{}", blake3::hash(bytes)),
         secret_refs,
     })
 }
 
-pub(crate) fn model_revision(
-    model_capability: &str,
-    profile: &ModelProfileFacts,
-    max_output_units: u64,
-) -> Result<Value, String> {
-    let mut operations = vec![
-        Mutation::AddNode {
-            node: evidence_node(
-                "evidence-a",
-                "architecture evidence: add must compute a plus b",
-            )?,
+pub(crate) fn definition(
+    capability: &str,
+    title: &str,
+    instructions: &str,
+    repository: Option<&Path>,
+) -> TaskDefinitionDto {
+    TaskDefinitionDto {
+        title: title.into(),
+        description: title.into(),
+        instructions: instructions.into(),
+        capability: TaskCapability {
+            id: capability.into(),
+            operation: if repository.is_some() {
+                "process.execute"
+            } else {
+                "model.generate"
+            }
+            .into(),
         },
-        Mutation::AddNode {
-            node: evidence_node(
-                "evidence-b",
-                "verification evidence: Rust test expects add(2,3)=5",
-            )?
-            .with_control_input(port("in")?)
-            .map_err(|e| e.to_string())?,
+        inputs: BTreeMap::new(),
+        outputs: BTreeMap::new(),
+        dependencies: vec![],
+        required: true,
+        corrective_of: None,
+        paths: repository
+            .map(|path| {
+                vec![PathAccess {
+                    path: path.to_string_lossy().into_owned(),
+                    write: true,
+                }]
+            })
+            .unwrap_or_default(),
+    }
+}
+pub(crate) fn output(
+    definition: &mut TaskDefinitionDto,
+    name: &str,
+    media: Option<&str>,
+    max_bytes: u64,
+) {
+    definition.outputs.insert(
+        name.into(),
+        TaskOutputDeclarationDto {
+            required: true,
+            media_type: media.map(str::to_owned),
+            max_bytes,
         },
-        Mutation::AddNode {
-            node: evidence_node(
-                "evidence-denied",
-                "irrelevant candidate: weather is outside the requested causal policy",
-            )?
-            .with_control_input(port("in")?)
-            .map_err(|e| e.to_string())?,
+    );
+}
+pub(crate) fn text(value: &str) -> InputBinding {
+    InputBinding::Inline {
+        value: InputValue::Text { text: value.into() },
+    }
+}
+pub(crate) fn process_request(capability: &str, repository: &Path) -> CreateWorkflowRequest {
+    let prompt = "Inspect this disposable Rust repository. Fix calculator::add so the existing Rust test passes. Create the ignored target/ directory, compile test_calculator.rs with rustc --test and direct its -o output into target/, then run that executable. Keep source changes bounded, do not commit, and report the result.";
+    let mut coding = definition(capability, "Initial coding", prompt, Some(repository));
+    coding.inputs.insert("prompt".into(), text(prompt));
+    output(&mut coding, "diff", None, 1_048_576);
+    let mut verify = definition(
+        "evidence-verifier-weak",
+        "Controlled verification",
+        "Run the independent verification with the declared controlled check failure.",
+        Some(repository),
+    );
+    verify.dependencies.push("coding".into());
+    output(
+        &mut verify,
+        "verification_result",
+        Some("application/json"),
+        262_144,
+    );
+    output(
+        &mut verify,
+        "verification_logs",
+        Some("text/plain"),
+        1_048_576,
+    );
+    output(
+        &mut verify,
+        "verification_acceptance",
+        Some("text/plain"),
+        4_096,
+    );
+    let mut review = definition(
+        "evidence-reviewer",
+        "Independent review",
+        "Read the settled verification outcome and review the need for a corrective task.",
+        Some(repository),
+    );
+    review.dependencies.push("verify".into());
+    review.inputs.insert(
+        "verification".into(),
+        InputBinding::SettledOutcome {
+            task: "verify".into(),
         },
-        Mutation::AddNode {
-            node: Node::new(
-                node("model-release")?,
-                NodeKind::SignalWait {
-                    signal: OperationId::new("evidence.model.release")
-                        .map_err(|e| e.to_string())?,
-                },
-            )
-            .map_err(|e| e.to_string())?
-            .with_control_input(port("in")?)
-            .map_err(|e| e.to_string())?
-            .with_control_output(port("next")?)
-            .map_err(|e| e.to_string())?,
-        },
-        Mutation::AddNode {
-            node: model_node(model_capability, profile, max_output_units)?
-                .with_control_input(port("in")?)
-                .map_err(|e| e.to_string())?,
-        },
-        Mutation::AddNode {
-            node: Node::new(
-                node("done")?,
-                NodeKind::Terminal {
-                    outcome: TerminalOutcome::Success,
-                },
-            )
-            .map_err(|e| e.to_string())?
-            .with_control_input(port("in")?)
-            .map_err(|e| e.to_string())?,
-        },
-    ];
-    for (id, source, target) in [
-        ("a-b", "evidence-a", "evidence-b"),
-        ("b-denied", "evidence-b", "evidence-denied"),
-        ("denied-release", "evidence-denied", "model-release"),
-        ("release-model", "model-release", "model"),
-        ("model-accept", "model", "model-acceptance"),
+    );
+    output(&mut review, "review", Some("application/json"), 524_288);
+    output(
+        &mut review,
+        "remediation_proposal",
+        Some("application/json"),
+        524_288,
+    );
+    CreateWorkflowRequest {
+        request_id: "external-process-create".into(),
+        title: PROCESS_WORKFLOW.into(),
+        description: "Controlled failure, independent review and explicit corrective future work"
+            .into(),
+        tasks: vec![
+            NewTaskDto {
+                alias: "coding".into(),
+                definition: coding,
+            },
+            NewTaskDto {
+                alias: "verify".into(),
+                definition: verify,
+            },
+            NewTaskDto {
+                alias: "review".into(),
+                definition: review,
+            },
+        ],
+        inputs: BTreeMap::new(),
+        finish_when_settled: false,
+        limits: None,
+    }
+}
+pub(crate) fn model_request(capability: &str, repository: &Path) -> CreateWorkflowRequest {
+    let mut tasks = Vec::new();
+    for (alias, payload) in [
+        (
+            "evidence-a",
+            "Architecture evidence: add must compute a plus b",
+        ),
+        (
+            "evidence-b",
+            "Verification evidence: Rust test expects add(2,3)=5",
+        ),
+        ("unselected", "UNSELECTED_PRIVATE_EVIDENCE"),
     ] {
-        operations.push(Mutation::AddEdge {
-            edge: Edge::new(
-                EdgeId::new(id).map_err(|e| e.to_string())?,
-                EdgeKind::Control,
-                node(source)?,
-                port("next")?,
-                node(target)?,
-                port("in")?,
-            ),
+        let mut source = definition(
+            "evidence-source",
+            alias,
+            "Publish the exact named evidence",
+            Some(repository),
+        );
+        source.inputs.insert("payload".into(), text(payload));
+        if alias == "evidence-b" {
+            source.dependencies.push("evidence-a".into());
+        }
+        if alias == "unselected" {
+            source.dependencies.push("evidence-b".into());
+        }
+        output(&mut source, "evidence", Some("text/plain"), 65_536);
+        tasks.push(NewTaskDto {
+            alias: alias.into(),
+            definition: source,
         });
     }
-    let artifact_schema = schema("milkdrift.artifact-reference")?;
-    operations.extend([
-        Mutation::AddNode {
-            node: milkdrift_control::result_acceptance_task(
-                node("model-acceptance")?,
-                milkdrift_control::ResultAcceptanceContract::new(
-                    milkdrift_control::ResultRequirement::ModelProse,
-                    BTreeSet::new(),
-                )
-                .map_err(|error| error.to_string())?,
-                artifact_schema.clone(),
-            )
-            .map_err(|error| error.to_string())?,
+    let mut model = definition(
+        capability,
+        "Model analysis",
+        "Using only the explicitly selected evidence, respond exactly MILKDRIFT_EVIDENCE_OK and nothing else.",
+        None,
+    );
+    for name in ["evidence-a", "evidence-b"] {
+        model.dependencies.push(name.into());
+        model.inputs.insert(
+            name.into(),
+            InputBinding::TaskOutput {
+                task: name.into(),
+                output: "evidence".into(),
+                optional: false,
+            },
+        );
+    }
+    model.inputs.insert(
+        "release".into(),
+        InputBinding::Supplied {
+            name: "release".into(),
+            optional: false,
         },
-        Mutation::AddNode {
-            node: milkdrift_control::result_acceptance_gate(
-                node("model-gate")?,
-                node("model-acceptance")?,
-                artifact_schema,
-            )
-            .map_err(|error| error.to_string())?,
-        },
-        Mutation::AddNode {
-            node: Node::new(
-                node("model-rejected")?,
-                NodeKind::Terminal {
-                    outcome: TerminalOutcome::Failure,
-                },
-            )
-            .map_err(|error| error.to_string())?
-            .with_control_input(port("in")?)
-            .map_err(|error| error.to_string())?,
-        },
-    ]);
-    for (id, kind, source, output, target, input) in [
+    );
+    for (name, media, max_bytes) in [
         (
-            "model-response-accept",
-            EdgeKind::Data,
-            "model",
             "model_response",
-            "model-acceptance",
-            "result",
+            "application/vnd.milkdrift.model-response.v1+json",
+            1_048_576,
         ),
+        ("final_text", "text/plain", 524_288),
         (
-            "model-assessed",
-            EdgeKind::Control,
-            "model-acceptance",
-            "out",
-            "model-gate",
-            "in",
-        ),
-        (
-            "model-accepted",
-            EdgeKind::Data,
-            "model-acceptance",
-            "accepted_result",
-            "model-gate",
-            "accepted_result",
-        ),
-        (
-            "model-pass",
-            EdgeKind::Control,
-            "model-gate",
-            "pass",
-            "done",
-            "in",
-        ),
-        (
-            "model-fail",
-            EdgeKind::Control,
-            "model-gate",
-            "fail",
-            "model-rejected",
-            "in",
+            "provider_metadata",
+            "application/vnd.milkdrift.model-provider-metadata.v1+json",
+            262_144,
         ),
     ] {
-        operations.push(Mutation::AddEdge {
-            edge: Edge::new(
-                EdgeId::new(id).map_err(|error| error.to_string())?,
-                kind,
-                node(source)?,
-                port(output)?,
-                node(target)?,
-                port(input)?,
-            ),
-        });
+        output(&mut model, name, Some(media), max_bytes);
     }
-    let revision = BlueprintRevision::genesis(
-        WorkflowId::new(MODEL_WORKFLOW).map_err(|e| e.to_string())?,
-        MutationBatch::new(operations).map_err(|e| e.to_string())?,
-        AuthorRef::new("human:external-evidence").map_err(|e| e.to_string())?,
-        "real external model interoperability evidence",
-    )
-    .map_err(|e| e.to_string())?;
-    let bytes = BlueprintRevisionDocument::new(&revision)
-        .to_canonical_json()
-        .map_err(|e| e.to_string())?;
-    serde_json::from_slice(&bytes).map_err(|e| e.to_string())
-}
-
-fn evidence_node(identity: &str, payload: &str) -> Result<Node, String> {
-    let requirement =
-        CapabilityRequirement::new(OperationId::new("process.execute").map_err(|e| e.to_string())?)
-            .exact(CapabilityId::new("evidence-source").map_err(|e| e.to_string())?)
-            .execution_trust(ExecutionTrustClass::TrustedHostProcess)
-            .maximum_side_effect(SideEffectClass::ReadOnly);
-    let config = TaskConfig::new(requirement, TaskContextPolicy::default())
-        .and_then(|config| {
-            config.with_output_context_roles(BTreeSet::from([ContextSemanticRole::Evidence]))
-        })
-        .map_err(|e| e.to_string())?;
-    let payload = BoundedJson::new(Value::String(payload.to_owned())).map_err(|e| e.to_string())?;
-    let input = DataPort::input(
-        schema("milkdrift.evidence-payload")?,
-        true,
-        Some(BindingSource::Literal { value: payload }),
-    )
-    .map_err(|e| e.to_string())?;
-    Node::new(node(identity)?, NodeKind::Task { config })
-        .map_err(|e| e.to_string())?
-        .with_control_output(port("next")?)
-        .map_err(|e| e.to_string())?
-        .with_data_input(port("payload")?, input)
-        .map_err(|e| e.to_string())?
-        .with_data_output(
-            port("evidence")?,
-            DataPort::output(schema("milkdrift.artifact-reference")?),
-        )
-        .map_err(|e| e.to_string())
-}
-
-fn model_node(
-    model_capability: &str,
-    profile: &ModelProfileFacts,
-    max_output_units: u64,
-) -> Result<Node, String> {
-    let mut requirement =
-        CapabilityRequirement::new(OperationId::new("model.generate").map_err(|e| e.to_string())?)
-            .exact(CapabilityId::new(model_capability).map_err(|e| e.to_string())?)
-            .provider_profile(
-                ProviderProfileRef::new(&profile.profile_id).map_err(|e| e.to_string())?,
-            )
-            .maximum_side_effect(SideEffectClass::Unknown);
-    if profile.streaming {
-        requirement = requirement.streaming(StreamingMode::OutputFragments);
+    tasks.push(NewTaskDto {
+        alias: "model".into(),
+        definition: model,
+    });
+    CreateWorkflowRequest {
+        request_id: "external-model-create".into(),
+        title: MODEL_WORKFLOW.into(),
+        description: "Explicit immutable input selection across a durable pre-entry wait".into(),
+        tasks,
+        inputs: BTreeMap::new(),
+        finish_when_settled: true,
+        limits: None,
     }
-    let policy = TaskContextPolicy::new(
-        false,
-        None,
-        BTreeSet::from([node("evidence-a")?, node("evidence-b")?]),
-        BTreeSet::new(),
-        BTreeSet::new(),
-        BTreeSet::from([
-            ContextCategory::RawProgress,
-            ContextCategory::ToolTrace,
-            ContextCategory::VerboseCommandOutput,
-            ContextCategory::PriorPrompt,
-        ]),
-        None,
-        ContextBudget::default(),
-        ContextOrdering::default(),
-        ContextTruncation::default(),
-        ContextSessionPolicy::Fresh,
-        true,
-    )
-    .map_err(|e| e.to_string())?;
-    let config = TaskConfig::new(requirement, policy).map_err(|e| e.to_string())?;
-    let task = model_task(profile, max_output_units)?;
-    let task_value: Value = serde_json::from_slice(
-        &ModelTaskRequestDocument::new(task)
-            .to_canonical_json()
-            .map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
-    let mut result = Node::new(node("model")?, NodeKind::Task { config })
-        .map_err(|e| e.to_string())?
-        .with_control_output(port("next")?)
-        .map_err(|e| e.to_string())?
-        .with_data_input(
-            port(MODEL_TASK_INPUT_NAME)?,
-            DataPort::input(
-                schema("milkdrift.model-task")?,
-                true,
-                Some(BindingSource::Literal {
-                    value: BoundedJson::new(task_value).map_err(|e| e.to_string())?,
-                }),
-            )
-            .map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string())?;
-    for output in [
-        "model_response",
-        "final_text",
-        "structured_output",
-        "tool_calls",
-        "provider_metadata",
-    ] {
-        result = result
-            .with_data_output(
-                port(output)?,
-                DataPort::output(schema("milkdrift.artifact-reference")?),
-            )
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(result)
-}
-
-fn model_task(
-    profile: &ModelProfileFacts,
-    max_output_units: u64,
-) -> Result<ModelTaskRequest, String> {
-    let structured = profile
-        .structured_output
-        .then(|| {
-            StructuredOutput::new(
-                "milkdrift_evidence",
-                BoundedJson::new(json!({
-                    "type":"object",
-                    "properties":{"ok":{"type":"boolean"}},
-                    "required":["ok"],
-                    "additionalProperties":false
-                }))
-                .map_err(|e| e.to_string())?,
-                true,
-            )
-            .map_err(|e| e.to_string())
-        })
-        .transpose()?;
-    ModelTaskRequest::new(
-        vec![Message::new(
-            MessageRole::User,
-            vec![ContentPart::Text {
-                text: if structured.is_some() {
-                    "Using only the selected evidence, return JSON with ok=true. Do not repeat the evidence."
-                        .to_owned()
-                } else {
-                    "Using only the selected evidence, respond exactly MILKDRIFT_EVIDENCE_OK and nothing else."
-                        .to_owned()
-                },
-            }],
-            None,
-        )
-        .map_err(|e| e.to_string())?],
-        Vec::new(),
-        structured,
-        SessionSelection::Fresh,
-        None,
-        max_output_units,
-        profile.streaming,
-        BTreeMap::new(),
-    )
-    .map_err(|e| e.to_string())
-}
-
-fn node(value: &str) -> Result<NodeId, String> {
-    NodeId::new(value).map_err(|e| e.to_string())
-}
-
-fn port(value: &str) -> Result<PortId, String> {
-    PortId::new(value).map_err(|e| e.to_string())
-}
-
-fn schema(value: &str) -> Result<SchemaRef, String> {
-    SchemaRef::new(SchemaId::new(value).map_err(|e| e.to_string())?, 1).map_err(|e| e.to_string())
 }

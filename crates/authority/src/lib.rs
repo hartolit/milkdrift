@@ -26,9 +26,9 @@ pub use model::{
     AuthorityExecutionProvenance, AuthorityGrant, AuthorityGrantBuilder, AuthorityOperation,
     AuthorityRequest, BoundaryTimeMillis, CapabilityAuthorityScope,
     CapabilityAuthorityScopeBuilder, CapabilityExecutionRequirements, DaemonAuthorityScope,
-    DecisionOutcome, DecisionReasonCode, ExecutionAuthorityBasis, FilesystemScope,
-    LayoutAuthorityScope, LayoutOwner, NetworkScope, PeerAuthorityScope, RequestedResourceFacts,
-    ResourceScope, WorkflowRunScope, WorkflowSet, WorkspaceAuthorityScope,
+    DecisionOutcome, DecisionReasonCode, ExecutionAuthorityBasis, FilesystemScope, NetworkScope,
+    PeerAuthorityScope, RequestedResourceFacts, ResourceScope, WorkflowRunScope, WorkflowSet,
+    WorkspaceAuthorityScope,
 };
 pub use secret::SensitiveSecret;
 pub use selection::{MAX_SELECTION_ITEMS, Selection};

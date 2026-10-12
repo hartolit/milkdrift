@@ -216,10 +216,8 @@ impl PeerExecutionStore for OwnerPeerExecutionStore {
         let relationship_generation = request.relationship_generation;
         let entered_at_unix_ms = request.entered_at_unix_ms;
         let authority = request.authority.clone();
-        let published_invocation = request.published_invocation.cloned();
         self.call(move |direct| {
             direct.mark_peer_entered(&PeerEntryRequest {
-                published_invocation: published_invocation.as_ref(),
                 owner: &owner,
                 execution: &execution,
                 worker: &worker,
@@ -433,14 +431,10 @@ impl PeerArtifactStore for OwnerPeerArtifactStore {
         caller: &PeerId,
         offer: &ArtifactMetadataOffer,
         maximum_artifact_bytes: u64,
-        controller: Option<&milkdrift_persistence::ControllerArtifactOwner>,
     ) -> Result<ArtifactTransferDecision, PeerArtifactError> {
         let caller = caller.clone();
         let offer = offer.clone();
-        let controller = controller.cloned();
-        self.call(move |direct| {
-            direct.negotiate(&caller, &offer, maximum_artifact_bytes, controller.as_ref())
-        })
+        self.call(move |direct| direct.negotiate(&caller, &offer, maximum_artifact_bytes))
     }
 
     fn write_chunk(

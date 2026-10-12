@@ -155,10 +155,10 @@ session-export alternatives continue to apply.
 ## Final source correction — BR3, 2026-10-10
 
 A further end-to-end read found an inaccurate current-behavior assumption in my F1 and A1/P02's
-concurrent-author wording. [Authoring base](../../../../../apps/daemon/src/host/commands/authoring.rs)
+concurrent-author wording. [Authoring base](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/src/host/commands/authoring.rs)
 compares `request.expected_revision` to `draft.base_revision`, then reads that exact immutable
-revision. `finish` calls [retain_revision](../../../../../apps/daemon/src/host/commands/definitions.rs),
-which uses [RedbStore::put_revision](../../../../../adapters/redb-store/src/revision.rs). The latter
+revision. `finish` calls [retain_revision](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/src/host/commands/definitions.rs),
+which uses [RedbStore::put_revision](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/adapters/redb-store/src/revision.rs). The latter
 checks exact immutable identity and valid ancestry before inserting; it does not compare a mutable
 workflow head. Therefore two valid descendants of the same base may both be saved. Another author's
 save does not automatically make the old immutable base a conflict.

@@ -1,79 +1,55 @@
 # Milkdrift
 
-Milkdrift helps people and agents develop, adapt, and reuse methods of work. Its local-first,
-durable workflow runtime coordinates AI endpoints, coding agents, tools, humans, and peer machines.
-An operator can inspect execution, pause it, and revise future work while retaining the history
-and evidence needed to understand each decision. Models and tools run outside the core.
+Milkdrift lets people and agents work through a durable daemon-owned task collection. Submit a brief
+and captured files, run a configured model or trusted process, inspect its result, and reconnect
+later from another client. Future work can change without changing the facts recorded at start.
+Models and tools run outside the core.
 
-The pre-1.0 headless kernel supplies the current implementation, including independent hosting and
-managed resources. A new daemon-owned task model and standalone Svelte client have a
-[complete implementation sprint](docs/development/virtual-office/daemon-workflows-implementation/README.md),
-ready for authorization; production work has not started. There is no UI or storage migration.
-Local processes run with the daemon account's privileges;
-they are not sandboxed. Continuous controllers require explicit daemon activation and retain
-cumulative final-entry admission limits. Controller activation is disabled by default.
-[Status](docs/product/status.md) owns exact versions, limitations, and evidence;
-the [roadmap](docs/product/roadmap.md) owns the remaining work.
+The current slice includes a standalone Svelte client, CLI and public task API. Independent execution
+hosts and managed-resource protections remain available. See [status](docs/product/status.md) for
+what is implemented and [roadmap](docs/product/roadmap.md) for the finite remaining assignments.
 
 ## Fresh-directory quick start
 
-From this checkout, use the pinned Rust toolchain to build both applications. This PowerShell
-scenario copies [production examples](examples/operator/README.md) into a new operator directory,
-generates a credential in the current process environment, and runs a terminal-only workflow.
-The starter has finite authority for one workflow and enables no external adapters.
+Build the actual executables and the Rust connected-task harness:
 
-```powershell
-cargo build -p milkdrift-daemon --bin milkdrift-daemon -p milkdrift-cli --bin milkdrift
-if ($LASTEXITCODE -ne 0) { throw 'Application build failed' }
-$daemon = (Resolve-Path target/debug/milkdrift-daemon.exe).Path
-$cli = (Resolve-Path target/debug/milkdrift.exe).Path
-$examples = (Resolve-Path examples/operator).Path
-$operatorDirectory = Join-Path $env:USERPROFILE ('Milkdrift/operator-' + [guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $operatorDirectory | Out-Null
-Copy-Item "$examples/daemon.toml", "$examples/starter.json" $operatorDirectory
-Set-Location -LiteralPath $operatorDirectory
-$env:MILKDRIFT_TOKEN = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
-& $daemon --config daemon.toml --check-config
-if ($LASTEXITCODE -ne 0) { throw 'Invalid daemon configuration' }
-$daemonProcess = Start-Process $daemon -ArgumentList '--config', 'daemon.toml' -WorkingDirectory $operatorDirectory -PassThru -WindowStyle Hidden
-$readyBy = [DateTime]::UtcNow.AddSeconds(10)
-do {
-    & $cli --json --timeout-secs 1 daemon readiness
-    if ($LASTEXITCODE -eq 0) { break }
-    Start-Sleep -Milliseconds 100
-} while ([DateTime]::UtcNow -lt $readyBy -and !$daemonProcess.HasExited)
-if ($LASTEXITCODE -ne 0) { throw 'Daemon did not become ready' }
-$import = & $cli --json --command-id starter-import blueprint import starter.json | ConvertFrom-Json
-if ($LASTEXITCODE -ne 0) { throw 'Blueprint import failed' }
-$revision = $import.value.value.revision_id
-& $cli --json --command-id starter-start run start run-starter operator-starter $revision --request-file starter.request.json
-if ($LASTEXITCODE -ne 0) { throw 'Run start failed' }
-& $cli --json --timeout-secs 10 run wait run-starter --terminal succeeded
-if ($LASTEXITCODE -ne 0) { throw 'Starter did not succeed' }
-& $cli --json run timeline run-starter --limit 100
+```sh
+cargo build -p milkdrift-daemon --bin milkdrift-daemon -p milkdrift-cli --bin milkdrift -p milkdrift-evidence --bin connected-tasks
+cargo connected-tasks --help
 ```
 
-Keep this shell for subsequent authenticated CLI calls. Secrets belong in process environment or
-private referenced files, never argv or source. Paths in configuration resolve against its
-directory. The listener uses loopback; if the default port is occupied, change `bind` and set
-`MILKDRIFT_ENDPOINT` to the same address. For a Unix shell and foreground shutdown/restart, use the
-[operator guide](examples/operator/README.md#startup-and-restart).
+The [Svelte README](apps/web/README.md) gives the exact setup, static-client and browser-test commands.
+The harness uses a new explicitly selected empty directory, finite ports and a trusted Rust process
+that reads a supplied Cargo manifest and reports its real targets/dependencies. It also provides a
+controlled model endpoint for transport tests. Those fixtures do not create tasks or fake task
+completion. Submit through the browser or the same public CLI:
 
-Next run [one byte-pinned local process](examples/operator/README.md#one-byte-pinned-local-process)
-or [one separately managed model](examples/operator/README.md#one-separately-managed-loopback-model).
-[Prompt sequences](docs/guides/headless-dogfood.md) compose coding, verification, review, and
-prospective remediation. [Daemon operations](docs/operations/daemon.md) covers retention and backup.
-The [CLI guide](apps/cli/README.md) helps choose a command and interpret script results;
-the [Rust client guide](crates/control-client/README.md) explains direct API use and reconnect.
+```sh
+milkdrift --endpoint http://127.0.0.1:9734/ --token-file /private/operator.token --json workflow capabilities
+milkdrift --endpoint http://127.0.0.1:9734/ --token-file /private/operator.token --json workflow list
+milkdrift --endpoint http://127.0.0.1:9734/ --token-file /private/operator.token --json workflow create task-request.json
+milkdrift --endpoint http://127.0.0.1:9734/ --token-file /private/operator.token --json workflow receipt REQUEST_ID
+milkdrift --endpoint http://127.0.0.1:9734/ --token-file /private/operator.token --json workflow show WORKFLOW_ID
+milkdrift --endpoint http://127.0.0.1:9734/ --token-file /private/operator.token --json workflow task WORKFLOW_ID TASK_ID
+milkdrift --endpoint http://127.0.0.1:9734/ --token-file /private/operator.token --json workflow result WORKFLOW_ID TASK_ID
+```
+
+Use the endpoint and private credential file returned by your setup. Never paste a token into an
+argument, URL or repository file. Workflow/task IDs come from the acceptance receipt; if its reply
+is lost, look up the original request ID or discover the workflow. Reusing that request with changed
+content conflicts. The [operator examples](examples/operator/README.md) describe normal configured
+operation independently of the test harness.
+
+This release requires a new store root. Earlier development stores are refused before mutation;
+keep them with their preserved readers. Do not reuse an existing service's root or stop its process
+to try the task client. A client disconnect or CLI timeout does not stop accepted work.
 
 ## Read the repository
 
-- [Vision](docs/product/vision.md): intended experience and success criteria.
-- [Architecture](docs/architecture.md): terminology, invariants, dependency direction, and package owners.
-- [Learning the implementation](docs/README.md#learning-the-implementation): six source traces with
-  black-box commands and independent tests.
-- [Development workflow](docs/development/workflow.md): the full gate and focused suites.
-- [Documentation index](docs/README.md): operator, wire, schema, evidence, and decision references.
+- [Vision](docs/product/vision.md): intended experience and non-negotiable semantics.
+- [Architecture](docs/architecture.md): task ownership, external entry and durability.
+- [Documentation index](docs/README.md): operator, protocol and implementation references.
+- [Development workflow](docs/development/workflow.md): assignment scope and verification lanes.
 
 Contributors start with [AGENTS.md](AGENTS.md). Milkdrift is licensed under either
 [MIT](LICENSE-MIT) or [Apache 2.0](LICENSE-APACHE), at your option.

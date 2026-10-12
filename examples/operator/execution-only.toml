@@ -1,5 +1,5 @@
 # Maintained operator configuration. See README.md in this directory.
-schema_version = 13
+schema_version = 14
 role = "execution_only"
 host_id = "host:execution"
 data_root = "./data"
@@ -75,9 +75,6 @@ identities = { type = "any" }
 # Uploads default to restricted, and process/model outputs retain that classification.
 sensitivities = ["public", "internal", "restricted"]
 
-[actors.authority.resources.layouts]
-type = "deny_all"
-
 [actors.authority.resources.peers]
 identities = []
 allow_any = false
@@ -104,11 +101,7 @@ concurrency = 4
 [runtime]
 request_queue = 128
 maintenance_interval_ms = 100
-maximum_tick_items = 128
 global_concurrency = 32
-per_run_concurrency = 8
-per_branch_concurrency = 4
-per_capability_concurrency = 8
 effect_threads = 4
 effect_queue = 64
 cancellation_queue = 32
@@ -126,12 +119,9 @@ mode = "disabled"
 deadline_ms = 10000
 effect_policy = "drain"
 
-[application_receipts]
-hot_receipt_bound = 10000
-archive_batch_size = 256
 
-# Per-call ceilings are also constrained by the actor grant and prepared adapter bounds.
 [serving]
+browser_origins = ["http://127.0.0.1:5173", "http://127.0.0.1:4173"]
 worker_threads = 4
 maximum_global_active = 256
 maximum_dispatch_queue = 256
@@ -140,18 +130,3 @@ archive_batch_size = 256
 observation_hot_retention_ms = 86400000
 recovery_page = 128
 poll_interval_ms = 100
-
-[serving.clients]
-maximum_uploaded_artifacts = 1024
-maximum_uploaded_bytes = 67108864
-maximum_concurrent = 4
-maximum_requests_per_minute = 600
-catalog_ttl_ms = 30000
-
-[serving.clients.execution_limits]
-artifact_bytes = 67108864
-duration_ms = 300000
-cost_micros = 0
-input_units = 1000000
-output_units = 1000000
-observations = 4096

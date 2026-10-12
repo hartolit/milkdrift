@@ -1,103 +1,88 @@
 # milkdrift-redb-store
 
-This adapter makes Milkdrift's [persistence contracts](../../crates/persistence/README.md) durable
-on a local filesystem. It implements the journal, revision, workspace, artifact, account,
-application, peer, clock, and administrative ports with one redb database and owned artifact
-directories. Runtime decides what to commit; this package owns how those facts survive reopening.
+This adapter implements Milkdrift's [persistence contracts](../../crates/persistence/README.md) with
+one redb database and owned artifact directories. Runtime decides what task transitions mean; this
+package makes accepted snapshots, receipts, resource holds and artifacts durable.
 
-The fresh task format uses physical schema 18. An existing database is locked through a read-only
-handle and copied to a private temporary directory for its format check before redb can open the
-source for housekeeping writes. An older format is refused; it is never treated as empty or
-upgraded. Keep old generations with the preserved binary and use an explicitly new directory for
-task development. This is software-level refusal and does not establish power-loss behavior.
+The fresh task format uses physical schema 19. Existing databases are locked through a read-only
+handle and copied privately for the format check before redb can open the source for housekeeping
+writes. Older formats are refused without migration. Keep preserved generations with their matching
+binary and use an explicitly new directory for task development. Tested byte and modification-time
+invariance establishes software-level refusal, not power-loss durability.
 
-## Open and share the store
+## Open and share a store
 
-`RedbStore::open` uses the ordinary limits for an owned data directory. Use
-`RedbStoreConfig` with `open_with_config` when composing explicit artifact/read limits, receipt
-archival, audit retention, or a clock. One `Arc<RedbStore>` can supply the narrow traits needed by
-runtime and other consumers; callers do not receive a database transaction or table handle.
-Import the relevant `milkdrift-persistence` trait to call its methods.
+`RedbStore::open` uses the ordinary limits for an owned data directory. Compose `RedbStoreConfig`
+with `open_with_config` for explicit artifact/read limits, task capacity, audit retention or a clock.
+One `Arc<RedbStore>` supplies narrow traits to runtime and other consumers; callers receive no redb
+transaction or table handle. Import the relevant persistence trait to call its methods.
 
-Opening validates the directory and exact physical schema, then restores configured application
-retention bounds. It does not recover workflow executions or scan every historical record.
-The daemon's [startup composition](../../apps/daemon/src/host/startup.rs) opens this store, supplies
-its ports to runtime, and recovers active work before admission. Current versions and migration
-limits belong in [status](../../docs/product/status.md). For setup, stopped-store backup, and
-shutdown, use [daemon operations](../../docs/operations/daemon.md).
+Opening validates the directory, physical schema and required accounting anchors, then restores the
+configured security-audit bound. It does not scan every historical record or recover external work.
+The daemon's [startup composition](../../apps/daemon/src/host/startup.rs) owns recovery before admission.
+Use [daemon operations](../../docs/operations/daemon.md) for setup, shutdown and backups.
 
-For a blocked or preserved generation, `offline::OfflineStore::open` takes the exclusive source
-lock and opens a verified private database copy. Its read-only facade exposes bounded record
-diagnostics, journal/revision/artifact reads and the existing integrity scanner, without normal
-open's clock/retention writes. Backup and restore preserve the complete generation and mark each
-copy inspection-only. The [operator procedure](../../docs/operations/daemon.md#offline-storage-administration)
+`offline::OfflineStore::open` takes the exclusive source lock and opens a verified private database
+copy. Its read-only facade exposes bounded redacted diagnostics, task/artifact queries and integrity
+scans without normal open's clock or retention writes. Backup and restore preserve a complete
+generation and mark each copy inspection-only. The [operator procedure](../../docs/operations/daemon.md#offline-inspection-and-backup)
 explains private destinations, copy limits, completion verification and explicit activation.
 
 ## What a write makes durable
 
-[`task.rs`](src/task.rs) atomically commits the runtime's workflow snapshot, discovery fields,
-exact command result and aggregate capacity counters. Defaults allow 1 GiB of task documents and
-reserved settlement bytes, plus a separate 256 MiB or 100,000 receipt allowance, whichever is
-exhausted first. `with_workflow_limits` selects smaller or larger explicit bounds. Every mandatory
-control slot reserves 8 KiB as well as one receipt entry. No task record or accepted key is evicted
-to admit new work. The runtime consumes the reserved control slot when saving a server-issued
-stop action, and releases remaining task space only after its durable settlement.
+[`task.rs`](src/task.rs) atomically saves a workflow snapshot, discovery fields, exact command result,
+managed-execution holds and capacity counters. Defaults admit at most 1 GiB of retained task documents,
+reserved remaining growth, pending artifact writes and committed physical content combined. A separate
+256 MiB or 100,000 receipt allowance stops admission at whichever limit is reached first.
+`with_workflow_limits` selects explicit bounds. Missing accounting is corruption, never an empty store.
 
-Native-directory claims have a separate bounded table. Whole-set acquisition checks equal and
-ancestor/descendant paths in the same transaction; overlapping readers may coexist, but any writer
-conflicts. Neither restart nor elapsed time releases a claim. The host must report durable
-settlement before release, so an uncertain writer continues blocking new conflicting work.
+Each unfinished workflow reserves its possible output growth and remaining state growth. Mandatory
+stop controls reserve 8 KiB and one receipt entry each. The stable server-issued stop identity consumes
+its slot once; ordinary requests cannot use those reserved slots. Exact request replay succeeds before
+new capacity checks, including after reopening. No task record or accepted key is evicted to admit work.
+Artifact bytes retain their charge after a workflow settles, while unused reservations are released.
 
-[`journal/append.rs`](src/journal/append.rs) checks replay before optimistic guards. For a new
-command it commits events, receipt/result, history links, workspace usage and values, discovery
-indexes, and attached controller changes in one immediate-durability transaction. An error after
-that commit can still reach the caller. Read or redeliver the exact command to determine acceptance;
-do not infer rollback from the error alone.
+Native-directory claims use a separate bounded table. Whole-set acquisition checks equal and nested
+physical paths in the same transaction. Overlapping readers may coexist; any overlapping writer
+conflicts. Restart and elapsed time do not release claims. Durable settlement releases them, while
+uncertain work continues to block conflicting access.
 
-Artifact publication crosses both files and database rows. The
+Artifact publication crosses filesystem bytes and database records. The
 [publication path](src/artifact/publication.rs) saves resumable intent, accepts bounded sequential
 chunks, verifies and synchronizes content, then commits metadata and accounting. A failure between
-content publication and metadata commit can leave an unreferenced blob. Exact publication replay
-and bounded cleanup reconcile these states. Deduplicated content still has independently charged
-logical metadata; replay does not charge it again.
+content publication and metadata commit may leave an unreferenced blob. Exact publication replay and
+bounded cleanup reconcile these states. Deduplicated content has independently charged logical
+metadata, while physical content is charged once. Pending and committed output share a frozen
+per-invocation ceiling; task provenance requires durable entry in the exact owning workflow.
 
-[`application.rs`](src/application.rs) retains complete external receipts in hot or cold storage.
-Archival moves ownership atomically, preserving exact replay and conflict checks across both
-tiers. It does not expire old command identities. Peer records have a different lifecycle:
-eligible records become compact tombstones that preserve acceptance and final disposition while
-detailed observations retire. Security audit retains its own bounded window. These policies
-do not delete runtime journal history or implicitly expire artifact bytes.
+Managed task acceptance acquires frozen installation holds in the snapshot transaction. Descriptor
+changes, physical fences, conflicting editors and removal guards remain enforced independently of
+task state. Entered uses need physical stop evidence before release; an unentered accepted task can
+release its hold on settlement. Task workflows do not support legacy parent/child editing transfers.
+Independent candidate evaluation and protected deployment evidence remain owned by managed resources.
 
-Managed removal, candidate-evaluation completion and method retirement release their own active
-admission slots. Their full historical records stay available for replay and evidence references;
-startup pages the derived active indexes. `with_managed_limits` and `with_publication_limit` configure
-these independent bounds. Lowering a limit on reopen blocks new work until current obligations
-settle; it does not evict accepted work. These limits do not cap the disk space occupied by history.
+Peer records retain their own durable admission and external-entry boundary. Eligible records become
+compact tombstones preserving acceptance and terminal disposition while detailed observations retire.
+Security audit keeps a bounded ordered window. Neither mechanism evicts task history or expires
+artifact content implicitly. Managed installation/evaluation active-slot limits likewise preserve
+historical evidence and block new admission when lowered below current obligations.
 
-[`sample_clock`](src/clock.rs) samples the configured clock after obtaining the write transaction,
-then advances or rejects the durable watermark. Sampling before waiting for a writer would let a
-concurrent publication overtake that sample and falsely appear to move time backwards. The
-`ClockWatermarkStore` port also accepts exact caller-owned observations. A watermark remembers
-observed time across restart; it cannot establish elapsed downtime independently of the clock.
+[`sample_clock`](src/clock.rs) samples after obtaining the write transaction so a waiting writer cannot
+mistake another committed observation for a rollback. `ClockWatermarkStore` also accepts exact
+caller-owned observations. The watermark remembers observed time across restart; it cannot establish
+elapsed downtime independently of the clock.
 
 ## Read and verify
 
-Queries verify record checksums, identities, and the relationships needed for their result.
-Revision discovery merges only the selected workflows' index ranges before reading definitions.
-The caller authorizes that bounded collection; the index neither grants access nor duplicates
-immutable definition authority. Its rows commit with revisions and participate in integrity scans.
-Run discovery uses derived indexes checked against journal facts; an empty or corrupt index
-cannot be substituted for known active work. Snapshots are optional verified replay shortcuts.
-Their journal-prefix and append-time commitments must agree before runtime can use them.
+Reads verify checksums, identities and the relationships needed for their result. Discovery pages task
+snapshots in stable workflow order with a 4 MiB aggregate page target. A larger valid document is
+returned alone, within its separate document bound; boundary callers perform current authority filtering. Integrity
+scans separately cover task documents, artifact content and retained indexes, returning bounded
+continuations instead of silently dropping work. A sampled health result does not prove every record
+or filesystem byte is sound.
 
-`StorageAdmin::health` returns a bounded sample. Use `scan_integrity` and retain its returned
-cursor for a historical scrub, optionally including artifact content. Each page owns one read
-transaction, not a frozen snapshot of the entire multi-page scan. Cursor validation binds its
-store and verification mode. `ArtifactStore::cleanup_orphans` separately performs bounded cleanup
-under the supplied age threshold and durable ownership checks; integrity inspection does not repair
-or delete records.
-
-The default build has no test helpers. `test-admin` enables fault injection and inspection used by
-the integration suites. Run `cargo test -p milkdrift-redb-store --all-features` for transaction,
-publication, retention, corruption, and reopen cases. Those software fault tests do not qualify
-filesystem power loss or exactly-once external effects.
+Run `cargo test -p milkdrift-redb-store --all-features` for the adapter contracts. Focused tests cover
+exact replay and conflict after lost responses, capacity reservations, schema refusal, native path
+claims, managed protection, peer retention and artifact recovery. The
+[development workflow](../../docs/development/workflow.md) owns the required verification schedule.
+These tests do not establish power-loss behavior or exactly-once external effects.

@@ -1,8 +1,94 @@
 //! Live observations through the production daemon and independent control client.
 
 use super::support::*;
-use milkdrift_control_protocol::{CapabilityRead, ObservationEnvelope};
+use futures_util::StreamExt as _;
+use milkdrift_authority::CapabilityAuthorityScopeBuilder;
+use milkdrift_capability::SideEffectClass;
+use milkdrift_control_protocol::{CapabilityRead, Observation, ObservationEnvelope};
 use std::{collections::BTreeSet, pin::Pin};
+
+async fn task_event(response: &mut reqwest::Response) -> TestResult<String> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(6);
+    let mut bytes = Vec::new();
+    while !bytes.windows(2).any(|value| value == b"\n\n") {
+        let chunk = tokio::time::timeout_at(deadline, response.chunk())
+            .await??
+            .ok_or("task stream closed before event")?;
+        bytes.extend_from_slice(&chunk);
+        if bytes.len() > 65536 {
+            return Err("task event exceeded bound".into());
+        }
+    }
+    Ok(String::from_utf8(bytes)?)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn task_stream_cursor_is_actor_bound_and_resynchronizes_after_restart() -> TestResult {
+    let directory = TempDir::new()?;
+    let profile = configured_process_profile(&directory)?;
+    let plan = configuration_with_process_profiles(&directory, 32, vec![profile])?;
+    let daemon = start(plan.clone(), CONTROLLER_TOKEN).await?;
+    let raw = reqwest::Client::new();
+    let mut response = raw
+        .get(daemon.endpoint.join("v1/workflows/stream")?)
+        .bearer_auth(CONTROLLER_TOKEN)
+        .send()
+        .await?;
+    let first = task_event(&mut response).await?;
+    assert!(first.contains("event: workflow_changed"), "{first}");
+    let cursor = first
+        .lines()
+        .find_map(|line| line.strip_prefix("id: "))
+        .ok_or("event cursor absent")?
+        .to_owned();
+    drop(response);
+    let foreign = raw
+        .get(daemon.endpoint.join("v1/workflows/stream")?)
+        .header("Last-Event-ID", &cursor)
+        .bearer_auth(OBSERVER_TOKEN)
+        .send()
+        .await?;
+    assert!(foreign.status().is_client_error());
+    drop(foreign);
+    daemon.stop().await?;
+    let restarted = start(plan, CONTROLLER_TOKEN).await?;
+    let mut response = raw
+        .get(restarted.endpoint.join("v1/workflows/stream")?)
+        .header("Last-Event-ID", &cursor)
+        .bearer_auth(CONTROLLER_TOKEN)
+        .send()
+        .await?;
+    assert!(response.status().is_success());
+    assert!(
+        task_event(&mut response)
+            .await?
+            .contains("event: resync_required")
+    );
+    drop(response);
+    let mut fresh = raw
+        .get(restarted.endpoint.join("v1/workflows/stream")?)
+        .bearer_auth(CONTROLLER_TOKEN)
+        .send()
+        .await?;
+    assert!(
+        task_event(&mut fresh)
+            .await?
+            .contains("event: workflow_changed")
+    );
+    write_secret(
+        &directory.path().join("controller.token"),
+        "revoked-controller-token",
+    )?;
+    assert!(task_event(&mut fresh).await?.contains("event: forbidden"));
+    drop(fresh);
+    assert!(
+        client(&restarted.endpoint, CONTROLLER_TOKEN)?
+            .task_session()
+            .await
+            .is_err()
+    );
+    restarted.stop().await
+}
 
 type Subscription =
     Pin<Box<dyn futures_util::Stream<Item = Result<ObservationEnvelope, ClientError>> + Send>>;
@@ -23,7 +109,13 @@ fn catalogue(observation: ObservationEnvelope) -> TestResult<Vec<CapabilityRead>
 
 fn configuration_with_scoped_observer(directory: &TempDir) -> TestResult<DaemonConfig> {
     let profile = configured_process_profile(directory)?;
-    let mut config = configuration_document_with_process_profiles(directory, 64, vec![profile])?;
+    let mut second: serde_json::Value = serde_json::from_slice(&fs::read(&profile)?)?;
+    second["profile"]["capability"] = serde_json::json!("second-local-process");
+    second["profile"]["profile_id"] = serde_json::json!("second-profile");
+    let second_path = directory.path().join("second-process.json");
+    fs::write(&second_path, serde_json::to_vec(&second)?)?;
+    let mut config =
+        configuration_document_with_process_profiles(directory, 64, vec![profile, second_path])?;
     config
         .actors
         .get_mut(1)
@@ -151,96 +243,5 @@ async fn capability_stream_closes_when_credential_moves_to_another_actor() -> Te
         Observation::StreamClosing { .. }
     ));
     drop(stream);
-    daemon.stop().await
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn process_local_stream_cursors_resynchronize_after_restart_but_run_cursor_resumes()
--> TestResult {
-    let directory = tempfile::tempdir()?;
-    let config = configuration_with_scoped_observer(&directory)?.validate(directory.path())?;
-    let daemon = start(config.clone(), CONTROLLER_TOKEN).await?;
-    let revision = import_blueprint(&daemon.client, "restart-stream-import").await?;
-    daemon
-        .client
-        .submit(&request(
-            "restart-stream-start",
-            None,
-            Command::StartRun {
-                inputs: Vec::new(),
-                run_id: "restart-stream".into(),
-                workflow_id: "golden".into(),
-                revision_id: revision,
-            },
-        ))
-        .await?;
-    let mut run = daemon
-        .client
-        .subscribe("v1/runs/restart-stream/stream", None);
-    let run_cursor = next(&mut run).await?.cursor;
-    // Queue inspection moves health well beyond a newly opened daemon's generation.
-    for _ in 0..32 {
-        daemon.client.health().await?;
-    }
-    let mut health = daemon.client.subscribe("v1/stream/health", None);
-    let health_cursor = next(&mut health).await?.cursor;
-    let mut capabilities = daemon.client.subscribe("v1/stream/capabilities", None);
-    let capability_cursor = next(&mut capabilities).await?.cursor;
-    drop((run, health, capabilities));
-    daemon.stop().await?;
-
-    let daemon = start(config, CONTROLLER_TOKEN).await?;
-    let mut initial_health = daemon.client.subscribe("v1/stream/health", None);
-    let initial_health_cursor = next(&mut initial_health).await?.cursor;
-    assert!(
-        health_cursor.position_for("daemon-health")?
-            > initial_health_cursor.position_for("daemon-health")?
-    );
-    drop(initial_health);
-    let mut fresh_capabilities = daemon.client.subscribe("v1/stream/capabilities", None);
-    let fresh = next(&mut fresh_capabilities).await?;
-    // Deliberately reuse the same numeric position in the new daemon's populated window.
-    assert_eq!(
-        fresh.cursor.position_for("capability-health")?,
-        capability_cursor.position_for("capability-health")?
-    );
-    assert_eq!(catalogue(fresh)?, daemon.client.capabilities().await?);
-    for (path, cursor) in [
-        ("v1/stream/health", health_cursor),
-        ("v1/stream/capabilities", capability_cursor),
-    ] {
-        let mut resumed = daemon.client.subscribe(path, Some(cursor));
-        assert!(
-            matches!(
-                next(&mut resumed).await?.observation,
-                Observation::ResyncRequired { .. }
-            ),
-            "{path} silently accepted an earlier daemon's position"
-        );
-        assert!(resumed.next().await.is_none());
-    }
-    let mut fresh_health = daemon.client.subscribe("v1/stream/health", None);
-    assert!(matches!(
-        next(&mut fresh_health).await?.observation,
-        Observation::DaemonHealth(_)
-    ));
-    daemon
-        .client
-        .submit(&request(
-            "restart-stream-pause",
-            Some(daemon.client.run("restart-stream").await?.sequence),
-            Command::PauseRun {
-                run_id: "restart-stream".into(),
-            },
-        ))
-        .await?;
-    let old_position = run_cursor.position_for("run:restart-stream")?;
-    let mut resumed_run = daemon
-        .client
-        .subscribe("v1/runs/restart-stream/stream", Some(run_cursor));
-    let continued = next(&mut resumed_run).await?;
-    assert!(matches!(continued.observation, Observation::Timeline(_)));
-    assert!(continued.cursor.position_for("run:restart-stream")? > old_position);
-    drop((fresh_capabilities, fresh_health, resumed_run));
     daemon.stop().await
 }

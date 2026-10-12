@@ -161,7 +161,7 @@ entry, not retrospective deletion of an already running service.
 
 The finite Slotbook harness tests the fixed HTTP contract, authenticated mutation, capacity and
 interval behavior, restart persistence, cancellation, and exact deployment. Unknown engine/network
-observations never count as passes. See the [maintained example](../../examples/adaptive-slotbook/README.md)
+observations never count as passes. See the [maintained example](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/examples/adaptive-slotbook/README.md)
 for the frozen API and ordinary product commands. No generic semantic scanner or mandatory approval
 exception is inferred from a passing report; separately required command approvals and grant checks
 remain applicable. Generic task result acceptance remains independent.

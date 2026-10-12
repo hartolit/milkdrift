@@ -207,7 +207,7 @@ it to simplify implementation. Until the new owner contract exists, the current 
 must continue to refuse direct reconvergence truthfully.
 
 For an existing parallel form, the source-backed authoring counterpart is the
-[fork/join/reducer kernel example](../../../../../crates/blueprint/tests/kernel.rs), including
+[fork/join/reducer kernel example](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/blueprint/tests/kernel.rs), including
 separate control and data ports. The profile presents that saved meaning as:
 
 ```text

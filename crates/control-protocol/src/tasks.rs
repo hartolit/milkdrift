@@ -80,6 +80,35 @@ pub struct PathAccess {
     pub write: bool,
 }
 
+/// A named immutable output promised by a task.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+pub struct TaskOutputDeclarationDto {
+    /// Whether successful settlement requires this output.
+    #[serde(default = "required_by_default")]
+    pub required: bool,
+    /// Optional exact media type checked at settlement.
+    pub media_type: Option<String>,
+    /// Maximum retained bytes for this output.
+    #[cfg_attr(feature = "web-codegen", ts(type = "number"))]
+    pub max_bytes: u64,
+}
+
+/// One prospective consumer binding redirected by an adopted correction.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+pub struct TaskBindingRedirectDto {
+    /// Unstarted consumer whose existing binding will change.
+    pub consumer: String,
+    /// Exact version observed by the caller.
+    #[cfg_attr(feature = "web-codegen", ts(type = "number"))]
+    pub expected_version: u64,
+    /// Input currently bound to the original producer output.
+    pub input: String,
+}
+
 /// Editable content until the owning runtime freezes the task's start.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
@@ -95,6 +124,9 @@ pub struct TaskDefinitionDto {
     pub capability: TaskCapability,
     /// Named inputs with declared provenance.
     pub inputs: BTreeMap<String, InputBinding>,
+    /// Named immutable outputs available to future consumers.
+    #[serde(default)]
+    pub outputs: BTreeMap<String, TaskOutputDeclarationDto>,
     /// Explicit producer IDs or batch aliases.
     pub dependencies: Vec<String>,
     /// Whether completion requires success or adopted correction.
@@ -212,6 +244,9 @@ pub enum TaskChangeDto {
         task: String,
         /// Successful corrective task accepted for that obligation.
         correction: String,
+        /// Explicit, version-guarded future bindings to redirect.
+        #[serde(default)]
+        redirects: Vec<TaskBindingRedirectDto>,
     },
     /// Continue future execution.
     Continue,
@@ -278,9 +313,14 @@ pub enum TaskStateDto {
 #[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
 #[serde(deny_unknown_fields)]
 pub struct TaskResultDto {
+    /// Declared text artifacts contain non-UTF-8 bytes; download individual artifacts.
+    #[serde(default)]
+    pub text_unavailable: bool,
     /// Displayable result content retained by the daemon.
     pub text: String,
-    /// Content identity of these exact bytes.
+    /// Whether text is a bounded preview of the complete retained result.
+    pub text_truncated: bool,
+    /// Content identity of the complete retained text, including bytes outside a preview.
     pub digest: String,
     /// Named immutable output artifacts.
     pub artifacts: Vec<String>,
@@ -318,6 +358,8 @@ pub struct TaskReadDto {
     pub frozen: Option<FrozenTaskDto>,
     /// Available immutable result.
     pub result: Option<TaskResultDto>,
+    /// Result exists but current artifact authority does not permit its projection.
+    pub result_restricted: bool,
 }
 
 /// Actual selected bytes or immutable artifact identity, independent of a later file edit.
@@ -325,12 +367,16 @@ pub struct TaskReadDto {
 #[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
 #[serde(deny_unknown_fields)]
 pub struct FrozenInputDto {
+    /// Current artifact authority prevents releasing this captured input.
+    pub restricted: bool,
     /// Text, captured file, absent value or immutable artifact.
     pub kind: String,
     /// Captured filename, when present.
     pub name: Option<String>,
     /// Selected UTF-8 bytes, when text is available.
     pub text: Option<String>,
+    /// Whether captured text was omitted or shortened by the inspector budget.
+    pub text_truncated: bool,
     /// Exact selected byte digest.
     pub digest: Option<String>,
     /// Immutable artifact identity, when supplied as a reference.
@@ -358,6 +404,66 @@ pub struct FrozenTaskDto {
     pub entered: bool,
 }
 
+/// Compact lifecycle projection; selected task content is fetched separately.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+pub struct TaskSummaryDto {
+    /// Stable task identity.
+    pub id: String,
+    /// Accepted definition version.
+    #[cfg_attr(feature = "web-codegen", ts(type = "number"))]
+    pub version: u64,
+    /// Human-readable accepted title.
+    pub title: String,
+    /// Human-readable accepted description.
+    pub description: String,
+    /// Accepted producer task identities used by the timeline.
+    pub dependencies: Vec<String>,
+    /// Durable lifecycle state.
+    pub state: TaskStateDto,
+    /// Missing input or settlement explanation.
+    pub reason: Option<String>,
+    /// Recorded start, absent for queued tasks.
+    #[cfg_attr(feature = "web-codegen", ts(type = "number | null"))]
+    pub started_at: Option<u64>,
+    /// Proven settlement time.
+    #[cfg_attr(feature = "web-codegen", ts(type = "number | null"))]
+    pub ended_at: Option<u64>,
+    /// Whether cancellation has been requested.
+    pub stop_requested: bool,
+    /// Reserved exact stop action identity.
+    pub stop_request_id: String,
+    /// Whether a retained result can be inspected.
+    pub has_result: bool,
+}
+
+/// Discovery metadata without task definitions, captured inputs or result bodies.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowSummaryDto {
+    /// Stable workflow identity.
+    pub id: String,
+    /// Discoverable accepted title.
+    pub title: String,
+    /// Workflow brief.
+    pub description: String,
+    /// Accepted edit generation.
+    #[cfg_attr(feature = "web-codegen", ts(type = "number"))]
+    pub generation: u64,
+    /// Current lifecycle state.
+    pub state: String,
+    /// Creation timestamp.
+    #[cfg_attr(feature = "web-codegen", ts(type = "number"))]
+    pub created_at: u64,
+    /// Most recent recorded change.
+    #[cfg_attr(feature = "web-codegen", ts(type = "number"))]
+    pub updated_at: u64,
+    /// Number of retained tasks in this workflow.
+    pub task_count: u32,
+}
+
 /// Authorized workflow projection used by both discovery and the inspector.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
@@ -383,7 +489,11 @@ pub struct WorkflowReadDto {
     /// Effective cumulative ceilings.
     pub limits: WorkflowLimitsDto,
     /// Tasks ordered for stable presentation; order does not schedule work.
-    pub tasks: Vec<TaskReadDto>,
+    pub tasks: Vec<TaskSummaryDto>,
+    /// Number of retained tasks across all pages.
+    pub task_count: u32,
+    /// Continue the live task list without loading full task content.
+    pub next_task_cursor: Option<String>,
 }
 
 /// One bounded search/list page; cursors bind daemon, actor and exact query.
@@ -392,7 +502,7 @@ pub struct WorkflowReadDto {
 #[serde(deny_unknown_fields)]
 pub struct WorkflowPageDto {
     /// Accessible workflows in this page.
-    pub items: Vec<WorkflowReadDto>,
+    pub items: Vec<WorkflowSummaryDto>,
     /// Opaque continuation, if more accessible results remain.
     pub next_cursor: Option<String>,
     /// True when the bounded search window is exhausted.
@@ -404,6 +514,8 @@ pub struct WorkflowPageDto {
 #[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
 #[serde(deny_unknown_fields)]
 pub struct TaskSessionDto {
+    /// Maximum UTF-8 bytes in a supplied text value or captured file.
+    pub input_limit_bytes: u32,
     /// Installation identity required on subsequent task operations.
     pub daemon_id: String,
     /// Server-owned authenticated actor identity.

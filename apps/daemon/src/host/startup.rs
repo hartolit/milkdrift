@@ -15,20 +15,13 @@ use crate::{
     config::PeerHostConfig, config::RuntimeHostConfig, config::ShutdownConfig, config::StoragePlan,
 };
 use milkdrift_authority::{ActorRef, GrantSetEvaluator, PolicyId};
-use milkdrift_capability::ErrorClass;
 use milkdrift_capability_host::{
     CapabilityHost, CapabilitySelectionPolicy, EffectWorkerConfig, EffectWorkerHost, HostConfig,
     StoreInvocationDataAccess,
 };
-use milkdrift_control::ControlService;
-use milkdrift_persistence::{
-    ApplicationCommandStore, ApplicationPageQuery, ArtifactReadAuthority, EvidenceId, PageSize,
-    TimestampMillis, WorkerId,
-};
+use milkdrift_persistence::{ArtifactReadAuthority, EvidenceId, PageSize, TimestampMillis};
 use milkdrift_redb_store::{RedbStore, RedbStoreConfig};
-use milkdrift_runtime::{
-    RetryPolicy, RuntimeConfig, RuntimeService, SchedulerLimits, SequentialIdGenerator,
-};
+use milkdrift_runtime::SequentialIdGenerator;
 use std::{
     collections::BTreeMap, collections::BTreeSet, fs, sync::Arc, sync::Mutex, sync::Weak,
     sync::atomic::AtomicBool, sync::mpsc::SyncSender, sync::mpsc::sync_channel, thread,
@@ -101,7 +94,6 @@ impl DaemonHost {
         let (startup_sender, startup_receiver) = sync_channel(1);
         let health = Arc::new(SharedHealth::new(
             queue_capacity,
-            &storage,
             if recovery_controls {
                 None
             } else {
@@ -346,10 +338,6 @@ impl Owner {
         let store = Arc::new(
             RedbStore::open_with_config(
                 RedbStoreConfig::new(&storage.data_root)
-                    .with_application_receipt_lifecycle(
-                        storage.application_receipts.hot_receipt_bound,
-                        storage.application_receipts.archive_batch_size,
-                    )
                     .with_security_audit_limit(storage.security_audit_record_bound)
                     .with_clock(Arc::new(StoreClockAdapter(clock_source.clone()))),
             )
@@ -385,8 +373,9 @@ impl Owner {
             CapabilitySelectionPolicy::priorities(BTreeMap::new()),
         )
         .map_err(|error| error.to_string())?;
+        let adapter_storage = Arc::new(super::storage_ports::AdapterStorage::new(&store));
         capability_host
-            .install_native_path_store(store.clone())
+            .install_native_path_store(adapter_storage.clone())
             .map_err(|error| error.to_string())?;
         let mut startup_cleanup = StartupCleanup {
             host: Some(capability_host.clone()),
@@ -402,74 +391,26 @@ impl Owner {
             if !recovery_controls {
                 recover_input_uploads(store.as_ref(), startup_now)?;
             }
-            let mut workflow = if role == milkdrift_control_protocol::HostRole::WorkflowEnabled {
-                let scheduler = SchedulerLimits::new(
-                    runtime_plan.global_concurrency,
-                    runtime_plan.per_run_concurrency,
-                    runtime_plan.per_branch_concurrency,
-                    runtime_plan.per_capability_concurrency,
-                )
-                .map_err(|error| error.to_string())?;
-                let retry = RetryPolicy::new(
-                    3,
-                    vec![
-                        ErrorClass::RateLimit,
-                        ErrorClass::Transport,
-                        ErrorClass::Provider,
-                    ],
-                    250,
-                    30_000,
-                    500,
-                )
-                .map_err(|error| error.to_string())?;
-                let runtime_config = RuntimeConfig::new(
-                    WorkerId::new("daemon-worker").map_err(|error| error.to_string())?,
-                    ActorRef::new("service:daemon-runtime").map_err(|error| error.to_string())?,
-                    runtime_plan.lease_duration_ms,
-                    runtime_plan.maximum_tick_items,
-                    scheduler,
-                    retry,
-                )
-                .map_err(|error| error.to_string())?;
-                let runtime = Arc::new(
-                    RuntimeService::open_closed_with_authority(
+            let workflow = if role == milkdrift_control_protocol::HostRole::WorkflowEnabled {
+                let mut identity_entropy = [0u8; 16];
+                getrandom::fill(&mut identity_entropy)
+                    .map_err(|_| "task identity entropy unavailable".to_owned())?;
+                let identity_prefix =
+                    format!("task-{}", &blake3::hash(&identity_entropy).to_hex()[..32]);
+                let tasks = Arc::new(
+                    milkdrift_runtime::TaskRuntime::new(
                         store.clone(),
                         Arc::new(capability_host.clone()),
                         authority.clone(),
                         clock.runtime_adapter(),
                         Arc::new(
-                            SequentialIdGenerator::new("daemon", startup_now)
+                            SequentialIdGenerator::new(&identity_prefix, startup_now)
                                 .map_err(|error| error.to_string())?,
                         ),
-                        runtime_config,
                     )
+                    .with_maximum_active_tasks(runtime_plan.global_concurrency)
                     .map_err(|error| error.to_string())?,
                 );
-                let control = Arc::new(ControlService::new(
-                    store.clone(),
-                    store.clone(),
-                    runtime.clone(),
-                    authority.clone(),
-                ));
-                if matches!(
-                    runtime_plan.controller_activation,
-                    crate::config::ControllerActivation::Qualification
-                        | crate::config::ControllerActivation::Enabled
-                ) {
-                    runtime
-                        .install_controller_lifecycle(control.controller_lifecycle_owner())
-                        .map_err(|error| error.to_string())?;
-                }
-                let tasks = Arc::new(milkdrift_runtime::TaskRuntime::new(
-                    store.clone(),
-                    Arc::new(capability_host.clone()),
-                    authority.clone(),
-                    clock.runtime_adapter(),
-                    Arc::new(
-                        SequentialIdGenerator::new("task", startup_now)
-                            .map_err(|error| error.to_string())?,
-                    ),
-                ));
                 Some(WorkflowServices {
                     task_control: milkdrift_control::TaskControlService::new(
                         tasks.clone(),
@@ -477,25 +418,11 @@ impl Owner {
                         clock.runtime_adapter(),
                     ),
                     tasks,
-                    runtime,
-                    control,
-                    publications: None,
                 })
             } else {
                 None
             };
             if recovery_controls {
-                workflow
-                    .as_ref()
-                    .ok_or_else(|| "workflow role is absent".to_owned())?
-                    .runtime
-                    .enable_recovery_controls()
-                    .map_err(|error| error.to_string())?;
-                health.receipt_status(
-                    store
-                        .application_receipt_status()
-                        .map_err(|error| error.to_string())?,
-                );
                 startup_cleanup.host.take();
                 return Ok((
                     Self {
@@ -528,7 +455,7 @@ impl Owner {
             }
             let data = Arc::new(
                 StoreInvocationDataAccess::new(
-                    store.clone(),
+                    adapter_storage,
                     storage
                         .data_root
                         .join(milkdrift_redb_store::offline::EXECUTION_DIRECTORY),
@@ -541,29 +468,6 @@ impl Owner {
                 )
                 .map_err(|error| error.to_string())?,
             );
-            if let Some(workflow) = &workflow {
-                workflow
-                    .runtime
-                    .recover_startup_closed()
-                    .map_err(|error| error.to_string())?;
-            }
-            store
-                .application_command_receipts(&ApplicationPageQuery {
-                    after: None,
-                    limit: PageSize::new(1).map_err(|error| error.to_string())?,
-                })
-                .map_err(|error| error.to_string())?;
-            health.receipt_status(
-                store
-                    .application_receipt_status()
-                    .map_err(|error| error.to_string())?,
-            );
-            store
-                .application_layouts(&ApplicationPageQuery {
-                    after: None,
-                    limit: PageSize::new(1).map_err(|error| error.to_string())?,
-                })
-                .map_err(|error| error.to_string())?;
             let managed = adapters
                 .managed_linux
                 .clone()
@@ -598,44 +502,6 @@ impl Owner {
                 owner_queue,
                 clock.clone(),
             )?;
-            if let Some(workflow) = &mut workflow {
-                let grants = auth.grants();
-                let mut services = BTreeMap::new();
-                for (capability, identity) in &runtime_plan.publication_services {
-                    let grant = grants
-                        .iter()
-                        .find(|grant| grant.identity() == identity)
-                        .ok_or_else(|| {
-                            "configured publication service grant is absent".to_owned()
-                        })?;
-                    services.insert(
-                        capability.clone(),
-                        milkdrift_persistence::published::PublishedServiceIdentity {
-                            actor: grant.actor().clone(),
-                            grant: grant.identity().clone(),
-                            grant_revision: grant.revision(),
-                            grant_digest: grant.digest().map_err(|error| error.to_string())?,
-                            revocation_generation: grant.revocation_generation(),
-                        },
-                    );
-                }
-                let publications = milkdrift_control::PublishedWorkflowService::new(
-                    capability_host.clone(),
-                    store.clone(),
-                    workflow.runtime.clone(),
-                    authority.clone(),
-                    clock.runtime_adapter(),
-                    data,
-                    services,
-                );
-                let port: Arc<dyn milkdrift_capability_host::PublishedWorkflowContinuation> =
-                    publications.clone();
-                capability_host
-                    .install_published_continuation(&port)
-                    .map_err(|error| error.to_string())?;
-                publications.restore().map_err(|error| error.to_string())?;
-                workflow.publications = Some(publications);
-            }
             startup_cleanup.service = peer_runtime.service.clone();
             if let Some(service) = &peer_runtime.service {
                 health.peer_status(
@@ -657,10 +523,6 @@ impl Owner {
                 )
                 .map_err(|error| error.to_string())?;
                 startup_cleanup.effects = Some(workers);
-                workflow
-                    .runtime
-                    .resume_admission()
-                    .map_err(|error| error.to_string())?;
             }
             // This is the last fallible startup operation. Until it succeeds, serving workers
             // cannot claim and workflow workers have never been polled by the owner loop.
@@ -704,9 +566,6 @@ impl Owner {
     }
 }
 
-use milkdrift_persistence::ApplicationLayoutStore as _;
-use milkdrift_persistence::RunQueryStore as _;
-
 fn recover_input_uploads(store: &RedbStore, now: u64) -> Result<(), String> {
     let observed_at = TimestampMillis::new(now);
     let mut cursor = None;
@@ -731,70 +590,25 @@ fn recover_input_uploads(store: &RedbStore, now: u64) -> Result<(), String> {
 mod tests;
 
 fn refuse_workflow_obligations(store: &RedbStore) -> Result<(), String> {
-    use milkdrift_persistence::{ControllerAccountStore, RunSummaryFilter, RunSummaryPageQuery};
-    if !milkdrift_persistence::published::PublishedMethodStore::published_methods(
-        store,
-        None,
-        PageSize::new(1).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())?
-    .is_empty()
-    {
-        return Err("execution_only role refused: retained published workflow implementations require workflow_enabled".to_owned());
-    }
-    let mut cursor = None;
-    loop {
+    use milkdrift_persistence::WorkflowStore;
+    let mut after = None;
+    // Refuse active obligations before execution-only services are constructed.
+    for _ in 0..1024 {
         let page = store
-            .nonterminal_run_page(
-                cursor.as_ref(),
-                PageSize::new(128).map_err(|error| error.to_string())?,
-            )
+            .workflows(after.as_deref(), 200)
             .map_err(|error| error.to_string())?;
-        if !page.runs.is_empty() {
-            return Err("execution_only role refused: this store retains active or unresolved workflow obligations; start workflow_enabled to settle them, or use storage-admin for offline inspection".to_owned());
-        }
-        match page.next {
-            Some(next) => cursor = Some(next),
-            None => break,
-        }
-    }
-    if !store
-        .active_leases(PageSize::new(1).map_err(|error| error.to_string())?)
-        .map_err(|error| error.to_string())?
-        .entries
-        .is_empty()
-    {
-        return Err("execution_only role refused: workflow execution leases remain; start workflow_enabled to recover them".to_owned());
-    }
-    // A terminal workflow can still retain unknown controller usage. Read its ordinary
-    // durable account without constructing a runtime or changing historical evidence.
-    let mut cursor = None;
-    loop {
-        let page = store
-            .run_summaries(&RunSummaryPageQuery {
-                filter: RunSummaryFilter::default(),
-                cursor,
-                limit: PageSize::new(128).map_err(|error| error.to_string())?,
-            })
-            .map_err(|error| error.to_string())?;
-        for run in &page.runs {
-            if let Some(binding) = store
-                .controller_account_binding(&run.run)
-                .map_err(|error| error.to_string())?
-            {
-                let account = store
-                    .controller_account(&binding)
-                    .map_err(|error| error.to_string())?
-                    .ok_or_else(|| "controller account binding has no account".to_owned())?;
-                if !account.reservations().is_empty() || account.blocked().is_some() {
-                    return Err("execution_only role refused: workflow controller usage remains unresolved; start workflow_enabled to inspect and reconcile it".to_owned());
-                }
+        for snapshot in &page.items {
+            let record: milkdrift_runtime::WorkflowRecord =
+                serde_json::from_value(snapshot.document.clone())
+                    .map_err(|error| error.to_string())?;
+            if record.state != milkdrift_runtime::WorkflowState::Completed {
+                return Err("execution_only role refused: this store retains active or unresolved workflow obligations; start workflow_enabled to settle them".to_owned());
             }
         }
-        match page.next {
-            Some(next) => cursor = Some(next),
-            None => break,
+        after = page.next;
+        if after.is_none() {
+            return Ok(());
         }
     }
-    Ok(())
+    Err("execution_only role refused: bounded workflow obligation inspection exhausted".to_owned())
 }

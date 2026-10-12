@@ -27,24 +27,19 @@ use std::{
 use clap::{ArgAction, Parser, ValueEnum};
 use milkdrift_authority::{
     AccessMode, ArtifactAuthorityScope, AuthorityBudget, BoundaryTimeMillis,
-    CapabilityAuthorityScopeBuilder, DaemonAuthorityScope, FilesystemScope, LayoutAuthorityScope,
-    NetworkProfileRef, NetworkScope, PeerAuthorityScope, ResourceScope, SecretRef, Selection,
-    WorkflowRunScope, WorkspaceAuthorityScope,
+    CapabilityAuthorityScopeBuilder, DaemonAuthorityScope, FilesystemScope, NetworkProfileRef,
+    NetworkScope, PeerAuthorityScope, ResourceScope, SecretRef, Selection, WorkflowRunScope,
+    WorkspaceAuthorityScope,
 };
-use milkdrift_blueprint::WorkflowId;
 use milkdrift_capability::{CapabilityId, OperationId, SideEffectClass};
 use milkdrift_control_client::{ClientError, ControlClient};
-use milkdrift_control_protocol::{Command, CommandRequest, ProtocolVersion, decode_json};
 use milkdrift_daemon::{
-    ActorBindingConfig, ActorGrantConfig, AdapterConfig, ApplicationReceiptConfig,
-    AuthorityPresetConfig, DaemonConfig, ModelProfileConfig, PeerHostConfig, RuntimeHostConfig,
-    SecretSourceConfig, ShutdownConfig, ShutdownEffectPolicy,
+    ActorBindingConfig, ActorGrantConfig, AdapterConfig, AuthorityPresetConfig, DaemonConfig,
+    ModelProfileConfig, PeerHostConfig, RuntimeHostConfig, SecretSourceConfig, ShutdownConfig,
+    ShutdownEffectPolicy,
 };
 use milkdrift_evidence::application::{DaemonLaunch, application_binary, reserve_endpoint};
 use milkdrift_model::ModelResponseDocument;
-use milkdrift_prompt_sequence::{
-    PromptSource, RemediationProposalSpec, build_remediation_proposal,
-};
 use milkdrift_workspace::ArtifactSensitivity;
 use profiles::{AgentProfile, GeneratedProfiles, generated_profiles, prepare_agent_profile};
 use report::{
@@ -52,7 +47,7 @@ use report::{
     RestartEvidence, ScenarioEvidence, ValidationEvidence, write_report,
 };
 use serde_json::{Value, json};
-use workflows::{MODEL_RUN, MODEL_WORKFLOW, PROCESS_RUN, PROCESS_WORKFLOW};
+use workflows::{MODEL_WORKFLOW, PROCESS_WORKFLOW};
 
 type HarnessResult<T = ()> = Result<T, String>;
 
@@ -88,9 +83,6 @@ struct Arguments {
     /// Deadline for each workflow wait, including time spent reading daemon state.
     #[arg(long, default_value_t = 180, value_parser = clap::value_parser!(u64).range(1..=3600))]
     timeout_secs: u64,
-    /// Model output allowance; reasoning must finish within this explicit bound.
-    #[arg(long, default_value_t = 64, value_parser = clap::value_parser!(u64).range(1..=65536))]
-    max_output_units: u64,
     /// Selected evidence output directory; repository target/ is allowed.
     #[arg(long)]
     output: PathBuf,
@@ -244,7 +236,6 @@ async fn run_scenarios(
     let helpers = generated_profiles(repository, session_root)?;
     let mock = if arguments.fixture {
         Some(start_mock_endpoint(
-            arguments.max_output_units,
             arguments.fixture_failure == Some(FixtureFailure::ModelTruncated),
         )?)
     } else {
@@ -337,11 +328,11 @@ async fn run_scenarios(
         &model_token,
         &arguments.model_capability,
         &model_facts,
+        repository,
         mock.as_ref().map(|value| value.requests.clone()),
         mock.as_ref().map(|value| value.request_lines.clone()),
         arguments.fixture,
         Duration::from_secs(arguments.timeout_secs),
-        arguments.max_output_units,
     )
     .await
     {
@@ -398,13 +389,8 @@ fn configuration(
         "evidence-verifier-weak".to_owned(),
         "evidence-verifier-good".to_owned(),
         "evidence-reviewer".to_owned(),
-        "milkdrift-workflow-control".to_owned(),
     ]);
-    let model_caps = BTreeSet::from([
-        model_capability.to_owned(),
-        "evidence-source".to_owned(),
-        "milkdrift-workflow-control".to_owned(),
-    ]);
+    let model_caps = BTreeSet::from([model_capability.to_owned(), "evidence-source".to_owned()]);
     let actor = |credential: &str,
                  actor: &str,
                  grant: &str,
@@ -483,10 +469,6 @@ fn configuration(
             deadline_ms: 30_000,
             effect_policy: ShutdownEffectPolicy::Retain,
         },
-        application_receipts: ApplicationReceiptConfig {
-            hot_receipt_bound: 1_000,
-            archive_batch_size: 64,
-        },
         security_audit_record_bound: 2_000,
     };
     let configuration_digest = config
@@ -505,7 +487,7 @@ fn configuration(
     reason = "Evidence grants spell out every bounded resource input at the audit boundary."
 )]
 fn explicit_grant(
-    workflow: &str,
+    _workflow: &str,
     capabilities: &BTreeSet<String>,
     model_profile: Option<&str>,
     session_root: &Path,
@@ -520,12 +502,8 @@ fn explicit_grant(
         .iter()
         .map(|value| CapabilityId::new(value).map_err(|error| error.to_string()))
         .collect::<Result<BTreeSet<_>, _>>()?;
-    let mut operations = BTreeSet::from([
-        OperationId::new("process.execute").map_err(|error| error.to_string())?,
-        OperationId::new("workflow.inspect").map_err(|error| error.to_string())?,
-        OperationId::new(milkdrift_control::WORKFLOW_ACCEPT_RESULT_OPERATION)
-            .map_err(|error| error.to_string())?,
-    ]);
+    let mut operations =
+        BTreeSet::from([OperationId::new("process.execute").map_err(|error| error.to_string())?]);
     if model_profile.is_some() {
         operations.insert(OperationId::new("model.generate").map_err(|error| error.to_string())?);
     }
@@ -534,9 +512,8 @@ fn explicit_grant(
         .map_err(|error| error.to_string())?
         .only_operations(operations)
         .map_err(|error| error.to_string())?;
-    // The same model workflow also contains local evidence-source tasks whose requirements
-    // intentionally have no provider profile. The model task itself pins the exact profile and
-    // the report verifies that frozen identity through attempt provenance.
+    // Model and process inputs retain separate capability scopes. Daemon-assigned workflow
+    // identities require the explicit broad workflow scope in this disposable installation.
     let session_root = session_root
         .canonicalize()
         .map_err(|error| format!("session root canonicalization: {error}"))?;
@@ -555,7 +532,7 @@ fn explicit_grant(
         )
         .map_err(|error| error.to_string())?,
     ];
-    // A real agent need not share the interpreter used by the generated evidence helpers.
+    // A real agent may reside outside the evidence helper's executable directory.
     for executable in [&agent.canonical_executable, &helpers.canonical_executable] {
         let scope = FilesystemScope::from_canonical_host_path(
             executable
@@ -604,15 +581,12 @@ fn explicit_grant(
     .map_err(|error| error.to_string())?;
     Ok(ActorGrantConfig {
         resources: ResourceScope {
-            workflow_run: WorkflowRunScope::Workflow {
-                workflow: WorkflowId::new(workflow).map_err(|error| error.to_string())?,
-            },
+            workflow_run: WorkflowRunScope::Any,
             capability: builder.build(),
             filesystem,
             network,
             secrets,
             artifacts,
-            layouts: LayoutAuthorityScope::none(),
             peers: PeerAuthorityScope::none(),
             daemon: DaemonAuthorityScope {
                 readiness: true,
@@ -634,7 +608,7 @@ fn explicit_grant(
         valid_from: BoundaryTimeMillis::new(now.saturating_sub(60_000)),
         valid_until: BoundaryTimeMillis::new(now.saturating_add(86_400_000)),
         // Dynamic artifact/workspace identities require explicit run-wide acknowledgement;
-        // workflow, capability, operation, filesystem, network, secret, time, and budgets remain exact.
+        // capability, operation, filesystem, network, secret, time, and budgets remain bounded.
         dangerous_allow_broad_authority: true,
     })
 }
@@ -693,19 +667,13 @@ fn secret_sources(
     Ok(result)
 }
 
-fn start_mock_endpoint(max_output_units: u64, truncated: bool) -> HarnessResult<MockEndpoint> {
+fn start_mock_endpoint(truncated: bool) -> HarnessResult<MockEndpoint> {
     let requests = Arc::new(AtomicUsize::new(0));
     let request_lines = Arc::new(Mutex::new(Vec::new()));
     let thread_requests = requests.clone();
     let thread_request_lines = request_lines.clone();
     let server = milkdrift_evidence::http_fixture::LoopbackServer::start(move |stream| {
-        serve_mock_connection(
-            stream,
-            &thread_requests,
-            &thread_request_lines,
-            max_output_units,
-            truncated,
-        )
+        serve_mock_connection(stream, &thread_requests, &thread_request_lines, truncated)
     })
     .map_err(|error| error.to_string())?;
     Ok(MockEndpoint {
@@ -719,7 +687,6 @@ fn serve_mock_connection(
     stream: &mut std::net::TcpStream,
     requests: &AtomicUsize,
     request_lines: &Mutex<Vec<String>>,
-    max_output_units: u64,
     truncated: bool,
 ) -> std::io::Result<()> {
     let request = milkdrift_evidence::http_fixture::read_request(stream)?;
@@ -743,26 +710,23 @@ fn serve_mock_connection(
     requests.fetch_add(1, Ordering::SeqCst);
     let body: Value =
         serde_json::from_str(request.split_once("\r\n\r\n").map_or("", |(_, body)| body))?;
-    if body.get("max_tokens").and_then(Value::as_u64) != Some(max_output_units) {
+    if body.get("max_tokens").and_then(Value::as_u64) != Some(4096) {
         return Err(std::io::Error::other(
             "model output allowance was not delivered",
         ));
     }
-    let body = concat!(
-        "data: {\"id\":\"fixture-response\",\"model\":\"fixture-model\",\"choices\":[{\"delta\":{\"content\":\"{\\\"ok\\\":\"},\"finish_reason\":null}]}\n\n",
-        "data: {\"id\":\"fixture-response\",\"model\":\"fixture-model\",\"choices\":[{\"delta\":{\"content\":\"true}\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":19,\"completion_tokens\":4}}\n\n",
-        "data: [DONE]\n\n"
-    );
-    let body = body.replace(
-        "\"finish_reason\":\"stop\"",
-        if truncated {
-            "\"finish_reason\":\"length\""
-        } else {
-            "\"finish_reason\":\"stop\""
-        },
-    );
+    let serialized = serde_json::to_string(&body)?;
+    if !serialized.contains("Architecture evidence")
+        || !serialized.contains("Verification evidence")
+        || serialized.contains("UNSELECTED_PRIVATE_EVIDENCE")
+    {
+        return Err(std::io::Error::other(
+            "model did not receive exact selected input content",
+        ));
+    }
+    let body = json!({"id":"fixture-response","model":"fixture-model","choices":[{"message":{"content":"MILKDRIFT_EVIDENCE_OK"},"finish_reason":if truncated {"length"}else{"stop"}}],"usage":{"prompt_tokens":19,"completion_tokens":4}}).to_string();
     let response = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
     stream.write_all(response.as_bytes())
@@ -781,8 +745,8 @@ fn write_fixture_model_profile(session_root: &Path, address: SocketAddr) -> Harn
         "redirect":"deny","tls":"web_pki_roots","proxy":"disabled",
         "features":["streaming","structured_output","system_role"],
         "max_concurrent":1,"local_development":true,"allowed_hosts":["127.0.0.1"],
-        "trust_zones":["external-evidence-fixture"],"billing": {"type":"unknown"},
-            "token_limits": {"type":"unknown"},
+        "trust_zones":["external-evidence-fixture"],"billing": {"type":"unbilled","source":"controlled loopback fixture"},
+            "token_limits": {"type":"byte_bpe","template_tokens_per_message":64,"template_tokens_per_request":64,"maximum_input_tokens":32768,"maximum_output_tokens":65536,"output_control":"max_tokens","source":"controlled fixture v2"},
             "provider_options":{}
     });
     let path = session_root.join("model-profile.fixture.json");
@@ -916,10 +880,7 @@ mod tests {
 
     #[test]
     fn external_bounds_are_explicit_and_reject_out_of_range_values() {
-        for (option, accepted, refused) in [
-            ("--timeout-secs", ["1", "3600"], ["0", "3601"]),
-            ("--max-output-units", ["1", "65536"], ["0", "65537"]),
-        ] {
+        for (option, accepted, refused) in [("--timeout-secs", ["1", "3600"], ["0", "3601"])] {
             for value in accepted {
                 assert!(
                     Arguments::try_parse_from([
@@ -964,7 +925,6 @@ mod tests {
             content_digest: String::new(),
             size_bytes: 1,
             version_output: String::new(),
-            output_names: vec!["diff".to_owned()],
             secret_refs: BTreeSet::new(),
         };
         let mut helpers = GeneratedProfiles {
@@ -980,8 +940,7 @@ mod tests {
             protocol: "open_ai_compatible".to_owned(),
             model_alias: "test-model".to_owned(),
             endpoint_origin: "http://127.0.0.1:8080".to_owned(),
-            streaming: true,
-            structured_output: false,
+            digest: format!("b3_{}", "0".repeat(64)),
             secret_refs: BTreeSet::new(),
         };
         let execute = BTreeSet::from([AccessMode::Execute]);

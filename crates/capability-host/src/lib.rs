@@ -53,6 +53,3 @@ pub use worker::{
 
 /// Persistent installations, resource-use coordination and their shared lifecycle owner.
 pub mod managed;
-
-mod published;
-pub use published::PublishedWorkflowContinuation;

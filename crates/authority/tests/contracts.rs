@@ -10,11 +10,11 @@ use milkdrift_authority::{
     AuthorityExecutionProvenance, AuthorityGrant, AuthorityGrantBuilder, AuthorityOperation,
     AuthorityRequest, BoundaryTimeMillis, CapabilityAuthorityScope,
     CapabilityAuthorityScopeBuilder, DaemonAuthorityScope, DecisionId, DecisionReasonCode,
-    FilesystemScope, GrantId, GrantSetEvaluator, LayoutAuthorityScope, NetworkProfileRef,
-    NetworkScope, PeerAuthorityScope, PolicyId, RequestedResourceFacts, ResourceScope, SecretRef,
-    Selection, SensitiveSecret, WorkflowRunScope, WorkspaceAuthorityScope,
+    FilesystemScope, GrantId, GrantSetEvaluator, NetworkProfileRef, NetworkScope,
+    PeerAuthorityScope, PolicyId, RequestedResourceFacts, ResourceScope, SecretRef, Selection,
+    SensitiveSecret, WorkflowRunScope, WorkspaceAuthorityScope,
 };
-use milkdrift_blueprint::{AuthorRef, RevisionId, WorkflowId};
+use milkdrift_blueprint::WorkflowId;
 use milkdrift_capability::{
     CapabilityCategory, CapabilityId, ExecutionTrustClass, Locality, OperationId, PeerId,
     ProviderProfileRef, SideEffectClass, TrustZone,
@@ -33,7 +33,7 @@ fn grant() -> TestResult<AuthorityGrant> {
         3,
         ActorRef::new("human:alice")?,
     )
-    .operations(set(AuthorityOperation::Approve))
+    .operations(set(AuthorityOperation::Apply))
     .resources(ResourceScope {
         workflow_run: WorkflowRunScope::Run {
             run: RunId::new("run-a")?,
@@ -54,7 +54,6 @@ fn grant() -> TestResult<AuthorityGrant> {
         )?,
         secrets: set(SecretRef::new("secret:provider-api")?),
         artifacts: ArtifactAuthorityScope::none(),
-        layouts: LayoutAuthorityScope::none(),
         peers: PeerAuthorityScope::none(),
         daemon: DaemonAuthorityScope::default(),
         workspace: WorkspaceAuthorityScope::none(),
@@ -81,7 +80,7 @@ fn request() -> TestResult<AuthorityRequest> {
         grant_revision: 3,
         grant_digest,
         revocation_generation: 4,
-        operation: AuthorityOperation::Approve,
+        operation: AuthorityOperation::Apply,
         resources: RequestedResourceFacts {
             workflow: Some(WorkflowId::new("workflow-a")?),
             run: Some(RunId::new("run-a")?),
@@ -105,8 +104,6 @@ fn request() -> TestResult<AuthorityRequest> {
             secrets: set(SecretRef::new("secret:provider-api")?),
             artifact: None,
             artifact_sensitivity: None,
-            revision: None,
-            layout_owner: None,
             workspace_scope: None,
             daemon_readiness: false,
             daemon_detailed_health: false,
@@ -143,7 +140,6 @@ fn grants_can_independently_permit_or_deny_trusted_host_processes() -> TestResul
                 network: NetworkScope::empty(),
                 secrets: BTreeSet::new(),
                 artifacts: ArtifactAuthorityScope::none(),
-                layouts: LayoutAuthorityScope::none(),
                 peers: PeerAuthorityScope::none(),
                 daemon: DaemonAuthorityScope::default(),
                 workspace: WorkspaceAuthorityScope::none(),
@@ -187,7 +183,6 @@ fn grants_can_independently_permit_or_deny_trusted_host_processes() -> TestResul
                 network: NetworkScope::empty(),
                 secrets: BTreeSet::new(),
                 artifacts: ArtifactAuthorityScope::none(),
-                layouts: LayoutAuthorityScope::none(),
                 peers: PeerAuthorityScope::none(),
                 daemon: DaemonAuthorityScope::default(),
                 workspace: WorkspaceAuthorityScope::none(),
@@ -247,7 +242,6 @@ fn filesystem_is_allowed(allowed: FilesystemScope, requested: FilesystemScope) -
                 network: NetworkScope::empty(),
                 secrets: BTreeSet::new(),
                 artifacts: ArtifactAuthorityScope::none(),
-                layouts: LayoutAuthorityScope::none(),
                 peers: PeerAuthorityScope::none(),
                 daemon: DaemonAuthorityScope::default(),
                 workspace: WorkspaceAuthorityScope::none(),
@@ -416,8 +410,7 @@ fn filesystem_scope_serialization_and_host_conversion_are_stable() -> TestResult
 }
 
 #[test]
-fn actor_author_grant_and_capability_identities_are_distinct_types() {
-    assert_ne!(TypeId::of::<ActorRef>(), TypeId::of::<AuthorRef>());
+fn actor_grant_and_capability_identities_are_distinct_types() {
     assert_ne!(TypeId::of::<ActorRef>(), TypeId::of::<GrantId>());
     assert_ne!(TypeId::of::<GrantId>(), TypeId::of::<CapabilityId>());
 }
@@ -433,7 +426,7 @@ fn grant_schema_has_a_canonical_golden_fixture_and_hostile_bounds() -> TestResul
     .build()?;
     assert_eq!(
         grant.to_canonical_json()?,
-        String::from_utf8(include_bytes!("fixtures/authority-grant-v4.json").to_vec())?
+        String::from_utf8(include_bytes!("fixtures/authority-grant-v5.json").to_vec())?
             .trim()
             .as_bytes()
     );
@@ -441,7 +434,7 @@ fn grant_schema_has_a_canonical_golden_fixture_and_hostile_bounds() -> TestResul
         AuthorityGrant::from_json(&grant.to_canonical_json()?)?,
         grant
     );
-    for unsupported in [1, 2, 3, 5] {
+    for unsupported in [1, 2, 3, 4, 6] {
         let mut old: serde_json::Value = serde_json::from_slice(&grant.to_canonical_json()?)?;
         *old.get_mut("schema_version")
             .ok_or("missing grant schema version")? = serde_json::json!(unsupported);
@@ -519,7 +512,7 @@ fn evaluation_covers_allow_and_every_stable_denial_family() -> TestResult {
             .contains(&DecisionReasonCode::Expired)
     );
     let mut operation = base.clone();
-    operation.operation = AuthorityOperation::Apply;
+    operation.operation = AuthorityOperation::Cancel;
     assert!(
         evaluate(&operation)?
             .reason_codes()
@@ -657,7 +650,7 @@ fn evaluation_covers_allow_and_every_stable_denial_family() -> TestResult {
         .build();
     let peer_grant =
         AuthorityGrantBuilder::new(GrantId::new("grant:peer-placement")?, 1, base.actor.clone())
-            .operations(set(AuthorityOperation::Approve))
+            .operations(set(AuthorityOperation::Apply))
             .resources(peer_resources)
             .budget(source_grant.budget())
             .validity(BoundaryTimeMillis::new(100), BoundaryTimeMillis::new(200))
@@ -679,16 +672,6 @@ fn evaluation_covers_allow_and_every_stable_denial_family() -> TestResult {
             .evaluate(&peer_request)?
             .reason_codes()
             .contains(&DecisionReasonCode::PlacementMismatch)
-    );
-    let revision =
-        serde_json::from_value::<RevisionId>(serde_json::json!(format!("rev_{}", "0".repeat(64))))?;
-    let mut layout = base.clone();
-    layout.resources.revision = Some(revision);
-    layout.resources.layout_owner = Some(milkdrift_authority::LayoutOwner::Shared);
-    assert!(
-        evaluate(&layout)?
-            .reason_codes()
-            .contains(&DecisionReasonCode::LayoutScopeMismatch)
     );
     let mut peer_scope = base.clone();
     peer_scope.operation = AuthorityOperation::InspectPeer;
@@ -782,7 +765,6 @@ fn artifact_metadata_and_content_require_exact_identity_and_sensitivity_scope() 
                     Selection::only(set(artifact.clone()))?,
                     set(ArtifactSensitivity::Restricted),
                 )?,
-                layouts: LayoutAuthorityScope::none(),
                 peers: PeerAuthorityScope::none(),
                 daemon: DaemonAuthorityScope::default(),
                 workspace: WorkspaceAuthorityScope::none(),
@@ -864,7 +846,6 @@ fn human_and_ai_actors_receive_identical_results_for_equivalent_grants() -> Test
                 network: NetworkScope::empty(),
                 secrets: BTreeSet::new(),
                 artifacts: ArtifactAuthorityScope::none(),
-                layouts: LayoutAuthorityScope::none(),
                 peers: PeerAuthorityScope::none(),
                 daemon: DaemonAuthorityScope::default(),
                 workspace: WorkspaceAuthorityScope::none(),

@@ -415,7 +415,6 @@ fn exact_authority(
             network: NetworkScope::empty(),
             secrets,
             artifacts: milkdrift_authority::ArtifactAuthorityScope::none(),
-            layouts: milkdrift_authority::LayoutAuthorityScope::none(),
             peers: milkdrift_authority::PeerAuthorityScope::none(),
             daemon: milkdrift_authority::DaemonAuthorityScope::default(),
             workspace: milkdrift_authority::WorkspaceAuthorityScope::none(),

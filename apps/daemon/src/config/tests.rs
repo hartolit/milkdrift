@@ -1,49 +1,11 @@
 use super::*;
 
 fn fixture_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/daemon-config-v13.toml")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/daemon-config-v14.toml")
 }
 
 fn fixture_document() -> Result<DaemonConfig, Box<dyn std::error::Error>> {
     Ok(toml::from_str(&fs::read_to_string(fixture_path())?)?)
-}
-
-#[test]
-fn controller_activation_is_explicit_and_qualification_remains_feature_gated()
--> Result<(), Box<dyn std::error::Error>> {
-    let mut config = fixture_document()?;
-    let path = fixture_path();
-    let base = path.parent().ok_or("fixture parent absent")?;
-    assert_eq!(
-        config.runtime.controller_activation,
-        ControllerActivation::Disabled
-    );
-    config.runtime.controller_activation = ControllerActivation::Enabled;
-    let enabled = config.clone().validate(base)?;
-    assert_eq!(
-        enabled.runtime.controller_activation,
-        ControllerActivation::Enabled
-    );
-    assert!(enabled.redacted_toml().contains("enabled"));
-    config.runtime.controller_activation = ControllerActivation::Qualification;
-    let result = config.validate(base);
-    if cfg!(feature = "controller-qualification") {
-        let plan = result?;
-        assert!(plan.redacted_toml().contains("qualification"));
-        assert!(
-            plan.redacted_toml()
-                .contains("per-command/per-request permission")
-        );
-    } else {
-        assert!(
-            result
-                .err()
-                .ok_or("qualification feature was bypassed")?
-                .to_string()
-                .contains("controller-qualification build feature")
-        );
-    }
-    Ok(())
 }
 
 #[test]
@@ -55,19 +17,25 @@ fn maintained_operator_configuration_uses_the_production_reader()
     let document: DaemonConfig = toml::from_str(&fs::read_to_string(&path)?)?;
     assert!(plan.bind().ip().is_loopback());
     assert!(
-        !document
+        document
             .actors
             .first()
             .ok_or("actor absent")?
             .authority
             .dangerous_allow_broad_authority
     );
+    assert!(matches!(
+        document
+            .actors
+            .first()
+            .ok_or("actor absent")?
+            .authority
+            .resources
+            .workflow_run,
+        WorkflowRunScope::Any
+    ));
     assert_eq!(document.runtime, RuntimeHostConfig::default());
     assert_eq!(document.shutdown, ShutdownConfig::default());
-    assert_eq!(
-        document.application_receipts,
-        ApplicationReceiptConfig::default()
-    );
     assert!(document.adapters.process_profiles.is_empty());
     assert!(document.adapters.model_profiles.is_empty());
     assert_eq!(
@@ -78,7 +46,7 @@ fn maintained_operator_configuration_uses_the_production_reader()
 }
 
 #[test]
-fn schema_v13_fixture_is_explicit_safe_and_round_trips() -> Result<(), Box<dyn std::error::Error>> {
+fn schema_v14_fixture_is_explicit_safe_and_round_trips() -> Result<(), Box<dyn std::error::Error>> {
     let plan = DaemonConfig::load(&fixture_path())?;
     let document = fixture_document()?;
     let actor = document.actors.first().ok_or("actor absent")?;
@@ -140,7 +108,7 @@ fn old_and_future_config_versions_are_rejected_truthfully() -> Result<(), Box<dy
         );
         let directory = tempfile::tempdir()?;
         let value = source.replacen(
-            "schema_version = 13",
+            "schema_version = 14",
             &format!("schema_version = {unsupported}"),
             1,
         );
@@ -159,7 +127,7 @@ fn duplicate_unknown_and_json_configuration_are_rejected() -> Result<(), Box<dyn
 {
     let directory = tempfile::tempdir()?;
     let duplicate = directory.path().join("duplicate.toml");
-    fs::write(&duplicate, "schema_version = 13\nschema_version = 13\n")?;
+    fs::write(&duplicate, "schema_version = 14\nschema_version = 14\n")?;
     assert!(matches!(
         DaemonConfig::load(&duplicate),
         Err(ConfigError::Toml(_))
@@ -176,8 +144,8 @@ fn duplicate_unknown_and_json_configuration_are_rejected() -> Result<(), Box<dyn
     fs::write(
         &unknown,
         fs::read_to_string(fixture_path())?.replacen(
-            "schema_version = 13",
-            "schema_version = 13\nunexpected = true",
+            "schema_version = 14",
+            "schema_version = 14\nunexpected = true",
             1,
         ),
     )?;
@@ -351,11 +319,8 @@ fn deny_all_is_not_broad_and_redaction_preserves_selector_kinds()
 }
 
 #[test]
-fn peer_execution_retention_is_independent_from_application_receipts()
--> Result<(), Box<dyn std::error::Error>> {
+fn peer_execution_retention_keeps_explicit_bounds() -> Result<(), Box<dyn std::error::Error>> {
     let mut config = fixture_document()?;
-    config.application_receipts.hot_receipt_bound = 1;
-    config.application_receipts.archive_batch_size = 1;
     config.serving = ServingHostConfig {
         maximum_global_active: 64,
         maximum_dispatch_queue: 32,
@@ -368,7 +333,6 @@ fn peer_execution_retention_is_independent_from_application_receipts()
     let serving = &validated.serving;
     assert_eq!(serving.maximum_hot_terminal_records, 77);
     assert_eq!(serving.archive_batch_size, 7);
-    assert_eq!(validated.storage.application_receipts.hot_receipt_bound, 1);
     Ok(())
 }
 
@@ -402,10 +366,6 @@ fn non_loopback_plaintext_is_rejected_before_storage() -> Result<(), Box<dyn std
         adapters: AdapterConfig::default(),
         peers: PeerHostConfig::default(),
         shutdown: ShutdownConfig::default(),
-        application_receipts: ApplicationReceiptConfig {
-            hot_receipt_bound: 100,
-            archive_batch_size: 10,
-        },
         security_audit_record_bound: 100,
     };
     assert!(config.validate(directory.path()).is_err());

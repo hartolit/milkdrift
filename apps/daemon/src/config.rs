@@ -4,10 +4,10 @@ mod compile;
 mod redaction;
 mod wire;
 pub use wire::{
-    ActorBindingConfig, ActorGrantConfig, AdapterConfig, ApplicationReceiptConfig,
-    AuthorityPresetConfig, ClientServingConfig, ControllerActivation, DaemonConfig,
-    ModelProfileConfig, PeerHostConfig, PeerRelationshipConfig, PeerSideEffectConfig,
-    RuntimeHostConfig, SecretSourceConfig, ServingHostConfig, ShutdownConfig, ShutdownEffectPolicy,
+    ActorBindingConfig, ActorGrantConfig, AdapterConfig, AuthorityPresetConfig,
+    ClientServingConfig, DaemonConfig, ModelProfileConfig, PeerHostConfig, PeerRelationshipConfig,
+    PeerSideEffectConfig, RuntimeHostConfig, SecretSourceConfig, ServingHostConfig, ShutdownConfig,
+    ShutdownEffectPolicy,
 };
 
 use std::{collections::BTreeMap, net::SocketAddr, path::PathBuf};
@@ -19,7 +19,7 @@ use milkdrift_local_secret::LocalSecretSource;
 use thiserror::Error;
 
 /// Current daemon configuration document version.
-pub const DAEMON_CONFIG_SCHEMA_VERSION: u32 = 13;
+pub const DAEMON_CONFIG_SCHEMA_VERSION: u32 = 14;
 
 pub(crate) const MAX_ACTOR_BINDINGS: usize = 256;
 
@@ -71,7 +71,6 @@ pub struct DaemonPlan {
 #[derive(Clone, Debug)]
 pub(crate) struct StoragePlan {
     pub(crate) data_root: PathBuf,
-    pub(crate) application_receipts: ApplicationReceiptConfig,
     pub(crate) security_audit_record_bound: u32,
 }
 

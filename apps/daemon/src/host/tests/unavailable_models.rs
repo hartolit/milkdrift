@@ -1,7 +1,9 @@
 //! The private owner transition drains a real generation; all editing uses HTTP and the CLI.
 use super::*;
 use milkdrift_control_client::{BearerCredential, ClientConfig, ControlClient};
-use milkdrift_control_protocol::{BlueprintDraft, Command, CommandRequest, ProtocolVersion};
+use milkdrift_control_protocol::tasks::{
+    ChangeWorkflowRequest, CreateWorkflowRequest, TaskChangeDto, TaskDefinitionDto, TaskStateDto,
+};
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, path::Path};
 
@@ -44,24 +46,21 @@ pub(super) fn profile(
         BTreeSet::from(["127.0.0.1".into()]),
         BTreeSet::from(["test".into()]),
         BTreeMap::new(),
-        BillingTerms::Unknown,
-        ModelTokenLimits::Unknown,
+        BillingTerms::Unbilled {
+            source: "controlled fixture incurs no provider charge".into(),
+        },
+        ModelTokenLimits::ByteBpe {
+            template_tokens_per_message: 16,
+            template_tokens_per_request: 16,
+            maximum_input_tokens: 262_144,
+            maximum_output_tokens: 8192,
+            output_control: milkdrift_model_provider::OutputTokenControl::MaxTokens,
+            source: "controlled bounded text fixture".into(),
+        },
     )?)
 }
 
-fn command(id: &str, command: Command) -> CommandRequest {
-    CommandRequest {
-        protocol: ProtocolVersion::CURRENT,
-        command_id: id.into(),
-        expected_sequence: None,
-        expected_revision: None,
-        reason: "drained model repair regression".into(),
-        evidence: vec![],
-        command,
-    }
-}
-
-fn cli(endpoint: &url::Url, root: &Path, id: &str, args: &[&str]) -> TestResult<Value> {
+fn cli(endpoint: &url::Url, root: &Path, args: &[&str]) -> TestResult<Value> {
     let executable = std::env::current_exe()?
         .parent()
         .and_then(Path::parent)
@@ -72,15 +71,7 @@ fn cli(endpoint: &url::Url, root: &Path, id: &str, args: &[&str]) -> TestResult<
         .arg(endpoint.as_str())
         .arg("--token-file")
         .arg(root.join("token"))
-        .args([
-            "--json",
-            "--yes",
-            "--command-id",
-            id,
-            "--timeout-secs",
-            "20",
-            "workflow",
-        ])
+        .args(["--json", "--yes", "--timeout-secs", "20", "workflow"])
         .args(args)
         .current_dir(root)
         .output()?;
@@ -148,125 +139,143 @@ async fn drained_models_can_be_replaced_individually_through_http_and_cli() -> T
         ClientConfig::new(endpoint.clone()),
         BearerCredential::new("drained-model-token")?,
     )?;
-    let bytes = include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/authoring/legacy-workflow.json"
-    ));
-    let (_, definition) = milkdrift_blueprint::BlueprintRevisionDocument::from_json(bytes)?;
-    client
-        .submit(&command(
-            "drain-import",
-            Command::ImportBlueprint {
-                document: serde_json::from_slice(bytes)?,
-            },
-        ))
-        .await?;
-    let base = BlueprintDraft {
-        workflow_id: "release-notes".into(),
-        base_revision: Some(definition.id().to_string()),
-        mutations: vec![],
-    };
-    let mut save = command(
-        "drain-save",
-        Command::AuthorBlueprint {
-            draft: base,
-            edit: None,
-            save: true,
-        },
+    let definition: TaskDefinitionDto = serde_json::from_value(json!({
+        "title":"Writer","description":"","instructions":"Write the supplied brief",
+        "capability":{"id":"writing-model","operation":"model.generate"},
+        "inputs":{"brief":{"kind":"supplied","name":"brief","optional":false}},
+        "dependencies":[],"required":true,"corrective_of":null,"paths":[]
+    }))?;
+    let request: CreateWorkflowRequest = serde_json::from_value(json!({
+        "request_id":"drain-create","title":"Repair future work","description":"",
+        "tasks":[{"alias":"draft","definition":definition},{"alias":"review","definition":definition}],
+        "inputs":{},"finish_when_settled":true,"limits":null
+    }))?;
+    let receipt = client.create_workflow(&request).await?;
+    let workflow = receipt.workflow_id.clone();
+    let original = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let read = client.workflow(&workflow).await?;
+            if read.tasks.iter().all(|task| task.reason.is_some()) {
+                return Ok::<_, milkdrift_control_client::ClientError>(read);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await??;
+    assert!(
+        original
+            .tasks
+            .iter()
+            .all(|task| task.state == TaskStateDto::Queued)
     );
-    save.expected_revision = Some(definition.id().to_string());
-    client.submit(&save).await?;
     host.dispatch(false, |owner| {
         owner
             .capability_host
             .begin_drain(
                 &milkdrift_capability::CapabilityId::new("writing-model")
-                    .map_err(|error| crate::host::invalid(&error.to_string()))?,
+                    .map_err(|error| crate::host::read_model::invalid(&error.to_string()))?,
                 1,
             )
-            .map_err(|error| crate::host::invalid(&error.to_string()))
+            .map_err(|error| crate::host::read_model::invalid(&error.to_string()))
     })
     .await
     .map_err(|error| error.message)?;
-    for (id, args, unresolved) in [
-        (
-            "drain-open",
-            vec!["open", definition.id().as_str(), "--file", "repair.json"],
-            2,
-        ),
-        (
-            "drain-first",
-            vec!["model", "repair.json", "draft", "replacement-model"],
-            1,
-        ),
-        ("drain-inspect", vec!["inspect", "repair.json"], 1),
-        (
-            "drain-second",
-            vec!["model", "repair.json", "review", "replacement-model"],
-            0,
-        ),
-    ] {
-        let value = cli(&endpoint, root.path(), id, &args)?;
-        assert_eq!(
-            value
-                .pointer("/workflow/selection_diagnostics")
-                .and_then(Value::as_array)
-                .ok_or("diagnostics absent")?
-                .len(),
-            unresolved
-        );
-    }
-    let saved = cli(
-        &endpoint,
-        root.path(),
-        "drain-final-save",
-        &["save", "repair.json"],
-    )?;
-    let revision = saved
-        .get("revision_id")
-        .and_then(Value::as_str)
-        .ok_or("revision absent")?;
-    let upload = client
-        .upload_input(
-            &milkdrift_control_protocol::InputUploadRequest::from_content(
-                "host:local".into(),
-                "drained-brief".into(),
-                "text/plain".into(),
-                "restricted".into(),
-                b"brief",
-            )?,
+    let catalog = client.task_session().await?;
+    let catalog_json = serde_json::to_value(catalog)?;
+    assert!(catalog_json.to_string().contains("replacement-model"));
+    let ids = original
+        .tasks
+        .iter()
+        .map(|task| task.id.clone())
+        .collect::<Vec<_>>();
+    let first = ids.first().ok_or("first task absent")?;
+    let second = ids.get(1).ok_or("second task absent")?;
+    let mut replacement = definition.clone();
+    replacement.capability.id = "replacement-model".into();
+    client
+        .change_workflow(
+            &workflow,
+            &ChangeWorkflowRequest {
+                request_id: "repair-first".into(),
+                expected_generation: original.generation,
+                changes: vec![TaskChangeDto::Revise {
+                    task: first.clone(),
+                    expected_version: 1,
+                    definition: replacement.clone(),
+                }],
+            },
         )
         .await?;
-    let mut start = command(
-        "drain-start",
-        Command::StartRun {
-            run_id: "drain-repaired".into(),
-            workflow_id: "release-notes".into(),
-            revision_id: revision.into(),
-            inputs: vec![milkdrift_control_protocol::RunInput {
-                name: "brief".into(),
-                artifact_id: upload.artifact_id,
-            }],
-        },
-    );
-    start.expected_revision = Some(revision.into());
-    client.submit(&start).await?;
-    let completed = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+    let current = client.workflow(&workflow).await?;
+    let second_change = ChangeWorkflowRequest {
+        request_id: "repair-second".into(),
+        expected_generation: current.generation,
+        changes: vec![TaskChangeDto::Revise {
+            task: second.clone(),
+            expected_version: 1,
+            definition: replacement,
+        }],
+    };
+    fs::write(
+        root.path().join("repair.json"),
+        serde_json::to_vec(&second_change)?,
+    )?;
+    cli(&endpoint, root.path(), &["edit", &workflow, "repair.json"])?;
+    for id in &ids {
+        let task = client.task(&workflow, id).await?;
+        assert_eq!(task.definition.capability.id, "replacement-model");
+        assert_eq!(task.version, 2);
+        assert_eq!(task.state, TaskStateDto::Queued);
+        assert!(task.frozen.is_none());
+    }
+    let current = client.workflow(&workflow).await?;
+    let supply = ChangeWorkflowRequest {
+        request_id: "repair-supply".into(),
+        expected_generation: current.generation,
+        changes: vec![TaskChangeDto::BindInput {
+            name: "brief".into(),
+            value: milkdrift_control_protocol::tasks::InputValue::Text {
+                text: "brief".into(),
+            },
+        }],
+    };
+    client.change_workflow(&workflow, &supply).await?;
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
         loop {
-            let run = client.run("drain-repaired").await?;
-            if run.terminal.is_some() {
-                return Ok::<_, milkdrift_control_client::ClientError>(run);
+            let read = client.workflow(&workflow).await?;
+            if read.tasks.iter().any(|task| {
+                matches!(
+                    task.state,
+                    TaskStateDto::Failed | TaskStateDto::Stopped | TaskStateDto::Uncertain
+                )
+            }) {
+                let mut diagnostics = Vec::new();
+                for task in &read.tasks {
+                    diagnostics.push(client.task(&workflow, &task.id).await?);
+                }
+                panic!("repaired model task failed before completion: {diagnostics:?}");
+            }
+            if read
+                .tasks
+                .iter()
+                .all(|task| task.state == TaskStateDto::Completed)
+            {
+                assert!(
+                    read.tasks
+                        .iter()
+                        .all(|task| task.state == TaskStateDto::Completed),
+                    "{read:?}"
+                );
+                return Ok::<_, milkdrift_control_client::ClientError>(());
             }
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
     })
     .await??;
-    assert_eq!(completed.terminal.as_deref(), Some("succeeded"));
     assert_eq!(calls.load(Ordering::SeqCst), 2);
-    assert!(client.submit(&start).await?.replayed);
     assert_eq!(
-        client.revision(definition.id().as_str()).await?.document,
-        Some(serde_json::from_slice(bytes)?)
+        client.change_workflow(&workflow, &supply).await?,
+        client.workflow_receipt("repair-supply").await?
     );
     shutdown.send(()).map_err(|()| "shutdown channel closed")?;
     serving.await??;

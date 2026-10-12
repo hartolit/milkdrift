@@ -136,16 +136,16 @@ targeted delegation with workflow origin and reservation. B's `invoke` follows t
 `admit_peer_execution` boundary. A and B retain different accepted facts; importing B's W binding
 as A's inventory would be incorrect even if names match.
 
-B acquires and prepares the exact generation. [`PublishedWorkflowService::prepare`](../../../../../crates/control/src/published.rs)
+B acquires and prepares the exact generation. [`PublishedWorkflowService::prepare`](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control/src/published.rs)
 validates declared inputs and service relationship, creates a deterministic child identity, and
 constructs exact create/start/cancel commands without executing them. The serving entry transaction
 saves the plan and resource/account facts, records `NoExternalEntry` for the publication wrapper,
 and moves to `AwaitingWorkflow`. A local workflow calling a local publication instead records the
 same plan in its runtime-owned pending effect; it does not add a second local serving row.
 
-[`continue_published`](../../../../../crates/capability-host/src/serving/published.rs) advances the
+[`continue_published`](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/capability-host/src/serving/published.rs) advances the
 saved plan in bounded pages after releasing the execution worker. Control calls
-[`arrange_published_run`](../../../../../crates/runtime/src/engine/effects/published.rs): replayable
+[`arrange_published_run`](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/effects/published.rs): replayable
 create, bind/account, then start transactions recover the same real run. These transactions cannot
 simply be deleted because a single Rust service owns their caller: acceptance can commit before
 the child exists, and cancellation can arrive between creation and binding. Pending association is
@@ -353,11 +353,11 @@ support parts of them; no tests were run in this review:
 | Source/assertions examined | What it establishes in its fixture | What it does not decide; discriminating variation |
 | --- | --- | --- |
 | [Direct process public test](../../../../../apps/daemon/tests/control_plane/direct.rs), `direct_process_upload_replay_and_restart_have_no_workflow_records` | Production adapter appends input, exact request/restart does not add workflow history, caller artifact isolation and quota/refusal assertions. | Does not prove direct A→B relay or private-method authority. Keep “no synthetic outer run,” not “no run anywhere” for a real method implementation. |
-| [Publication recovery](../../../../../crates/control/tests/control_service/published/recovery.rs), `each_create_bind_start_commit_boundary_recovers_one_child_after_reopen` | Before/after faults at each of three command boundaries produce one `RunCreated`, one binding and exact association; no extra process entry. | The number three is implementation detail. An alternative with one atomic bind/create must preserve one real child and exact outcomes, not imitate three faults to pass. |
-| [Managed publication](../../../../../crates/control/tests/control_service/published/managed.rs), lost-stop and authorized-return tests | Fixture retains child claim/parent suspension across cancel/reopen, refuses unsafe parent entry, and can later settle with explicit resolution. | A scripted stop observation is not physical Linux proof. Vary stale claim, another child, same resource name at another host, grant revocation and disjoint resources. |
-| [Final-entry test](../../../../../crates/control/tests/control_service/published/entry.rs) | Cancellation/deadline changes during child preparation prevent entry; managed refusal releases safe pre-entry holds. | It directly covers cancellation/expiry, not every grant-replacement producer. Add an exact-grant revocation variation with unchanged request bytes to the same boundary. |
-| [Peer publication](../../../../../apps/daemon/tests/two_daemon_peer/published.rs) | Actual daemon compositions use ordinary peer adapter, one real remote internal run, linked serving source and accepted transferred output. | Operator-rich fixture does not independently prove an invoke-only caller cannot inspect private internals. Pair with narrow public-control refusal fixtures and a combined narrow case. |
-| [Account transition tests](../../../../../crates/persistence/src/controller_account/tests.rs) and [nested tests](../../../../../crates/persistence/src/controller_account/tests/published.rs) | Exact limits, unknown usage retention, late settlement, zero dimensions and nested allowance without double charge are explicit assertions. | Arithmetic/property coverage does not show every adapter reports sound bounds. Test identical account reached through nested references and unknown remote settlement before concluding aggregate control. |
+| [Publication recovery](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control/tests/control_service/published/recovery.rs), `each_create_bind_start_commit_boundary_recovers_one_child_after_reopen` | Before/after faults at each of three command boundaries produce one `RunCreated`, one binding and exact association; no extra process entry. | The number three is implementation detail. An alternative with one atomic bind/create must preserve one real child and exact outcomes, not imitate three faults to pass. |
+| [Managed publication](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control/tests/control_service/published/managed.rs), lost-stop and authorized-return tests | Fixture retains child claim/parent suspension across cancel/reopen, refuses unsafe parent entry, and can later settle with explicit resolution. | A scripted stop observation is not physical Linux proof. Vary stale claim, another child, same resource name at another host, grant revocation and disjoint resources. |
+| [Final-entry test](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control/tests/control_service/published/entry.rs) | Cancellation/deadline changes during child preparation prevent entry; managed refusal releases safe pre-entry holds. | It directly covers cancellation/expiry, not every grant-replacement producer. Add an exact-grant revocation variation with unchanged request bytes to the same boundary. |
+| [Peer publication](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/tests/two_daemon_peer/published.rs) | Actual daemon compositions use ordinary peer adapter, one real remote internal run, linked serving source and accepted transferred output. | Operator-rich fixture does not independently prove an invoke-only caller cannot inspect private internals. Pair with narrow public-control refusal fixtures and a combined narrow case. |
+| [Account transition tests](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/persistence/src/controller_account/tests.rs) and [nested tests](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/persistence/src/controller_account/tests/published.rs) | Exact limits, unknown usage retention, late settlement, zero dimensions and nested allowance without double charge are explicit assertions. | Arithmetic/property coverage does not show every adapter reports sound bounds. Test identical account reached through nested references and unknown remote settlement before concluding aggregate control. |
 | [Managed lifecycle](../../../../../adapters/managed-linux/tests/lifecycle.rs) | Controlled platform faults at intent/result boundaries preserve exact setup/replay; deny authority before platform action; bounded concurrent replay has one driver. | In-memory platform observations do not qualify systemd/Podman or power loss. Native tests/evidence remain separate. |
 | [Authority contracts](../../../../../crates/authority/tests/contracts.rs), selectors and workflow scopes | Equal actor/grant facts evaluate identically, containment/refusal and exact grant identity tested. | Truth of facts supplied by every caller is outside the evaluator. Vary caller/service grant independently; never test by giving both the same broad administrator grant. |
 
@@ -464,14 +464,14 @@ session lifecycle as a reason to select B.
 There is concrete current support and a concrete remaining extension:
 
 - [`RunCommand::DeliverSignal`](../../../../../crates/runtime/src/command.rs) carries typed,
-  correlated, idempotent bounded payloads; [`command_planning/admission.rs`](../../../../../crates/runtime/src/engine/command_planning/admission.rs)
+  correlated, idempotent bounded payloads; [`command_planning/admission.rs`](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/command_planning/admission.rs)
   retains consumption and `WaitSatisfied`. Answers need not live in a second mutable mailbox.
-- [`extend_controller_actions`](../../../../../crates/runtime/src/engine/command_planning/commit.rs)
+- [`extend_controller_actions`](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/command_planning/commit.rs)
   derives `BindRun` actions from accepted `SubworkflowCreated` facts in the parent transaction.
-  It rejects a conflicting nested account. [`structured/subworkflow.rs`](../../../../../crates/runtime/src/engine/structured/subworkflow.rs)
+  It rejects a conflicting nested account. [`structured/subworkflow.rs`](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/structured/subworkflow.rs)
   recovers the same child and checks its creation revision, scope, inputs, inherited authority and
   agreement. Those are viable building blocks for cumulative session limits.
-- [`RepeatConfig`](../../../../../crates/blueprint/src/model/structured.rs) and the current
+- [`RepeatConfig`](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/blueprint/src/model/structured.rs) and the current
   `Subworkflow` node pin a revision. They do not dynamically execute whatever revision a planner
   returns. A fixed controller wrapper alone therefore does **not** implement C. The proposal must
   choose either prospective adoption of an unstarted child-call region or a narrowly defined
@@ -504,10 +504,10 @@ owning application/runtime acceptance, not a second mutable assistance journal. 
 it without relying on a client checkpoint. For C, an attached round's parent acceptance and account
 binding must commit together; for standalone B, the command acceptance names its separate allowance.
 
-The response-admission stage has a second loss boundary. [`ControlService::submit`](../../../../../crates/control/src/service.rs)
+The response-admission stage has a second loss boundary. [`ControlService::submit`](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control/src/service.rs)
 can save the candidate revision and request reconciliation before returning a result. Its
-[`WorkflowControlAdapter`](../../../../../crates/control/src/adapter.rs) subsequently publishes
-the result and reports terminal evidence. [`runtime recovery`](../../../../../crates/runtime/src/engine/recovery.rs)
+[`WorkflowControlAdapter`](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control/src/adapter.rs) subsequently publishes
+the result and reports terminal evidence. [`runtime recovery`](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/recovery.rs)
 classifies ordinary entered attempts by their retained side-effect/idempotency facts; it does not
 magically infer an assistance candidate from those separate commits.
 
@@ -522,7 +522,7 @@ four. This requirement applies to both B and C and is compatible with the retain
 
 ### Ordinary-result evaluation: retain the idea, close its admission contract
 
-The existing [`LearningDeclaration`](../../../../../crates/control/src/learning.rs) really does
+The existing [`LearningDeclaration`](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control/src/learning.rs) really does
 require protected targets, verifier/check digests, separate managed resources and repair reduction.
 It cannot evaluate an ordinary decision brief merely because both are called learning. A finite
 `PairedResultJudgment` profile is a justified addition for the product's research/planning path;
@@ -599,9 +599,9 @@ its actual cost. It schedules whole authorized activities, while runtime schedul
 
 The strongest alternative remains one ordinary root run. Its real advantages are an existing
 durable identity, signals, inherited account, parent cancellation and fewer new storage contracts.
-However, [`observe_child_terminal`](../../../../../crates/runtime/src/engine/structured/subworkflow.rs)
+However, [`observe_child_terminal`](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/structured/subworkflow.rs)
 returns immediately for nonterminal children and imports outputs only from terminal evidence.
-[`create_repeat_iteration`](../../../../../crates/runtime/src/engine/structured/repeat.rs) invokes
+[`create_repeat_iteration`](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/structured/repeat.rs) invokes
 the controller lifecycle at activation/cycle entry; its human checkpoint follows a completed
 true-condition frontier. This is not a callback when a live child reaches a pause or receives
 criticism. An enclosing Parallel can keep a separate critic active, but does not itself expose the
@@ -647,9 +647,9 @@ read, approval or publication permission. Versioned grant readers must not turn 
 scope in an old grant into newly granted control over sessions.
 
 The account change is more than an enum rename. Current
-[`ControllerAccountTransaction`](../../../../../crates/persistence/src/controller_account/transaction.rs)
+[`ControllerAccountTransaction`](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/persistence/src/controller_account/transaction.rs)
 requires establishment to bind the declaration's originating `RunId`. Current
-[redb validation](../../../../../adapters/redb-store/src/controller_account/validation.rs)
+[redb validation](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/adapters/redb-store/src/controller_account/validation.rs)
 matches inherited bindings exactly to `SubworkflowCreated` events. Preserve those old checks.
 Add one typed session establishment path and one association-backed creation path: a session
 creation transaction retains policy, external receipt, account and first action together;
@@ -670,7 +670,7 @@ An action selected before the fence but not entered remains pending/refused acco
 accepted command, never regenerated as a new request behind the operator's stop.
 
 There is also a finite controller-composition limit. Current
-[`ControllerLifecycleOwner::assess`](../../../../../crates/control/src/controller/lifecycle.rs)
+[`ControllerLifecycleOwner::assess`](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control/src/controller/lifecycle.rs)
 accepts another origin only for a published invocation whose whole allowance fits the marked
 controller's budget. Otherwise it refuses a conflicting originating declaration. Extend that
 existing inherited-origin rule to `WorkSession` only when its whole allowance fits the marked
@@ -761,11 +761,11 @@ valid deadline and current caller/service rights. It may legitimately create and
 after A's stop was accepted. A's durable gate cannot be read atomically inside B's transaction.
 
 This follows concrete source. Runtime's
-[`published_entry_allowed`](../../../../../crates/runtime/src/engine/effects/published.rs)
+[`published_entry_allowed`](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/effects/published.rs)
 walks local publication ancestors, but hands a `Serving` boundary to the serving owner's policy.
-The host's [publication gate](../../../../../crates/capability-host/src/serving/published.rs)
+The host's [publication gate](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/capability-host/src/serving/published.rs)
 checks B's own exact association, serving phase/cancellation, deadlines and caller authority.
-The [control continuation](../../../../../crates/control/src/published.rs) creates or cancels the
+The [control continuation](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control/src/published.rs) creates or cancels the
 private child from those accepted facts. The [peer adapter](../../../../../adapters/peer-http/src/remote.rs)
 returns an acknowledgment with neither acceptance nor terminal proof when cancel transport fails.
 Nothing in these sources supplies distributed instantaneous commitment revocation.
@@ -838,10 +838,10 @@ knowledge contract permits the first actions; it must reject the final misuse de
 wording, exact hashes and legitimate review authority.
 
 P07's closed `Knowledge`/`ExecutableMethod` subjects and retained protected profile are the correct
-boundary. The current [`LearningReceiptReference`](../../../../../crates/control/src/learning.rs)
+boundary. The current [`LearningReceiptReference`](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control/src/learning.rs)
 identifies actor/command, not receipt kind. Current
-[manual promotion](../../../../../apps/daemon/src/host/commands/learning.rs) and
-[automatic promotion](../../../../../apps/daemon/src/host/commands/learning/promotion.rs)
+[manual promotion](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/src/host/commands/learning.rs) and
+[automatic promotion](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/src/host/commands/learning/promotion.rs)
 therefore pattern-match actual retained comparison/policy records and bind the declaration,
 candidate, agreement and publication facts. The new common learning owner must retain equally
 strict subject/profile matching; a generic `Eligible` outcome or a frontend label is insufficient.
@@ -880,7 +880,7 @@ Current [`managed::transfer`](../../../../../adapters/redb-store/src/managed/use
 claims, generation and accepted lineage, child quiescence and current authority; a cancelled parent
 cannot resume editing. A wrapper's `NoExternalEntry` evidence is preserved on return rather than
 manufacturing a new physical epoch. Current
-[lost-stop recovery tests](../../../../../crates/control/tests/control_service/published/managed.rs)
+[lost-stop recovery tests](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control/tests/control_service/published/managed.rs)
 compare retained uses exactly across cancel/reopen and require later explicit resolution. They
 exercise the same code generation on both sides, so they are not upgrade evidence.
 
@@ -941,15 +941,15 @@ single-writer premise was adequate.
 
 ### Current sources establish an ordinary graph repair route
 
-[`BlueprintRevision::revise`](../../../../../crates/blueprint/src/revision.rs) applies one bounded
+[`BlueprintRevision::revise`](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/blueprint/src/revision.rs) applies one bounded
 `MutationBatch` to an exact immutable base, validates the completed candidate and creates a new
 identity. The original revision and its semantics do not change. The
-[v3 mutation vocabulary](../../../../../crates/blueprint/src/mutation.rs) includes node/edge
+[v3 mutation vocabulary](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/blueprint/src/mutation.rs) includes node/edge
 addition/replacement/removal, interface/metadata, exact child-pin upgrades and deliberate merge
 parents. Its 512-operation bound and final validation already support coherent compound changes.
 This is a graph-native versioned compiler, not a scheduler or mutable definition table.
 
-[`ControlService::submit`](../../../../../crates/control/src/service.rs) verifies actor, exact
+[`ControlService::submit`](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control/src/service.rs) verifies actor, exact
 proposal/base/digest/observed sequence; resolves the stored base; builds the graph successor;
 assesses controller policy, authority and risk; retains the immutable candidate; and requests
 ordinary runtime reconciliation. Offline proposals use `ProposeOffline`, with their existing
@@ -958,9 +958,9 @@ own conditions, and resume is a separate ordinary run action. The fact that cand
 can precede the outer response remains an exact-command recovery concern, not a reason to turn
 maintenance into a direct store mutation from the UI.
 
-[`plan_revision_adoption`](../../../../../crates/runtime/src/engine/reconciliation.rs) takes the
+[`plan_revision_adoption`](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/reconciliation.rs) takes the
 current run, requested revision and actual history. The
-[reconciliation matrix](../../../../../crates/runtime/src/reconciliation.rs) distinguishes pending,
+[reconciliation matrix](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/reconciliation.rs) distinguishes pending,
 active, completed and uncertain occurrences with their scopes and dependencies. Unchanged work
 is preserved; pending work can change; changes to completed/uncertain effects and started descendants
 receive their existing restricted classifications. `FinishCurrentThenAdopt` can use a changed
@@ -968,7 +968,7 @@ active definition on its next invocation while retaining the current occurrence;
 requires the actual existing cancellation/effect conditions. Refactoring to a checked plan must
 preserve those decisions, not replace them with “old source cannot be converted.”
 
-The [governed repair test](../../../../../crates/control/tests/control_service/agreements.rs)
+The [governed repair test](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control/tests/control_service/agreements.rs)
 already submits a compound graph change: it replaces an editable task, adds an investigation task
 and rewires internal edges, preserves the agreement, applies through control, reopens the store
 and replays without another adaptation. It also refuses removal of the accepted agreement and
@@ -1058,12 +1058,12 @@ do not make the comparison favorable by silently removing useful graph clients o
 
 ### All writers and ordinary consumers must cross that boundary
 
-Current [`authoring::candidate`](../../../../../apps/daemon/src/host/commands/authoring.rs) selects
+Current [`authoring::candidate`](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/src/host/commands/authoring.rs) selects
 `genesis` versus `revise` from the draft base. Generic construct/save accepts full mutations, while
 the private `ModelWorkflow` helper recognizes one narrower graph shape. Current
-[definition import](../../../../../apps/daemon/src/host/commands/definitions.rs) and control proposal
-both eventually call [`RevisionStore::put_revision`](../../../../../crates/persistence/src/revision.rs).
-The [redb implementation](../../../../../adapters/redb-store/src/revision.rs) atomically validates
+[definition import](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/src/host/commands/definitions.rs) and control proposal
+both eventually call [`RevisionStore::put_revision`](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/persistence/src/revision.rs).
+The [redb implementation](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/adapters/redb-store/src/revision.rs) atomically validates
 same-workflow/lower-sequence parents and inserts canonical bytes plus indexes. These are the actual
 producer/consumer points, not just a frontend switch.
 
@@ -1114,7 +1114,7 @@ definition can have closed historical runs. All applicable rows apply; none gran
 | **Governed/protected workflows** | Accepted agreement identity, required verifier/target, source pins and public-service boundary survive either source form. | Apply the original agreement's actual permitted task-region changes and revision budget, including compound graph rewiring inside that region. Structural/envelope/agreement weakening and indirect child adoption retain their present refusals. New source does not grant broader adaptation. | Conversion must preserve or explicitly bridge the exact versioned agreement check, including its graph-derived protected digest; logical similarity does not recreate its identity. If that cannot be proved, graph repair remains available within the old agreement. Any changed agreement requires its existing separately authorized boundary. |
 
 The agreement row matters technically. The
-[current protected digest](../../../../../crates/blueprint/src/agreement.rs) binds workflow,
+[current protected digest](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/blueprint/src/agreement.rs) binds workflow,
 blueprint, metadata, interface, protected nodes and edges crossing the editable boundary. Region
 syntax is not interchangeable with those bytes. Keep the version-specific checker against the
 accepted governing source and exact binding; converting visual structure cannot re-seal an agreement
@@ -1179,7 +1179,7 @@ Every safe repair must run through public control, not direct test-store inserti
 new common plan's decisions to the existing v3 behavior with independently stated outcomes.
 
 For command recovery, retain current
-[external receipt lookup before new execution](../../../../../apps/daemon/src/host/receipts.rs).
+[external receipt lookup before new execution](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/src/host/receipts.rs).
 An old accepted graph creation/repair command must replay its old result after the new-source
 default changes. A fresh supported graph-genesis command remains allowed under its existing
 authority and validation. Persist exact proposal/candidate material and internal command identities
@@ -1209,22 +1209,22 @@ added after Elin's challenge. I found no additional foundational blocker in thei
 This is source/design review, not implementation qualification or a claim of total conversion.
 
 - **One plan must not erase source identity.** I reread the domain-separated raw node and incident-edge
-  fingerprints in [`blueprint::document`](../../../../../crates/blueprint/src/document.rs), and
-  their comparisons in [`runtime::reconciliation`](../../../../../crates/runtime/src/reconciliation.rs).
+  fingerprints in [`blueprint::document`](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/blueprint/src/document.rs), and
+  their comparisons in [`runtime::reconciliation`](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/reconciliation.rs).
   A normalized legacy reducer's ordinary Task plan cannot replace its original configuration hash,
   become v1-editable merely by changing kind, or alter its historical dependency ordering. P04 now
   explicitly retains those source-specific facts; P01/adoption preserve their original bytes and
   occurrence identities. Pure versioned fingerprint/correspondence production feeding one decision
   owner is compatible with one runtime; separately implementing its decision rules would not be.
 - **Replay requires the old producer as well as the old receipt reader.** I reread
-  [`authoring::candidate`](../../../../../apps/daemon/src/host/commands/authoring.rs) and
-  [`receipts::execute_inner`](../../../../../apps/daemon/src/host/receipts.rs). Native construction
+  [`authoring::candidate`](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/src/host/commands/authoring.rs) and
+  [`receipts::execute_inner`](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/src/host/receipts.rs). Native construction
   is deterministic, while an effect can precede its application receipt. P01 and NP4 now require
   exact old command-version compilation and a distinguishable new default operation, so that gap
   cannot silently switch a retry from graph to Program. The explicit selected-base correction
   also addresses the inspected sorted-merge-parent consumer; a common plan alone would not.
 - **Protected source correspondence does not confer authority.** The original
-  [`agreement` checker](../../../../../crates/blueprint/src/agreement.rs) seals protected graph
+  [`agreement` checker](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/blueprint/src/agreement.rs) seals protected graph
   structure and forbids changing the agreement during an accepted run. NP4 keeps direct v1 checking
   for native graphs and requires a complete current-source-derived `LegacyAgreementView` for a
   converted v1 method, rather than pasted protected facts. New v2 seals an outer source skeleton
@@ -1234,7 +1234,7 @@ This is source/design review, not implementation qualification or a claim of tot
   I also reread control's old/new requirement and bounded pinned-body traversal: migration must
   retain those authority checks for either family, not authorize only newly visible Task nodes.
 - **Ordinary adoption and protected qualification remain different.** Current
-  [`learning` promotion](../../../../../apps/daemon/src/host/commands/learning.rs) requires an exact
+  [`learning` promotion](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/src/host/commands/learning.rs) requires an exact
   eligible comparison/declaration/candidate/agreement/publication match and publication authority;
   ordinary proposal/application uses its own control gates. P07 now preserves that distinction,
   rejects approved retrospective self-review as protected Promote/AutoPromote evidence, and allows

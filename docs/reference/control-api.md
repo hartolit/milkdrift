@@ -1,761 +1,152 @@
-# Local control API 2.20
+# Local control API 3.0
 
-The `learning` command body accepts an operation document owned by
-`milkdrift_control::learning::LearningRequest`: `select`, `select_sources`, `declare`, `candidate`, `compare`,
-`preauthorize`, `auto_promote`, `promote`, or `inspect`. It uses the same authenticated command envelope and hot/cold receipt
-replay as other commands. `milkdrift learning FILE` submits that document. Each operation requires
-its named `learning.*` capability operation on `milkdrift-workflow-control`; candidate submission
-uses ordinary offline proposal authority. Selection, declaration, comparison and inspection also
-recheck the applicable source, revision, artifact and resource permissions. Promotion additionally
-requires `method.publish` on the exact publication capability. Automatic promotion uses the
-preauthorized operator's current grant and exact template, under the named executor's separate
-`learning.auto_promote` permission. Receipt references contain the
-authenticated `actor` and exact `command`; knowing a reference does not grant inspection.
+Use this API to submit ordinary tasks, discover permitted workflows and inspect retained results.
+All clients use the daemon's owner queue. The standalone [Svelte client](../../apps/web/README.md),
+[CLI](../../apps/cli/README.md) and [Rust client](../../crates/control-client/README.md) project the
+same operations. Independent capability serving uses the separate invocation routes below;
+remote hosts use the [peer protocol](peer-protocol.md).
 
-`select_sources` accepts `KnowledgeSelectionDraft`, naming guidance and supplementary artifacts by
-ID. Authorized server reads resolve their exact references before the ordinary `learning.select`
-checks and receipt. It accepts no hashes or scores. The CLI's named `learning select`, `declare`,
-`candidate`, `compare`, `inspect` and `promote` commands use this same request family; advanced
-documents remain supported. Selection publishes a restricted immutable source artifact and returns its exact reference.
-Comparison reads the declared run, account and private verifier records and reports `eligible`,
-`rejected`, or `inconclusive`; client-supplied scores are not accepted.
-Declarations name `input_field` and `candidate_output` so a passing check cannot qualify an unused
-input or a different returned artifact. Promotion returns an exact compact publication reference;
-`method show CAPABILITY --generation N` reads the full published contract from its owner.
-[Learning methods](../guides/learning-methods.md) explains source
-materialization, immutable declarations, finite inspection and independent publication authority.
+## Transport and authentication
 
-Use this reference for exact requests, replies, routes, and CLI machine output. For setup, begin
-with the [operator examples](../../examples/operator/README.md); for Rust integration, use the
-[control client guide](../../crates/control-client/README.md). This is the daemon's local control
-plane. Remote capability execution uses the separate [peer protocol](peer-protocol.md).
-
-## Transport, authentication, and negotiation
-
-The daemon serves HTTP/1 on a configured loopback address. Non-loopback plaintext configuration is rejected and CORS is not enabled. Every route, including health and version negotiation, requires `Authorization: Bearer …`. The credential is resolved from a configured file or exact environment-variable reference and maps to a server-owned actor and exact immutable grant revision; request JSON never supplies actor identity. Authentication alone grants no operation. Every route declares a typed authority operation and resource family, and the daemon's owner evaluates it before returning information or mutating state.
-
-Clients negotiate with `POST /v1/version`:
+Every route requires `Authorization: Bearer …`, including negotiation and health. Configuration
+maps that credential to an immutable actor/grant revision. JSON cannot choose an actor. The client
+negotiates the exact version before use; older graph clients are refused:
 
 ```json
-{"protocol":{"major":2,"minor":20}}
+{"protocol":{"major":3,"minor":0}}
 ```
 
-Version 2.20 is required on both sides. Older and newer major/minor versions are refused with
-`unsupported_version`; update the client and daemon together. There is no protocol downgrade.
-Attempt and capability read fields are specified
-under [read models](#read-models). The authenticated `/v1/...` route namespace is independent of
-the negotiated envelope version. JSON success bodies use:
+Send this to `POST /v1/version`. `GET /v1/session` returns the installation identity, authenticated
+actor, available task capabilities and effective defaults. Browser requests subsequently carry
+`x-milkdrift-daemon` with that identity; a mismatch is refused. Keep credentials in memory and out
+of URLs, logs and browser storage. All closed requests reject unknown fields and duplicate keys.
+The bounded JSON reader limits bytes, nesting and collection sizes before dispatch.
+
+Success bodies use the common envelope:
 
 ```json
-{
-  "protocol": {"major": 2, "minor": 20},
-  "request_id": "req-1",
-  "value": {}
-}
+{"protocol":{"major":3,"minor":0},"request_id":"req-1","value":{}}
 ```
 
-The caller may provide one bounded ASCII `x-request-id`; otherwise the daemon creates one. Inputs are byte/depth/count bounded, duplicate object keys are rejected, and unknown fields are rejected for closed DTOs.
-
-## Errors
-
-Errors are configuration-independent and never contain tokens, headers, environment values, prompts, process/model output, artifact bytes, provider objects, or filesystem paths:
+Errors use a stable code and redacted explanation. They never include credentials or task content:
 
 ```json
-{
-  "protocol": {"major": 2, "minor": 20},
-  "request_id": "req-1",
-  "code": "conflict",
-  "message": "bounded redacted description",
-  "retryable": false,
-  "details": {"actual_sequence": "12"}
-}
+{"protocol":{"major":3,"minor":0},"request_id":"req-1","code":"conflict","message":"workflow generation changed","retryable":false,"details":{}}
 ```
 
-The protocol owns one exhaustive principal status mapping, used by both daemon and client.
-Transport-specific bounds failures may use 413. Retryability remains an explicit envelope fact;
-neither the status nor a retryable flag causes the client to resubmit a command.
+`unauthenticated` means the credential failed, `unauthorized` means the current grant does not
+permit the action, and `not_found` means no permitted retained object is available. `conflict`
+requires inspecting current state before choosing a new request. Capacity/overload refusals are
+explicit; retryability never authorizes changing or blindly repeating a semantic action.
 
-| Code | HTTP | CLI exit | Meaning |
-| --- | --- | --- | --- |
-| `unauthenticated` | 401 | 3 | Authentication is absent or invalid. |
-| `unauthorized` | 403 | 3 | Authority does not permit this operation or disclosure. |
-| `invalid_input` | 400 | 7 | The daemon rejected the request contract. |
-| `conflict` | 409 | 4 | Exact command identity, guards or policy conflict. |
-| `not_found` | 404 | 6 | The permitted resource was not found. |
-| `overload` | 429 | 5 if retryable, otherwise 7 | A bounded queue or output limit was exceeded. |
-| `unavailable` | 503 | 5 if retryable, otherwise 7 | A required service is unavailable. |
-| `corruption` | 500 | 7 | Durable integrity verification failed. |
-| `uncertain` | 409 | 4 | The operation's durable or external outcome is unknown. |
-| `unsupported_version` | 426 | 7 | The requested protocol or operation is unsupported. |
-| `timeout` | 504 | 5 if retryable, otherwise 7 | A daemon deadline elapsed. |
-| `internal` | 500 | 7 | The daemon could not establish a reliable result. |
+## Ordinary task routes
 
-For `uncertain`, inspect retained evidence and recover with the exact original request, command ID
-and authority basis. A new ID can express duplicate work. An error response or nonzero CLI exit
-does not establish that external work stopped. Typed uncertain run/invocation states remain their
-own read contracts; they are not automatically converted to this HTTP error.
-
-## Commands
-
-Both host roles also expose independent capability execution through the same authenticated
-connection. `GET /v1/execution/catalog` returns the stable host identity, enforceable per-call
-ceilings and exact authorized catalog. `POST /v1/invocations` accepts `DirectInvocationRequest`,
-which fixes that host/catalog, an exact selection, explicit inputs, limits, deadline and caller-scoped
-request ID. It cannot supply actor, grant or workflow origin. Serving acceptance is durable before
-acknowledgement and remains distinct from outcome.
-
-`POST /v1/invocations/prepare` accepts `DirectInvocationDraft`: `host`, `request_id`, `capability`,
-`operation`, named `inputs`, and optional `limits`. It returns the complete `DirectInvocationRequest`
-without accepting work. The serving owner resolves the current catalog and profile, derives the
-operation's required idempotency key, and calculates the deadline from its durable clock. Absent
-limits use the discovered host ceilings; explicit limits must fit current host and caller authority.
-Preparation checks the same direct-input and admission authority contracts as submission, including
-artifact access. Adapter-specific input validation still occurs before external entry. Preparation
-reserves no generation or worker and is not a promise that later submission will succeed.
-
-`GET /v1/invocation-requests/{request}` recovers acceptance after a lost reply.
-`GET /v1/invocations/{execution}` reads its accepted identity, status and accounting;
-`GET /v1/invocations/{execution}/observations?after=0&limit=128` reads a bounded page.
-`POST /v1/invocations/{execution}/cancel` requests cancellation. Reads, replay and cancellation
-reevaluate current authority and cannot cross the authenticated caller's namespace. Observation
-`closed` means no further page is required; a terminal record may still have unread earlier pages.
-An uncertain status is never represented as successful completion.
-
-`POST /v1/artifact-inputs` accepts `InputUploadRequest`: explicit host, stable upload ID, media type,
-sensitivity, canonical digest and base64 content, limited to 512 KiB decoded bytes.
-The server supplies client provenance and a host/actor accounting owner. Verified publication is
-atomic, exact upload replay returns the same artifact and changed bytes conflict. Abandoned
-writable publications are reclaimed before startup opens admission. Already committed uploads
-remain retained, even if local preparation later fails; per-actor cumulative quotas survive restart.
-The ordinary artifact metadata/range routes download both inputs and outputs.
-
-`GET /v1/runs/{run}/result` returns `RunResultRead`: a compact frontier enriched with separately
-authorized attempt evidence, saved workflow name/version, successful terminal output fields and
-current permitted control operations. Up to 32 frontier nodes and 32 output fields are returned;
-`truncated` marks omissions. Text previews contain at most 4,096 bytes per field and are explicitly
-labelled when partial. Clients must escape untrusted preview text for their display. Workspace,
-artifact and attempt reads remain independently scoped; unreadable final fields set
-`outputs_restricted`. Current action hints do not replace command validation or approval.
-
-Use the [independent execution recipe](../../examples/operator/README.md#independent-execution).
-`invocation prepare` calls the preparation endpoint and writes its reply to a create-new request file.
-For an idempotent-write operation the serving owner derives the operation's idempotency key from the supplied
-stable request ID; operations that do not accept that key leave it absent. Keep the saved file for
-submission/replay. Discovery is not a reservation: a typed `catalog_stale` refusal with no known
-execution permits preparing a fresh request, while response loss requires recovering the original
-request's acceptance before deciding what to do next. Explicit `--endpoint`, credentials and `--host` prevent silently
-selecting another owner. Direct continuation and implicit workflow/workspace input discovery refuse.
-
-Workflow, run, proposal, controller, and layout commands use `POST /v1/commands`. Peer lifecycle
-administration uses the separate routes below. A command envelope has no actor field:
-
-```json
-{
-  "protocol": {"major": 2, "minor": 20},
-  "command_id": "operator-stable-id",
-  "expected_sequence": null,
-  "expected_revision": null,
-  "reason": "bounded operator reason",
-  "evidence": [{"id":"artifact-or-receipt-id","kind":"artifact"}],
-  "command": {"type":"pause_run","run_id":"run-1"}
-}
-```
-
-`command_id` is an actor-and-grant-scoped idempotency key. The daemon computes a canonical digest over the protocol/command schema, complete command envelope, authenticated actor, and exact grant identity/revision/digest before application. Repeating that exact request returns the durably stored accepted result with `replayed: true`, or the exact stored deterministic rejection; reusing the identity with different content or after grant replacement returns `conflict`. Receipts survive daemon restart and retain exact replay for the complete store generation. A configured hot bound limits recent operational placement only; bounded oldest-first archival moves immutable documents to transparent cold storage, and new-command commit can reclaim capacity transactionally. Mutating requests are not implicitly retried by `milkdrift-control-client`; a caller retry must preserve the exact body, idempotency identity, and authority basis.
-
-For layout writes and proposal discovery, the receipt and same-store application effect commit in one redb transaction. Runtime/control effects retain their existing idempotent transaction as authority. If the daemon crashes after such an effect commits but before its application receipt, redelivery uses the same stable internal command identity, observes runtime replay, and commits the missing external receipt without applying replacement work. Transient storage, overload, unavailable, timeout, uncertain, corruption, and internal failures are not converted into durable rejections.
-
-Replay does not renew permission to read retained server content. Authoring replies derived from
-a saved definition recheck access to that definition; learning replies recheck their retained
-sources, including artifact references and copied history. Revocation or expiry can therefore
-refuse disclosure of an accepted reply. This leaves its immutable receipt and original effect
-unchanged; the refusal does not mean the original command failed or invite a new command identity.
-
-The closed command types are:
-
-| Type | Required body fields | Authority operation | Purpose |
-| --- | --- | --- | --- |
-| `author_blueprint` | `draft`, optional `edit`, `save` | `validate_blueprint` or `import_blueprint`, plus permitted catalogue/base reads | Apply an ordinary model workflow edit and return its pending mutations; optionally save the validated revision. |
-| `construct_blueprint` | `draft`, `store` | `validate_blueprint` or `import_blueprint`, plus base read | Construct a canonical revision from a complete existing mutation batch without client-derived hashes. |
-| `import_blueprint` | `document` | `import_blueprint` | Validate and store an exact immutable workflow/revision. |
-| `validate_blueprint` | `document` | `validate_blueprint` | Validate one exact workflow/revision without storing it. |
-| `import_prompt_sequence` | `document` | `import_blueprint` | Compile bounded schema-3 JSON/Markdown-derived data and store the ordinary immutable revision. |
-| `validate_prompt_sequence` | `document` | `validate_blueprint` | Compile and validate a prompt sequence without storing its generated revision. |
-| `start_run` | `run_id`, `workflow_id`, `revision_id`, `inputs` | `create_run`, then `start_run` | Create then start at an exact revision through ordinary control authority; stable command receipts recover the gap between these two commits. |
-| `pause_run`, `resume_run`, `cancel_run` | `run_id` | `pause`, `resume`, `cancel` | Durable exact-run lifecycle control. |
-| `signal_run` | `run_id`, `signal_id`, `signal_type`, `correlation`, `broadcast`, `payload` | `deliver_signal` | Deliver a typed bounded signal to an exact run. |
-| `resolve_work` | `run_id`, `attempt_id`, `decision_id`, `action`, `remediation_node` | action-derived `inspect_attempt`, `retry`, `apply`, `approve`, or `terminate` | Query, retry, compensate, retain, or evidence-resolve uncertain work. |
-| `prepare_model_repair` | `run_id`, `proposal_id`, `repair` | `propose` and authorized run/revision/attempt reads | Prepare an ordinary approval-required proposal at a paused final-model failed-result hold. Exact current revision and sequence are required; the run is unchanged. |
-| `copy_blueprint` | `source_revision`, `workflow_id`, `name` | source `inspect_revision`, destination `import_blueprint` | Save a separate ungoverned definition with exact source in immutable revision provenance. Requires the source revision guard and a different workflow identity. Identity-bound governing agreements refuse. |
-| `submit_proposal` | `document` | `propose` | Submit an exact schema-1 workflow proposal through `milkdrift-control`. Missing envelope guards derive from the document's exact base and observed sequence; conflicting guards are refused. |
-| `decide_proposal` | `run_id`, `proposal_id`, `proposal_digest`, `proposed_revision`, `decision_id`, `decision` | `approve` | Approve or reject an exact proposal. |
-| `apply_proposal` | `run_id`, `proposal_id`, `proposal_digest`, `proposed_revision` | `apply` | Apply an approved prospective revision through reconciliation. |
-| `inspect_controller` | `run_id`, `controller_execution` | `inspect_run` | Return one authorization-filtered typed controller status from durable projection facts. |
-| `continue_controller` | `run_id`, `controller_execution`, `decision_id` | `approve` | Decide the exact pending controller checkpoint through ordinary repeat-continuation authority; the runtime reassesses policy and revocation before accepting it. |
-| `put_layout` | `layout` | `write_layout` | Optimistically store presentation-only state for the exact workflow/revision/shared owner. |
-
-Evidence kinds accepted by the daemon are `authority_decision`, `worker_observation`, `external_receipt`, `artifact`, and `recovery_observation`. A success returns `CommandAccepted`: `command_id`, `replayed`, optional `resulting_sequence`, stable `result_type`, and a bounded command-specific `value`.
-
-Acceptance is not task completion. Read the run and exact attempts to establish execution outcome.
-
-`start_run.inputs` is an array of `{ "name": "brief", "artifact_id": "input:…" }` values;
-omitting it means no inputs. Ordinary supplied inputs require interface schema
-`milkdrift.artifact-reference` version 1. Upload files through `POST /v1/artifact-inputs` first.
-The daemon checks metadata and content-read permission, complete bytes and digest, and workspace
-budgets before creation. The runtime's existing initial-workspace admission checks declared and
-required names, duplicates, committed references and budgets for both ordinary and published runs.
-Published methods retain their separate choice/artifact contracts and service authority.
-Initial values and artifact bytes are immutable; changing the source file cannot change a run.
-An explicit start guard must name sequence zero and the same revision as the command.
-
-`AuthorityRead.host` exposes the stable installation identity alongside the authenticated actor
-and immutable grant. `ControlClient::prepare_run` creates a bounded schema-1 `SavedRunRequest`
-containing that authority and the complete command. Persist it privately before submission.
-`submit_saved_run` checks the current host/caller/grant and sends that exact command once; application
-receipts remain the sole execution replay owner. The CLI requires a new `--request-file` for start,
-supports `--input NAME=FILE` and `--prepare-only`, and recovers using `run reconnect FILE`.
-New CLI text uploads hash the JSON tuple `["milkdrift.cli.input.v2", operation, command_id,
-position, input_name]`. `operation` is `run-input` or `invocation-input`; these operations have
-separate namespaces, and positions count only the ordered `--input` arguments. JSON field
-boundaries preserve legal punctuation. The same preparation reuses its uploads; changed content
-under the same identity still conflicts. Saved run and invocation requests retain their exact
-artifact references, including references from the earlier delimiter-based encoding. Replaying
-or submitting a saved request does not regenerate upload IDs. An earlier committed upload can
-also be supplied explicitly through `--inputs` when recovering unfinished preparation.
-Both CLI preparation commands validate local identities, duplicate names, input counts, referenced
-documents, output paths and all text files before uploading. They use the owning domain's name and
-count limits and read at most 512 KiB per text input. Preflight retains digests and at most one stdin
-value, rather than collecting all file contents. Files are read again just before upload; missing
-files or changed digests refuse further preparation. The caller must preserve original bytes,
-including stdin, for recovery. This check does not freeze another writer's file.
-
-For each upload, the CLI flushes a nonfinal `input.uploading` record containing host, preparation
-identity, ordered position, input name, upload ID, digest and recovery guidance before sending it.
-A successful reply adds `input.uploaded` with the authorized artifact metadata. Retain this output
-privately: a later upload/read failure, deadline, cancellation or request-file publication conflict
-does not remove committed artifacts or release their cumulative quota. The last pending upload can
-have committed even without a reply. Repeat unfinished preparation with the original host, actor,
-identity, input order and bytes to reuse the exact uploads; a new identity allocates new artifacts.
-Run records expose generated command IDs as well. Lost progress output plus a lost generated ID
-can prevent automatic recovery; use an explicit ID and retain the output for interrupted work.
-If the complete request file exists, inspect it and use normal exact saved-request recovery.
-Repreparing an invocation is safe only before submission; it does not recover an accepted call.
-Local staging cleanup is bounded by the preparation's files and never collects committed uploads.
-Start/reconnect `--wait` requires an explicit overall deadline and emits the recoverable identity
-before observation. In addition to input progress, JSON mode emits one nonfinal `run.prepared`
-record and one final result/error;
-without waiting, acceptance remains a single final response. Timeout/exit stops the observer;
-cancellation stays a separate command with its existing uncertain-effect semantics.
-This record has no credentials and creates no model selection earlier than runtime dispatch.
-Resource identities in URLs are single percent-encoded path segments. Encode a raw identity
-once, including embedded slashes and literal percent signs; the daemon decodes the matched
-segment once before its domain reader validates the name. Embedded `.`/`..` and repeated
-separators in legal names remain data. Standalone `.`/`..` and percent-bearing run/artifact names
-are not accepted by the current domain validators. JSON requests and stored names are unchanged.
-The Rust client's run subscription argument embeds the raw run identity in
-`v1/runs/{raw_run_identity}/stream`; transport encoding is internal. Cursor resource bindings
-also use the raw name, so a cursor cannot be reused for an encoded spelling or another run.
-Control protocol versions still require a coordinated upgrade. Direct invocation documents retain
-their existing version, saved request identity, replay and conflict semantics.
-
-Authoring `draft` contains `workflow_id`, nullable `base_revision`, and `mutations` using the
-existing blueprint mutation wire form. `expected_revision` must equal the base and
-`expected_sequence` must be absent. `author_blueprint` accepts `rename`, `add_model`, `prompt`,
-`model`, `output_limit`, `input`, `remove_input`, `rename_input`, `connect`, `disconnect`, `output`, `clear_output`, `remove`,
-and `move` gestures, defined by `BlueprintEdit`. `rename_input {name, new_name}` atomically
-renames a declared input and its workflow-input bindings, leaving other strings intact. An
-existing same-name source is a no-op; missing sources, invalid names and collisions refuse.
-`remove_input {name}` requires an unused declaration and identifies connected step ports on
-refusal. These edits do not delete uploaded artifacts or change accepted runs.
-`clear_output` removes the final-output selection (including an already absent selection).
-Incomplete drafts may be retained and reopened; ordinary save still requires a model step and
-selected output. `output_limit {step, maximum_output_units}` updates the existing model request
-through its validation owner. Catalogue authority is rechecked during editing; endpoint limits,
-execution authority and exact request reservations are checked by the existing preparation/entry
-owners when running. A valid edit is not a promise of available capacity or budget.
-Opening or saving an authorized retained definition does not require its original model or
-acceptance selections to remain available. The `workflow` view returns `selections_resolved`
-and per-step `selection_diagnostics`, so callers can explain what needs repair. Unchanged
-requirements are recognized only against the same step in the authorized immutable base;
-new or changed selections must match the permitted current catalogue. Missing, hidden,
-draining and materially changed selections can therefore be repaired one step at a time,
-including saving a partially repaired child. A descriptor revision alone does not invalidate
-otherwise identical matching requirements. Selecting a model refreshes both its model and
-acceptance requirements. These diagnostics neither expose hidden catalogue entries nor
-reserve execution capacity. Start still records durable run intent; unavailable exact
-requirements prevent attempt admission and leave work queued. Editing another revision
-does not change that run's requirements or substitute a fallback model.
-A connection selects a declared `run_input` or an earlier `step`; the latter
-selects only `final_text`. `add_model` requires explicit `maximum_output_units`. Each generated
-step uses the existing `ModelProse` acceptance gate. The editor refuses definitions outside its
-exact supported shape; `construct_blueprint` remains available for explicit rich mutations.
-
-Legal colon-bearing names retain their spelling through connections and invocation inputs. The
-daemon assigns framed identities to new connections and preserves validated IDs of unchanged
-connections from saved editor definitions. Old and current IDs may coexist in an edited child;
-opening or saving without changes preserves the original revision. Recognition still compares
-every semantic field. [ADR 0050](../decisions/0050-editor-edge-identities.md) owns the encoding and
-narrow compatibility rule.
-
-`prepare_model_repair` copies the failed step's workflow-input bindings under their original
-names and supplies the selected rejected response separately as `milkdrift.failed_result`.
-Ordinary connection edits reserve `milkdrift.` names. If an explicit/imported definition already
-occupies the repair evidence name, preparation refuses without changing the run or a binding.
-Old saved proposals retain their original mutations and names on replay. Preparation never
-approves, adopts or executes the proposed repair.
-
-Replies contain `draft`, `revision_id`, the canonical `document`, and an editor `workflow` view.
-Saving clears pending mutations and advances the returned base. An unchanged save retains the
-same revision. Neither command starts work or adopts a revision into an existing run. The model
-catalogue supplies explicit capability/profile choices; changing a profile requires explicit
-reselection. Separate drafts may create branches from the same immutable parent. See
-[ADR 0044](../decisions/0044-public-workflow-authoring.md) and the
-[authoring recipe](../../examples/operator/README.md#author-a-model-workflow).
-
-Before storing a definition, authoring, construction, copying and imports check the complete
-accepted result in both its durable receipt wrapper and its HTTP response envelope. Admission
-includes the maximum permitted request ID and JSON escaping, and uses the reader's byte and
-structure bounds. A result that cannot fit is refused before a new revision is stored; required
-definition data is never truncated. Initial success and exact replay therefore fit the same
-supported reader. The transport still checks its actual envelope independently.
-
-Capacity admission does not guarantee that later storage succeeds. If writing a revision, its
-audit decision or the accepted command receipt fails after work may have committed, the daemon
-returns `uncertain`, without recording a false rejection. Inspect the target and recover with the
-exact original request and authority basis; do not submit a replacement command ID to guess at
-the outcome.
-
-Controller commands use the installed lifecycle when the daemon explicitly enables it. Startup
-defaults to disabled; see [activation and recovery](../operations/daemon.md#controller-activation).
-
-Controller status contains the policy controller identity/digest; exact run, governing revision,
-node, and execution; lifecycle state; every progress and limit field; last assessment
-sequence/time/identity; current checkpoint or reached bound; `accounting`; and `cycle_eligible`. A
-marked run without an established account reports `not_activated` and cannot be cycle eligible. It contains no
-prompt, secret, model transcript, or sibling evidence. `continue_controller` is valid only for the
-pending digest-derived checkpoint on that execution. Duplicate use of the same external command and
-decision identity replays exactly; a stale/different decision, revoked grant, reached bound, or
-changed optimistic sequence cannot create another cycle.
-
-Attempt inspection carries optional task requirements and typed selected locality/peer catalog
-provenance. Every resolved snapshot includes its exact execution locality; older snapshot formats
-are refused.
-
-The `recovery` daemon health state means authenticated controls are live while
-execution readiness is false. Recovery uses the existing command shapes; live proposals select
-safe-restart plans with explicit approval, and execution-opening commands are refused. See
-[recovery controls](../operations/daemon.md#authorized-recovery-controls).
-
-`RunRead.controller_accounting` and `AttemptRead.terminal_detail` retain accounting and terminal
-evidence. The former is the bounded control-owned account projection described in
-[budget scope](../operations/authority.md#budget-scope); the latter preserves the durable terminal
-reason, including final-entry budget refusal, after operational attempt compaction. An unresolved
-attempt exposes its saved uncertainty reason in the same detail field; `uncertain` stays true and
-the terminal outcome remains absent until authorized resolution. Ordinary runs
-return `{"state":"inactive"}`. A missing accounting field represents `null` (unavailable), and a
-missing terminal detail is absent. CLI JSON remains schema 2. Controller status carries the same account under `accounting`; `committed`
-already includes outstanding reservations and `remaining` is `null` while blocked.
-
-The wire command carries the decoded prompt-sequence JSON document. Markdown parsing is owned by
-the CLI/library before submission, and the daemon independently performs strict schema validation
-and ordinary blueprint compilation. Validate/import responses include schema/sequence/workflow,
-revision and semantic identity, import and repository-profile digests, and ordered stage-node
-summaries. The full schema is documented in [`prompt-sequence-v3.md`](prompt-sequence-v3.md).
-
-## Query routes
-
-Every route is authenticated and authority-filtered. List queries constrain or filter at the owner boundary before projection, so hidden identities do not appear in counts, gaps, or result payloads. A missing object is returned only after the caller is authorized for its supplied scope; an authorization failure remains the bounded `unauthorized` error.
-
-| Method and path | Result |
+| Method and route | Purpose |
 | --- | --- |
-| `POST /v1/version` | Protocol negotiation under `negotiate_control_protocol`. |
-| `GET /v1/health` | Detailed lifecycle, queue, worker, failure, and redacted hot/cold receipt archival health under `inspect_daemon_health` plus daemon detailed-health scope. |
-| `GET /v1/readiness` | Coarse liveness/readiness with zeroed operational detail under `read_readiness`; returns 503 while not ready. |
-| `GET /v1/revisions?limit=&cursor=&workflow=` | Stable bounded revision-summary page. |
-| `GET /v1/revisions/{revision}` | Immutable revision summary, lineage, provenance, counts, and bounded document. |
-| `GET /v1/revisions/{from}/diff/{to}` | Bounded structured semantic diff with an explicit truncation flag. |
-| `GET /v1/runs?limit=&cursor=&state=&workflow=` | Stable bounded compact-run page. |
-| `GET /v1/runs/{run}` | Compact current run status and retained execution frontier. |
-| `GET /v1/runs/{run}/nodes/{execution}` | One retained node execution. |
-| `GET /v1/runs/{run}/attempts/{attempt}` | One exact current or historical attempt; journal paging supplies older attempts without retaining lifetime history in the compact run model. Includes capability/provider/peer linkage, the frozen operation contract and idempotency-key presence, frozen snapshot/trust/implementation provenance, and separately authorized context-manifest detail when present. |
-| `GET /v1/runs/{run}/timeline?limit=&cursor=` | Paged external timeline projection with exact durable sequence anchors and bounded safe external-effect classification. |
-| `GET /v1/runs/{run}/proposals?limit=&cursor=` | Bounded proposal identities/statuses from the durable validated proposal projection; exact status remains owned by `milkdrift-control`. |
-| `GET /v1/runs/{run}/proposals/{proposal}?revision={revision}` | Exact status from `milkdrift-control`, current sequence and retained reconciliation impact items (node, execution, classification, action, reason); absent plan detail is null. |
-| `GET /v1/capabilities` | Only generations within capability scope, with descriptor category and exact operation contracts, locality/peer/trust, provider profile where allowed, and scoped health/availability. |
-| `GET /v1/peers` | Only configured peer identities within `inspect_peer` scope. |
-| `GET /v1/peers/{peer}` | One authorized configured peer status. |
-| `POST /v1/peers/{peer}/{connect|reload|disconnect|drain|revoke}` | Exact peer administration under `administer_peer`; the action is audit-recorded. |
-| `GET /v1/authority` | Current server-owned actor, grant, revision, revocation generation, and configured operation labels. |
-| `GET /v1/artifacts/{artifact}` | Safe digest, size, media type, disposition name, and sensitivity; never a server path. |
-| `GET /v1/artifacts/{artifact}/content` | One verified explicit byte range under artifact-read authority. |
-| `GET /v1/layouts/{workflow}/{revision}` | Exact independent layout document. |
+| `GET /v1/workflows?search=&limit=50&cursor=` | Discover permitted workflows without a known ID. |
+| `POST /v1/workflows` | Atomically create a workflow and assign IDs to local task aliases. |
+| `GET /v1/workflows/{workflow}?cursor=` | Read workflow state and a bounded page of task summaries. |
+| `POST /v1/workflows/{workflow}/changes` | Apply one generation-guarded atomic edit batch. |
+| `GET /v1/workflows/{workflow}/tasks/{task}` | Inspect a selected task, frozen start and result preview. |
+| `GET /v1/workflows/{workflow}/tasks/{task}/result` | Read authorized result metadata and a text preview. |
+| `GET /v1/workflows/{workflow}/tasks/{task}/result/content` | Download complete bounded UTF-8 result text. |
+| `GET /v1/workflow-requests/{request}` | Recover this actor's durable request acceptance. |
+| `POST /v1/task-inputs` | Capture an actor-owned UTF-8 file. |
+| `GET /v1/workflows/stream` | Receive authenticated snapshot invalidation hints. |
 
-Revision listings retain global revision-identity order. An unfiltered named-workflow grant
-discovers only its permitted workflows; explicit filters require the same inspection authority.
-The store merges those bounded workflow index ranges before reading definitions, with at most a
-page of results plus one index head per selected workflow. Cursors bind the requested filter and
-current actor/grant, including revocation state, and every page rechecks authority. Pages are live,
-not snapshots: insertions behind a cursor are not revisited. A full final page can require an
-additional empty read; clients continue until `next_cursor` is absent.
-
-Revision comparison requires inspect permission on both revisions in one workflow. It reports
-saved semantic changes in this order: blueprint identity; metadata name, description and labels;
-extensions; inputs; outputs; agreement; nodes; edges. Maps use lexical identity order. Entries
-identify `added`, `removed` or `changed` subjects without including field contents (`detail` is
-null). Authorship, reason and parent ancestry are provenance, so different revision IDs may have
-an empty semantic comparison. The protocol's page-item ceiling also bounds comparison entries;
-`truncated` is true only when at least one further change was omitted. `blueprint diff` displays
-this same public response, including truncation.
-
-`limit` defaults to 100 and must be within the protocol page bound. A page contains `items`, optional `next_cursor`, and optional feed-head `observed_cursor`. Clients must request subsequent pages explicitly; the client library never auto-loads a complete run lifetime.
-
-Artifact metadata and content are separately authorized against the exact immutable artifact identity and stored sensitivity before either is disclosed. Content accepts one `Range: bytes=start-end` request and returns 206 with `Content-Type`, `Accept-Ranges: bytes`, `Content-Range`, safe `Content-Disposition: attachment`, and `x-milkdrift-artifact-complete`. A server call returns at most 1 MiB. Input upload uses the bounded publication route described above; artifact access never accepts a server path. Protected metadata/content decisions are retained in the bounded security audit with actor, grant revision/digest, operation, resource digest, decision digest, outcome, and reason codes; raw credentials and content are absent.
-
-The same metadata decision applies when an artifact appears inside a run, node, exact attempt,
-result or streamed status. Inaccessible output references are omitted; the remaining status still
-describes the run. Allowed references report the stored sensitivity. Permission to inspect a run
-does not itself reveal artifact identities, digests, sizes or media types. The workflow-control
-service applies this rule before its inspection adapter can publish a result. Its separate raw
-history API refuses a page containing unauthorized artifact metadata, preserving exact journal
-facts. The daemon's status timeline remains available because it never copies raw event bodies.
-
-## Read models
-
-The combined run-result view limits the frontier and terminal outputs to 32 each and text previews
-to 4,096 bytes. It also checks the complete response as it adds authorized attempt/context detail.
-When that detail would exceed the response's byte or structure bound, the node keeps its execution
-and latest-attempt identities, omits `latest_attempt`, and the result sets `truncated: true`.
-Use the exact node/attempt reads and separately authorized artifact ranges for the omitted detail.
-An absent nested attempt is not evidence that it never ran. Permission filtering occurs before
-this capacity decision, and output previews retain their separate content authorization.
-
-External timeline entries use the stable categories `lifecycle`, `execution`, `progress`, `artifact`, `coordination`, `authority`, `recovery`, `reconciliation`, and `uncertainty`. An entry carries the exact durable sequence, timestamp, bounded actor and run/node/attempt/revision references, stable summary, and bounded structured detail. It is deliberately not an internal `RunEventKind` document.
-
-Run models carry aggregate sequence, stable lifecycle, optional terminal outcome, workflow/revision/digest, a compact retained node frontier, and unresolved-uncertainty count. Node models retain the latest attempt identity even after detailed frontier compaction; the exact-attempt route pages authoritative history for that older identity. Attempt models carry immutable attempt state, exact capability/descriptor/provider/peer linkage, optional context-manifest artifact metadata, progress observation/byte counts without content, provider-neutral terminal usage, named immutable output artifact metadata, terminal summary, and uncertainty. `capability_provenance` carries the exact frozen snapshot digest and execution trust class. For a byte-pinned local process it also carries the safe implementation identity, configured/canonical executable path digests, executable content digest and size, complete profile digest, execution-policy digest, and optional package/documentation references; executable paths are never returned. For a model generation it carries the complete non-secret profile digest/revision, protocol family, exact model alias, and redacted endpoint origin without path, query, fragment, credentials, or authorization data.
-
-When a manifest exists, the daemon separately evaluates `read_artifact_content` for that exact restricted artifact. An allowed read verifies its schema, digest, size, and attempt binding, then returns a bounded context object containing the immutable task policy, selected causal/provenance metadata, stable omissions, totals, applied budget, and a truncation flag. A denial sets `context_access` to `denied` and returns neither policy nor entry/omission detail; `metadata_only` means only the compact manifest reference was disclosed. Artifact bytes remain available only through the separately authorized bounded range route. Complete lifetime history remains the paged journal-backed timeline.
-
-Context enrichment also checks artifact references in selected sources, omissions, causal parents
-and explicit evidence selectors. If any is outside the reader's metadata scope, the enrichment is
-withheld as a whole with `context_access: denied`; a permitted manifest reference can remain. This
-keeps the manifest's original digest and totals from being mistaken for a newly filtered document.
-Metadata permission alone exposes no content-derived preview or context enrichment. Invocation
-outputs retain the separate receipt-bound `ReadCapabilityOutput` contract described below; it
-does not grant arbitrary artifact access or internal run inspection.
-
-Exact attempt inspection also exposes `result_acceptance` for the built-in acceptance operation:
-its Boolean decision, closed reason, requirement, finish reason, and checkpoint come only from an
-authorized decision artifact. The invocation's own terminal remains unchanged. Model attempts
-expose `model_generation` with literal request output allowance and supported reasoning choices
-when revision inspection is authorized, plus finish reason from an authorized response artifact.
-Missing fields mean unavailable evidence, not zero usage or disabled reasoning. See
-[result acceptance](../guides/result-acceptance.md) for workflow composition and recovery.
-
-For supported model accounting, terminal `usage` is the amount used by the cumulative account.
-It may include a charge calculated from the frozen operator tariff. Read the authorized
-`model_response` artifact to distinguish its raw provider `usage` from
-`provider_metadata["org.milkdrift/model-accounting"]`: that object records billing terms, token
-contract, request digest, reservation envelope, accounting basis and any conflict. An unbilled
-attempt has no monetary observation or invented currency. A reservation is an upper bound, not
-observed consumption. These artifact facts stay tied to the generation used by the attempt.
-
-## Cursors and SSE
-
-
-Cursors are opaque bounded Base64url schema-2 values. They bind an exact feed and position/key to the authenticated actor, grant identity/revision/digest, authority decision, and a domain-separated digest of the complete resource/filter scope. A credential-derived keyed MAC prevents modification or reuse after credential rotation. A malformed, stale, cross-actor, cross-grant, cross-resource, or cross-filter cursor fails as bounded `invalid_input`, except for the process-local feeds described below; a broader replacement grant does not reinterpret an old continuation. Clients must store only a successfully observed cursor and resume after it.
-
-The daemon exposes:
-
-- `GET /v1/runs/{run}/stream?cursor=…` for projected timeline and compact status updates on feed `run:{run}`.
-- `GET /v1/stream/capabilities?cursor=…` for complete authorized catalogue snapshots on feed `capability-health`.
-- `GET /v1/stream/health?cursor=…` for coarse daemon health on feed `daemon-health`.
-
-SSE `data` values are `ObservationEnvelope` documents with protocol, cursor, observation time, feed,
-and one closed external observation: `timeline`, `run_status`, `capability_snapshot`, `daemon_health`,
-`stream_closing`, or `resync_required`. Each `capability_snapshot` value is the complete currently
-authorized array of `CapabilityRead` records. Replace the previous catalogue with it; an empty array
-removes every previous entry. Identity plus generation distinguishes retained generations. A draining
-or noncurrent generation remains present until the registry actually removes it. Omission from a
-later snapshot unambiguously removes it without disclosing a hidden identity in a removal notice.
-
-A cursor-free capability subscription starts with only the latest complete snapshot, including an
-empty catalogue. A valid reconnect replays complete snapshots after the cursor within the retained
-window. The daemon polls current registry state; intermediate changes between polls are not a
-durable lifecycle audit. Capability feed windows are partitioned by the complete actor, grant
-identity/revision/digest and resource/filter binding. A restricted reader cannot receive observations
-cached for a broader grant. Each window retains at most 256 snapshots and 1,310,720 encoded catalogue
-bytes; an older continuation receives `resync_required`. A snapshot that exceeds the document or
-envelope bounds also ends with `resync_required`, never a partial catalogue. The daemon retains at
-most 256 windows, matching its immutable configured actor limit. Windows end with that daemon
-instance; credential rotation under the same grant reuses its window without adding retained state.
-
-Protocol 2.20 replaces the former single-entry `capability` observation. Daemon and clients must
-upgrade together; older observation variants and protocol minors are refused. Cursor schema 2 and
-all durable storage formats remain unchanged. [ADR 0050](../decisions/0050-live-capability-snapshots.md)
-records this compatibility decision.
-
-Run-feed positions interleave durable timeline sequence (`2 × sequence`) and its following compact status (`2 × sequence + 1`). Transport heartbeats are SSE comments and are never durable events. Server generators and owner calls are bounded; backpressure retains no unbounded per-client event queue. Authentication and exact authority are reevaluated on every bounded polling cycle. Rotation, revocation, narrowing, draining, invalid history, or authorization change stops future disclosure and closes the feed with an authorization closing/resync item where possible; already delivered history is not rewritten.
-
-The authenticated session constructs cursor bindings for both page and stream consumers. Exact
-feed/filter identity and the immutable grant digest bind the scope; stream-to-page translation
-uses that same construction. Reaching the journal head waits for later events without changing
-the continuation position. A cursor rejected after an implementation or authority change requires
-a fresh authorized subscription or page read.
-
-An open stream keeps its initial authority binding. If file-based credential rotation maps its
-bearer value to a different actor or grant, the stream closes instead of adopting that authority.
-
-Health and capability cursors also bind a random HTTP feed incarnation in their scope. Their
-in-memory counters can restart at the same number, but an earlier cursor cannot acquire that
-number's new meaning. After ordinary authentication and subscription authorization, any cursor
-that fails this complete binding check receives one `resync_required` and the stream ends before
-disclosing a health or capability payload. Subscribe again without a cursor. This also handles
-credential/grant changes and unsupported old cursor bindings without a retry loop. Run and
-timeline cursors retain their durable-history binding and remain resumable after restart.
-The incarnation is created with the retained HTTP feed state, so even separate HTTP servers
-sharing one host cannot silently reuse each other's capability positions.
-
-`milkdrift-control-client::subscribe` reconnects retryable transport failures with its last decoded
-cursor and yields errors between connections. Its consumer owns the overall deadline and retry
-limit, handles `resync_required` by refreshing the view, and decides how to handle `stream_closing`.
-The cursor advances when decoded, not when the consumer persists its item. Reconnect never submits
-or replays a command.
-
-Event framing follows the [WHATWG line and data-field rules](https://html.spec.whatwg.org/multipage/server-sent-events.html#parsing-an-event-stream):
-CRLF, LF and CR end lines; the earliest blank line completes an event; repeated `data` fields
-join with newlines; one initial UTF-8 BOM is ignored. Network chunk boundaries have no meaning.
-An incomplete event at EOF is discarded before reconnecting. The client additionally requires
-strict UTF-8 and a valid bounded JSON observation, and ends on a malformed complete event.
-Empty/comment-only blocks carry no observation; an empty `data` event fails JSON decoding.
-SSE `id` and `retry` fields do not override the authenticated envelope cursor or client retry
-policy. Cursor advancement requires a valid envelope, matching feed and cursor, and a newer
-position. Each event's buffer is bounded independently, even when one chunk holds many events.
-
-The CLI's `run timeline --follow` first reads a timeline page, then starts a fresh run stream.
-Its `--cursor` applies to that page; a `timeline:{run}` continuation cannot resume `run:{run}`.
-The fresh stream starts with the current run view and observes only later events. It does not
-drain old pages. The shared client suppresses duplicate or older feed positions and ends after
-delivering a closing or resync notice. On resync the CLI reads a fresh authorized view and opens
-a new cursor-free subscription within its existing reconnect/deadline bounds.
-
-## Layout schema 1
-
-`LayoutDocument` contains `schema_version`, exact `workflow_id` and `revision_id`, positive optimistic `generation`, server-overwritten `author`, independent BLAKE3 `digest`, bounded `nodes` positions/dimensions, `collapsed_groups`, non-executable `annotations`, and optional `viewport`. The first generation is 1; a changed document must advance by exactly one. The daemon recomputes author and digest before storing.
-
-Layout cannot contain executable edges, node/task configuration, requirements, prompts, secrets, or semantic mutations. Each exact workflow/revision layout is stored as an independently checked schema-1 application record in redb, independently from the immutable blueprint revision. Layout edits therefore do not create a revision, run event, or semantic digest change. Concurrent changed writes must advance from the current generation by exactly one; stale writes are durable deterministic conflicts under the external command receipt policy. The layout and its receipt share one transaction, so a stale generation is a confirmed refusal. A storage error that may follow commit remains uncertain.
-
-## CLI automation contract
-
-`milkdrift --json` emits schema 2 to stdout for both success and failure. Schema 1 is superseded;
-there is no legacy writer. Every record has the same envelope fields:
+The following request creates a finite process task. Replace the capability with an exact choice
+returned by the connected daemon. The daemon assigns workflow/task IDs and returns the `report`
+alias mapping; the alias has no identity outside this request.
 
 ```json
-{"schema_version":2,"type":"run.show","status":"success","command_id":"inspect-1","value":{},"error":null,"final":true}
+{"request_id":"project-report-1","title":"Inspect project","description":"Report the supplied Cargo project","tasks":[{"alias":"report","definition":{"title":"Inspect Cargo manifest","description":"Describe targets and dependencies","instructions":"Inspect the supplied file and summarize its package, targets and dependencies.","capability":{"id":"cargo-report","operation":"process.execute"},"inputs":{"brief":{"kind":"supplied","name":"brief","optional":false},"file":{"kind":"supplied","name":"file","optional":false}},"outputs":{},"dependencies":[],"required":true,"corrective_of":null,"paths":[]}}],"inputs":{"brief":{"kind":"text","text":"Give a concise project report."}},"finish_when_settled":true,"limits":null}
 ```
+
+This task remains queued because `file` is missing. Capture file bytes with:
 
 ```json
-{"schema_version":2,"type":"run.pause","status":"failure","command_id":"pause-1","value":null,"error":{"classification":"conflict","code":"conflict","daemon_code":"conflict","retryable":false,"detail":"exact command, revision, sequence or runtime policy conflict"},"final":true}
+{"request_id":"manifest-upload-1","name":"Cargo.toml","media_type":"text/plain","text":"[package]\nname = \"sample\"\nversion = \"0.1.0\"\n"}
 ```
 
-Records are compact, contain no literal control characters, and are bounded by the control document
-ceiling plus 4,096 bytes for presentation. Errors use fixed redacted CLI descriptions. They never
-serialize raw transport/API/parser text, credentials, environment values or submitted documents.
-`type` identifies the operation; malformed arguments use `arguments`. `command_id` preserves the
-explicit/generated request identity (or null before a valid identity exists). `value` carries the
-typed success result, or the complete run read for failed terminal waits. `error` is null on success;
-otherwise it carries stable classification/code, nullable daemon code and retryability, and bounded
-detail. Retryability is unknown (null) after a client deadline or cancellation.
-
-Classifications are `invalid_input`, `authorization`, `conflict`, `uncertain`, `unavailable`, `not_found`,
-`daemon_api`, `failed_terminal`, `invocation_failed`, `internal_client`, `timeout`, and `cancelled`.
-JSON failure diagnostics do not go to stderr. Revision show/status omits document bodies; explicit
-`blueprint export --output FILE` writes the canonical document for inspection. `show --document`
-is raw document output only outside JSON mode. Artifact content goes only to an explicit file.
-
-| Exit | Meaning |
-| --- | --- |
-| 0 | Successful operation/read, including inspection of a failed run. |
-| 2 | Invalid input/configuration, missing explicit wait/follow deadline, or missing confirmation. |
-| 3 | Authentication or authority failure. |
-| 4 | Optimistic/idempotency conflict or an explicitly uncertain operation outcome; inspect the error code. |
-| 5 | Retryable overload, endpoint timeout, unavailability or transport failure. |
-| 6 | Not found. |
-| 7 | Other public daemon API failure. |
-| 8 | `run wait` observed failure/cancellation or a terminal outcome outside its filter; value retains the run. |
-| 9 | Internal client/protocol/presentation failure. |
-| 10 | Overall deadline, poll bound, or reconnect bound reached. |
-| 130 | User cancelled the client with Ctrl-C. |
-
-`--timeout-secs` bounds the whole command, including connection, document input, retries and waiting.
-Ordinary commands default to 60 seconds; the maximum is 86,400. `run wait` requires an explicit
-value, polls at `--poll-ms` (default 250, range 10..=60000), and stops after `--max-polls` (default
-1000, maximum 100000). `--terminal any|succeeded|failed|cancelled` selects the terminal condition;
-an incompatible immutable terminal stops immediately with exit 8. Failed/cancelled outcomes
-also exit 8 when selected. No client wait or cancellation changes run state. Preserve the exact
-command ID and request when reconciling a lost mutation response.
-
-Followed run, capability and health feeds emit JSON Lines with `final:false` for observations and
-reconnect transitions, and exactly one `final:true` failure record on deadline, authority loss,
-nonretryable protocol failure or Ctrl-C. `status` is `success`, `reconnecting` or `failure`.
-`--max-reconnects` (default 5, maximum 100) bounds retries across the command. Noninteractive follow
-requires `--timeout-secs`; interactive follow may last until Ctrl-C. A malformed complete SSE
-event is a protocol failure. EOF discards pending event data and consumes the reconnect budget.
-Pages never auto-drain.
-
-High-risk commands require interactive `yes` or `--yes`; JSON and redirected execution require
-`--yes`. Confirmation input is bounded by the command deadline. Local sequence compilation,
-help and version require no endpoint or credential. Safe-query retry belongs to the control client;
-mutations are never retried implicitly. Create-only exports, downloads and saved requests stage
-privately and publish only complete verified bytes without clobbering a competing destination.
-Failure, timeout and cancellation clean staging, never the final pathname. Directory-sync failure
-after publication reports unconfirmed durability; cleanup failure preserves the primary error.
-Forced termination can leave staging. The [CLI file contract](../../apps/cli/README.md) explains
-parent-directory trust, publication-time guarantees and the distinct cooperating-lock requirement
-for deliberate draft replacement.
-
-### CLI operation disposition
-
-The current operator surface intentionally covers every legitimate external operation:
-
-| CLI family | Protocol/client disposition |
-| --- | --- |
-| `daemon health`, `readiness`, `authority` | Detailed/coarse health and actor/grant reads; `health --follow` exposes the health SSE feed. |
-| `blueprint validate`, `import`, `export`, `show`, `list`, `diff` | Both definition commands and every revision read/diff route. `show --document` emits exact canonical bytes; `show --output FILE` creates a new file. |
-| `sequence validate`, `compile`, `import`, `show`, `status`, `stage`, `remediate` | Prompt-sequence command variants plus owner-derived stage association and prospective proposal construction. These are conveniences over ordinary revision/run/proposal operations, not another workflow model. |
-| `run start`, `reconnect`, `list`, `show`, `wait`, `pause`, `resume`, `cancel`, `signal`, `timeline` | Every run command/read; start retains a private exact request, reconnect resubmits it, and `timeline --follow` exposes the run SSE feed. |
-| `controller status`, `continue` | Both controller command variants and the exact controller read. |
-| `node`; `attempt inspect`, `resolve` | Exact node/attempt reads and `resolve_work` actions `query`, `retry`, `compensate`, `retain`, `resolve-succeeded`, and `resolve-failed`. |
-| `proposal repair`, `submit`, `list`, `show`, `approve`, `reject`, `apply` | Public repair preparation, ordinary proposal commands and reads. Approval/application show recorded impact and use the freshly read sequence unless explicitly guarded. |
-| `capability list`, `show` | The scoped capability read; `list --follow` exposes the capability SSE feed. |
-| `provider list`, `show` | Authorized provider-profile identities and generations projected from the same scoped capability read. |
-| `peer list`, `show`, `connect`, `reload`, `disconnect`, `drain`, `revoke` | Every peer read and administration route. |
-| `invocation catalog`, `prepare`, `submit`, `lookup`, `show`, `observations`, `wait`, `cancel` | Authorized independent discovery, exact saved requests and bounded invocation lifecycle reads/actions. |
-| `artifact upload`, `metadata`, `get` | Atomic bounded input upload; metadata plus verified range reads into one create-new destination. |
-| `layout get`, `put` | The layout read and `put_layout` command. |
-
-Protocol negotiation is performed automatically when a CLI session connects; it is not a separate
-operator command. Individual artifact-range calls are an implementation detail of verified
-`artifact get`, not a byte-splicing operator surface. Public configuration, audit, and shutdown
-routes do not exist; the CLI uses the public input-publication route for uploads and never accesses daemon storage.
-
-Every command can carry exact `--command-id`, `--expected-sequence`, `--expected-revision`, bounded
-`--reason`, and repeatable `--evidence KIND=ID`. Actor, grant, authority decision, and timestamp
-remain daemon-owned. Generated command IDs are only a human convenience; automation must supply a
-stable explicit identity.
-
-Canonical document inputs are byte-bounded while reading, reject duplicate JSON keys, and accept
-one regular file or the documented single `-` stdin source. Blueprint validation and import use the
-exact owner document. Prompt-sequence Markdown/JSON parsing and stage association remain owned by
-`milkdrift-prompt-sequence`; proposal policy remains owned by `milkdrift-control`; layout validation
-remains protocol-owned. Credentials come from a bounded restricted `--token-file`/
-`MILKDRIFT_TOKEN_FILE` or a configured environment-variable name, never a token command argument.
-Artifact and canonical-document file output uses create-new semantics and removes partial output on
-failure. Artifact completion verifies exact size and the workspace owner’s canonical 64-hex BLAKE3
-content digest.
-
-## Managed installation commands
-
-Both host roles expose `POST /v1/resources` when the managed Linux adapter is configured.
-`ControlClient::manage_resources` accepts `milkdrift_capability::managed::ManagedRequest` and
-validates the returned `ManagedResponse` against its target. The HTTP response uses the ordinary
-success/error envelope. The inner command/inventory schema is independently versioned at 3.
-An authorized `prepare` returns a preview state of `prepared` or `unprepared`. The latter includes
-bounded prerequisite diagnostics without recording a transition or changing an installation; it is
-not an accepted apply. Authentication, scope and malformed-request failures still use the error
-envelope. Clients must examine the preview state before proposing a change.
+Bind the returned `input_id` under the current workflow generation:
 
 ```json
-{
-  "schema_version": 3,
-  "command": "inspect-one",
-  "installation": "slotbook",
-  "expected_version": 0,
-  "action": { "type": "inspect" }
-}
+{"request_id":"supply-manifest-1","expected_generation":1,"changes":[{"kind":"bind_input","name":"file","value":{"kind":"uploaded","input_id":"input:replace-with-upload-receipt"}}]}
 ```
 
-The same document is the `request` input to `milkdrift.resources` / `resource.manage`, supplied
-inline or through an authorized exact value/artifact reference (at most 64 KiB).
-`prepare` and `inspect` evaluate `InspectHealth`; mutations evaluate `AdministerCapabilities`.
-All target capability identity `managed.INSTALLATION` and the exact operation selector
-`resource.ACTION`, plus configuration-derived filesystem/network requirements. Preparation/inspection
-require read access to those filesystem roots. A capability invocation also needs ordinary permission
-to invoke `milkdrift.resources`. Bootstrap grants the exact chosen installation and worker/model
-identities; resource commands do not confer raw Podman or systemd access.
+Uploads retain exact UTF-8 bytes, basename and digest. Binary files and oversized requests are
+refused. The text limit is 16 KiB per value/file. Combined rendered input is also bounded; an oversized
+composition is refused before accepting a task or edit. JSON escaping counts toward that bound. Upload references belong to the authenticated actor.
+At start, captured content and selected producer artifacts become immutable task inputs.
 
-Actions are `prepare { recipe }`, `apply { recipe }`, `inspect`, `start`, `stop`,
-`update { recipe, allow_interruption }`, `preserve { disposition }`, `remove`, `recover`,
-`resolve { use_id, expected_claim }`, `handoff { transfer }`, and
-`return { transfer, resume_parent }`. A recipe is `{ name, digest }`, with a canonical `b3_` digest
-of already approved strict recipe content. A transfer binds installation, generation, parent and
-child use IDs, both claims, and exact accepted association. Disposition is `preserve` or
-`delete_on_removal`. Names use 1–64 lowercase letters, digits or hyphens and begin with a letter.
-Use IDs are 64 lowercase hexadecimal characters; claims and generations are nonzero.
+Every create/change request has an exact canonical identity. JSON object ordering and whitespace do
+not matter; omitted fields and explicitly supplied defaults remain different requests. A duplicate
+returns its original receipt. Changed reuse conflicts, including changed upload identities. If a
+reply is lost, query the receipt or replay the exact request. A local recovery file is optional;
+after losing the client entirely, discovery still finds accepted work.
 
-Mutations compare `expected_version`; prepare/inspect use it only as retained request data.
-The actor's `command` key binds the complete canonical request and accepted authority. Exact replay
-returns the immutable acceptance response even if current state has advanced. Inspect is the current
-view. Admission closes in the same store transaction as accepted intent. Busy resource state and
-version conflicts refuse before platform effects; no waiting queue or cross-platform atomicity is
-promised. The client does not automatically retry mutations.
+## Future changes and completion
 
-A response includes `schema_version`, installation/version/generation, state, desired and observed
-running state, approved recipe, resource identities/ownership/disposition, blockers, pending change,
-verified capability candidates and bounded diagnostics. Candidates become registry entries only
-after verification; use discovery and health for availability. Entered blockers remain after an
-unknown operation outcome. Resolution proves or fences resource use without changing that outcome.
-See [managed operations](../operations/managed-linux.md) for exact CLI use and recovery consequences.
+Changes include `add`, `revise`, `remove`, `bind_input`, `stop`, `wait`, `continue`, `finish` and
+`adopt_correction`. Revise/remove carry the observed task version as well as the batch's workflow
+generation. An already frozen start refuses revision. New definitions never rewrite retained
+history. Required producer output and settled producer outcome are different input bindings;
+missing required output keeps consumers queued. Definitions default to required.
 
-## Governed methods and protected publication
+Stop uses the task's returned `stop_request_id` with one exact `stop` change. Its reserved capacity
+remains available when ordinary admission is full. A cancellation request alone does not establish
+stopped: the public task can remain running/stop-requested or uncertain until durable evidence
+settles it. An entered process without terminal evidence remains uncertain after restart and is
+not silently repeated. Native writer claims remain held while its outcome is uncertain.
 
-Current run reads include `published_source` (the accepted public operation or local attempt,
-visible under internal run inspection), `governing_agreement` (the accepted origin binding or null),
-and `agreement_adoptions` (the cumulative prospective adoption count). These project runtime history;
-clients cannot update them. Blueprint schema 3 includes an explicit agreement or null.
+Correction adoption names a successful corrective task and optional version-guarded future input
+redirects. The original failure/result remains inspectable. No automatic correction or model-led
+workflow editing is implemented in this slice. Cumulative limits never replenish on continue.
 
-Proposal version 1 also accepts a strict authoring `draft` envelope. Its fields match the canonical
-proposal except that the owner derives `digest` and derives the mutation batch identity from a
-`mutation` array. This form uses the same submission, authority, risk and reconciliation checks.
-It cannot be combined with a canonical `proposal` envelope. Normal receipts retain canonical identity.
+## Reads, pages and streams
 
-Managed schema 3 includes `evaluate { candidate }`, `evidence { evaluation }`, and
-`publish { evaluation }`. Candidate is an exact artifact reference; evaluation is its host-derived
-`b3_` journal identity. `resource.evaluate_candidate` and `resource.publish_candidate` accept an
-target (`schema_version`, `command`, `installation`, `expected_version`) inline or through a bounded
-authorized value/artifact reference, plus a selected
-`candidate` or `evaluation` artifact input. They resolve selected workspace values through the same
-artifact owner. Every API, CLI, workflow and serving call enters the managed owner; an uploaded
-report is only an identity selector. The private journal and current target policy decide permission.
-Responses contain optional `evaluation`; pending intent, completed evidence, running service and
-workflow terminal remain distinct. See the [runnable example](../../examples/adaptive-slotbook/README.md).
+Discovery searches workflow/task titles, descriptions and authorized retained text results. Each
+request examines a finite window and returns `truncated` and `next_cursor`; absence from one page
+is not proof of absence. Cursors bind the daemon, actor, grant and search. Workflow task pages use
+`next_task_cursor` and expose `task_count`; they contain summaries, not captured inputs. These are
+live pages, not a historical snapshot transaction. Both item counts and encoded page bytes are
+bounded. Refetch from the beginning after edits when a consistent current view matters.
 
+A selected task contains its definition and frozen input provenance. Frozen text and combined
+result text have explicitly labelled 16 KiB previews; their digests refer to complete content.
+`result_restricted` preserves permitted task-state inspection while indicating inaccessible output.
+The explicit result route still refuses unauthorized output reads. Captured inputs also recheck
+current artifact permissions; restricted previews and digests are withheld. Non-UTF-8 declared text
+sets `text_unavailable` while retaining task state, artifacts and the complete byte digest. Complete
+result text permits 2 MiB of artifact content plus bounded separators; individual immutable artifacts use `/v1/artifacts/{artifact}/content` and bounded ranges.
 
-## Published workflow capabilities
+The workflow stream uses authenticated fetch, not native EventSource with a token in its URL.
+It sends periodic `workflow_changed` invalidations; clients refresh their visible page and selected
+workflow. It is not a replayable task journal. The connection has a finite lifetime. On reconnect,
+`Last-Event-ID` is checked against actor/grant/daemon binding; an old daemon incarnation yields
+`resync_required` and a fresh authorized snapshot is required. Revocation/expiry closes the stream
+with a useful forbidden state. Queue/connection saturation refuses admission explicitly.
 
-The ordinary command endpoint accepts `prepare_method { document }` with a reviewed
-`PublicationDraft`: it checks revision reads and `method.publish` authority, derives the stored
-agreement and configured service grant facts, and returns an ordinary method without publishing.
-It also accepts `publish_method { document, expected_previous_version }`,
-`inspect_method { capability, generation }`, `list_methods { after_capability, after_generation,
-limit }`, and `retire_method { capability, generation, expected_version }`. The document is the
-schema-1 persistence-owned `PublishedMethod`; inspection and listing return retained records.
-Listing requires a complete after pair or neither, and a limit from 1 through 128. Authority is
-`AdministerCapabilities` scoped to the named capability and `method.publish`, `method.inspect`, or
-`method.retire`. The publication binds a configured service grant; only workflow-enabled hosts
-with accounted execution can provide it. The next consecutive descriptor generation promotes a
-replacement. Exact accepted generations continue after retirement; different bytes under the same
-immutable identity conflict.
+## Independent host and administrative routes
 
-Public discovery/invocation/lookup/observation/cancellation use the existing `/v1/invocations`
-routes. The derived `org.milkdrift/published-method.v1` descriptor extension contains documentation,
-finite input rules and output limits, without internal field mappings, graph or service identity.
-`org.milkdrift/published-allowance.v1` carries the conservative prepared envelope for delegated
-admission. Callers cannot override either derived extension in a method document.
+Health/readiness, capability catalog, current authority, peer administration and immutable artifacts
+remain scoped public operations. `/v1/invocations/prepare`, `/v1/invocations`, request lookup,
+inspection, observations, output and cancellation retain the independent execution-host path.
+`/v1/resources` retains managed-resource generation checks, deployment verification and protected
+resource holds. Task creation does not bypass those independent guards. See the
+[daemon](../operations/daemon.md), [authority](../operations/authority.md),
+[peer](../operations/peers.md) and [managed Linux](../operations/managed-linux.md) guides.
 
-`GET /v1/invocations/{execution}/outputs/{artifact}?offset=0&maximum=65536` returns one immutable
-metadata-and-byte range. Maximum is 1 through 65,536 bytes. `Inspect` and `ReadCapabilityOutput`
-authorize only that authenticated caller's recorded terminal output under the exact capability
-scope, including after archival. Unrelated artifact identities refuse; this route does not grant
-general artifact access. Observations and archived summaries also recheck result-read permission
-before disclosing output references. [Published methods](../guides/published-methods.md) gives the
-configuration and CLI path.
+Old graph import/run/revision/proposal/controller/layout/learning/publication routes and their
+readers are removed. There is no compatibility execution engine or conversion endpoint.
+
+## Browser hosting
+
+Configure exact allowed origins in `serving.browser_origins`. A mismatched origin is refused;
+preflight explicitly allows bearer/identity headers and supported methods. Credentials are not
+cookies. Standalone static hosting needs no CLI or filesystem access. Loopback HTTP is the local
+development exception. Phone/LAN use requires browser-trusted HTTPS for the static site and daemon
+proxy; forward authentication headers and disable SSE buffering. Physical phone and deployed proxy
+behavior require separate qualification. See the [web setup](../../apps/web/README.md).
+
+[Current versions](versions.md) are checked against their owning constants.

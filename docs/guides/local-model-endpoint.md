@@ -1,303 +1,71 @@
-# Connecting a local OpenAI-compatible model endpoint
+# Connect a separately managed model endpoint
 
-Milkdrift treats a local model server as a configured capability endpoint. It does not load model
-weights, select a model architecture, manage inference memory, or start/stop the server. Run and
-secure the server separately.
+Milkdrift treats a model server as an external capability. It does not load weights or manage
+inference memory. Run and secure the server separately, or use the existing managed-resource owner
+for a separately configured owned service. The [operator recipe](../../examples/operator/README.md)
+registers the model adapter and creates ordinary daemon tasks.
 
-LM Studio is a temporary development endpoint, not a Milkdrift dependency. Replacing it with
-llama.cpp's server or another compatible server means updating the operator-owned endpoint profile
-and rechecking that server/model's advertised behavior through this same path.
+Copy the [endpoint template](../../examples/local-model/openai-compatible-loopback.example.json)
+to a private operator directory. Set the exact endpoint, provider protocol, model alias, revision,
+feature declarations and request/response bounds. An OpenAI-compatible chat endpoint uses protocol
+`open_ai_compatible` with its exact configured path, commonly `v1/chat/completions`. The supported
+Anthropic mapping is selected explicitly through its own profile. A server advertising an HTTP API
+does not establish compatibility with the selected model or every feature.
 
-For ordinary setup and execution, use the maintained
-[headless operator path](../../examples/operator/README.md#one-separately-managed-loopback-model).
-It registers a profile, imports `model.json`, starts and waits through the CLI, and inspects exact
-attempt/context/output evidence. The commands below check those observations in a repeatable
-model-only scenario; they do not qualify the combined coding-agent/model gate.
+## Declare enforceable limits
 
-The maintained loopback profile is
-[`openai-compatible-loopback.example.json`](../../examples/local-model/openai-compatible-loopback.example.json).
-Copy it to an untracked operator directory and replace the exact model alias. Remove `streaming`
-unless that exact server/model supports chat-completions SSE. Add a bearer `SecretRef` only when
-the server requires one; keep the resolved token in a private file rather than the profile.
+Ordinary task execution requires explicit enforceable external unit and monetary bounds. A profile
+whose billing or token limits remain `unknown` cannot establish those task reservations. Declare
+unbilled service only when the operator can establish that fact. Use a supported counting contract
+only after inspecting the exact tokenizer, template, provider settings and output-cap behavior.
+The template's placeholder/unknown values are not qualification evidence.
 
-For a llama.cpp server using its OpenAI-compatible chat endpoint, create endpoint-profile schema
-v2 with:
+The current ordinary model task owner constructs a fresh nonstream request with a 4096 output-unit
+allowance from the accepted instructions and named inputs. It selects no structured-output schema
+or opaque provider session. Configure the profile to admit that request and enforce its complete
+output cap, including any hidden reasoning that the provider counts. A client or socket timeout
+cannot establish that remote generation stopped. Profile accounting and external provider facts
+remain separate responsibilities.
 
-- protocol `open_ai_compatible` and path `v1/chat/completions`;
-- a loopback base URL such as `http://127.0.0.1:8080`;
-- the server's exact model alias;
-- `no_auth`, `local_development: true`, and an allowlist containing only `127.0.0.1`;
-- explicit outbound request-body, request-time, idle, header, response, SSE, and fragment bounds;
-- only features the selected server/model configuration actually implements.
+Named text and captured UTF-8 files become bounded selected evidence. Individual text inputs are
+limited to 16 KiB; the daemon also checks the combined instructions and selected inputs. Producer outputs must be
+explicitly bound to future tasks; previous conversations are not discovered automatically. The
+[continuation guide](model-continuation.md) explains using prior immutable results as fresh evidence.
+The daemon freezes the selected bytes, capability generation and actor/grant facts before entry.
 
-## Controlled local text requests
+## Transport and unsupported features
 
-The maintained example deliberately says `unknown` for billing and counting. Ordinary operation
-can use it; controlled operation requires an explicit operator contract. For the inspected Bonsai
-GGUF `Q1_0` using LM Studio chat completions, the tokenizer is byte BPE (`gpt2`, `qwen35` pretokenizer).
-Its observed Jinja template emits each supported system/user text once, with fewer than 64 extra
-UTF-8 bytes per message and 64 fixed bytes. No expanding normalization or hidden prompt prefill
-is permitted by this contract. Recheck the effective template and prediction settings after any
-model/server configuration change. Merely copying these numbers to another model is unsupported.
+Plain HTTP is allowed only for explicit loopback development with an allowlisted host. Remote
+provider endpoints require HTTPS. Redirect and proxy behavior are configured rather than inferred
+from ambient credentials. Profiles contain opaque secret references; resolve them through private
+files or environment sources in daemon configuration. Never place a credential in the URL.
 
-After confirming those facts and declaring no provider charge for the selected service, copy the
-example into an untracked operator directory and set these fields (PowerShell):
+The adapter's direct invocation path exposes the provider-neutral model request. Tools, image parts,
+developer roles, reasoning controls, structured output and streaming require explicit support by
+the selected profile and mapping. Direct sessions must be fresh. Generic file parts and arbitrary
+provider-managed sessions are not implied by the model request type. Consult the
+[adapter contract](../../adapters/model-provider/README.md) for supported mappings and refusals.
 
-```powershell
-New-Item -ItemType Directory -Force target | Out-Null
-$profile = Get-Content examples/local-model/openai-compatible-loopback.example.json -Raw | ConvertFrom-Json
-$profile.base_url = 'http://127.0.0.1:1234'
-$profile.model = 'prism-ml/bonsai-27b:2'
-$profile.revision = 2
-$profile.billing = @{ type='unbilled'; source='Operator declaration: selected local service has no provider charge, 2026-09-13' }
-$profile.token_limits = @{
-  type='byte_bpe'; template_tokens_per_message=64; template_tokens_per_request=64
-  maximum_input_tokens=32768; maximum_output_tokens=4096; output_control='max_tokens'
-  source='Inspected Bonsai Q1_0 gpt2/qwen35 tokenizer and Jinja template; no expanding normalization/prefill; logical prompt tokens counted once; one generation capped including reasoning even on disconnect, 2026-09-13'
-}
-$profile | ConvertTo-Json -Depth 30 | Set-Content target/bonsai-controller-profile.json
-```
+Local preparation checks request encoding, selected content, feature support and bounds before
+recording external entry. A known refusal leaves a failed task without HTTP entry. After preparation,
+the runtime checks authority again and durably records entry intent before sending. A crash after
+intent, interrupted request or incomplete response remains uncertain when no terminal evidence
+establishes its outcome. No automatic retry follows possible provider entry.
 
-The 32768 value refuses a prepared byte bound above that size; it is not the loaded context size
-(8192 in the inspected configuration). Template overhead and injected context count before entry.
-The server must enforce `max_tokens` over the whole generated sequence, including hidden reasoning.
-The retained one-token boundary probe ended with `finish_reason: length`, one completion token
-and no usable answer. This confirms the observed cap boundary; enforcement outside that probe,
-including disconnect behavior, remains an explicit server contract rather than a timeout claim.
-LM Studio applies the model template automatically; its
-[chat-completions documentation](https://lmstudio.ai/docs/developer/openai-compat/chat-completions)
-describes the parameter and input-log inspection. Client timeout does not enforce a generation cap.
-The operator owns these server facts; Milkdrift owns exact request construction, unsupported-option
-refusal, final authority checking, reservation and observed settlement. It does not manage the server.
+The raw canonical response and final-text artifacts preserve provider output. Completion alone does
+not prove a useful answer: inspect finish reason, content and independent verification for the task.
+The [result guide](result-acceptance.md) explains required outputs and corrective tasks. Cancellation
+is best effort and does not claim provider-side termination.
 
-The selected configuration uses `truncateMiddle`. LM Studio's
-[overflow contract](https://beta.lmstudio.ai/docs/typescript/api-reference/llm-prediction-config-input)
-allows generation to continue while old context is discarded, so 8192 is not a bound on total
-generation or cache work. The account counts logical prompt and generated tokens. It reserves
-the complete prepared byte-BPE upper bound even if the server later rejects an oversized prompt;
-it never uses the smaller context size as a substitute. The inspected 8220-token template probe
-exceeded that context and returned HTTP 400; the one-token generation probe returned one output
-token. These observations do not turn byte counts into exact token counts or qualify GPU usage.
+## Exercise the ordinary path
 
-Real qualification also requires a bounded server-facts JSON document. Record settings from the
-already loaded model using read-only `getLoadConfig` and `getBasePredictionConfig` SDK calls;
-do not load, reconfigure, or generate during inspection. Limit this inspection to 20 seconds and
-256 KiB. Template/tokenization probes operate on test text, with the same byte/time limits; they
-are separate authorized server operations, never part of Milkdrift's local preparation hook.
-After checking the actual values, a facts document for this inspected configuration is:
+The standalone [web client](../../apps/web/README.md) and CLI both use `workflow create` with the
+same configured `model.generate` capability. Inspect `workflow task` for frozen input evidence and
+`workflow result` for the retained response. Large text is labelled as a preview; download immutable
+artifacts to examine complete content.
 
-```json
-{
-  "model": "prism-ml/bonsai-27b:2",
-  "base_url": "http://127.0.0.1:1234",
-  "inspected": {
-    "source": "SDK observation of the already loaded alias, 2026-09-13",
-    "context_window_tokens": 8192,
-    "context_overflow_policy": "truncateMiddle",
-    "base_thinking_enabled": true,
-    "request_output_control": "max_tokens"
-  },
-  "operator_declared": {"provider_charge": "unbilled", "token_contract": "byte_bpe"},
-  "unknown": ["GPU work", "remote termination after client disconnect"]
-}
-```
-
-Save it as `target/bonsai-server-facts.json`, retaining the full observation and template privately.
-Replace the example values when the inspected configuration differs. The harness checks the model
-and endpoint against the profile and retains the declaration; it does not attest server settings.
-
-Use a currency-free controller policy with monetary ceiling zero for exclusively unbilled work.
-That account refuses any currency-bearing charge, even a zero-priced billed request. Direct model
-calls consume model entries and input/output units. Coding agents consume process entries, time and
-artifact allowances; their internal model requests are not metered as direct Milkdrift model calls.
-
-To run the existing installed qualification loop, supply a separately approved byte-pinned local
-Codex process profile. The tool copies it into an isolated repository and selects only local
-`--oss --local-provider lmstudio` execution. It intentionally asks the first agent to write 41
-where the independent verifier requires 42. The local review must return a valid repair decision
-before the normal proposal and separate approval path can release future repair work.
-
-```powershell
-cargo build -p milkdrift-daemon -p milkdrift-cli -p milkdrift-evidence --bins --all-features
-target/debug/headless-cli-evidence.exe --daemon target/debug/milkdrift-daemon.exe --cli target/debug/milkdrift.exe --examples examples/operator --controller-qualification --controller-output target/controller-local --controller-review-profile target/bonsai-controller-profile.json --controller-server-facts target/bonsai-server-facts.json --controller-agent-profile target/approved-local-agent-profile.json
-```
-
-Choose a new output directory. The finite scenario declares eight process entries, two direct
-model entries, 65536 input units, 32768 output units, 32 MB logical artifacts and fifteen minutes
-before starting. Each agent launch has five minutes and each review at most 4096 output tokens.
-It expects two useful direct reviews, persists token usage without a currency, restarts at recorded
-holds and verifies acceptance. It then releases a third model task, which the same account refuses
-before transmission. The child and parent end failed because the deliberately excessive task is
-refused; the successful repair and its accepted verification remain in history. No further cycle
-is created. Separate deterministic lanes exercise process limits and the remaining dimensions.
-This does not claim
-to limit an agent's internal API spending; use the explicitly unbilled local agent only. Controlled
-fixtures cover billed behavior without a cloud key or live cloud spend.
-
-Schema-1 endpoint profiles and controller policies are refused. Redb document format 16 refuses
-older stores rather than guessing their billing meaning; use a fresh isolated store. See
-[ADR 0033](../decisions/0033-explicit-controller-qualification.md) for the compatibility decision.
-
-Plain HTTP is accepted only for an explicit loopback development profile. Remote endpoints require
-HTTPS. Ambient proxies are disabled unless the profile explicitly chooses system proxy behavior,
-cross-origin redirects are never followed, and the default redirect policy follows none. If a
-local server requires a token, put only an opaque `SecretRef` in the profile and resolve it through
-the host secret boundary; never place a token in the URL.
-
-For an independent model task, use `Fresh` in both its blueprint context policy and model request.
-To continue an exact prior answer, follow [explicit continuation](model-continuation.md).
-Runtime compares those declarations before claiming work, including artifact requests, retries,
-and recovered leases. Matching declarations still need a supported provider mapping; see the
-[adapter's session rules](../../adapters/model-provider/README.md#choose-features-the-endpoint-actually-supports).
-
-The adapter uses chat-completions semantics. Tools, image parts, developer roles, reasoning
-controls, structured output, and streaming must be advertised by the exact profile or the request
-is rejected before connection. For Fresh requests, it verifies the persisted schema-v2 causal
-manifest against the exact attempt, sends the canonical manifest as the first system context block,
-then reads only the manifest-selected reserved inputs. Selected text/JSON becomes explicitly
-delimited untrusted user evidence; supported selected images remain image parts. Every selected
-input is checked against its manifest digest, size, and media facts, extra reserved inputs are
-rejected, and unsupported generic binary evidence fails before connection. This path does not
-dereference arbitrary model-task references or unselected artifacts. Explicit continuation consumes
-only the companion selected by runtime. Generic file parts and provider-managed sessions remain
-unsupported.
-Cancellation signals cause the response reader to close at its next observable read boundary; the
-acknowledgement truthfully does not claim provider-side termination.
-
-Durable progress and failure details replace control characters with spaces; bounded uncertainty
-reasons also truncate at a UTF-8 boundary. This diagnostic projection does not change model output:
-the canonical response and final-text artifacts retain the exact completed text, including newlines
-and tabs. Multiline streaming is covered by the actual daemon/CLI deterministic endpoint lane.
-
-The operation contract is deliberately conservative. `model.generate` advertises unknown side
-effects, unsupported idempotency, and best-effort cancellation. Request bytes may have entered a
-provider even when the response is lost, so a post-entry close, malformed/truncated response,
-timeout, or cancellation is retained as uncertain. Milkdrift neither automatically retries that
-work nor treats a successful response as proof that the provider had no external effects.
-
-Unsupported features, sessions, and encoded request bounds are checked by local preparation before
-durable entry intent. A successfully recorded refusal is a rejected attempt with no HTTP request;
-it does not enter automatic retry. Preparation retains the exact body and ephemeral headers while
-runtime rechecks authority before entry. A crash after intent, or failure to durably record the
-refusal itself, still requires conservative recovery. The
-[adapter's stage table](../../adapters/model-provider/README.md#prepare-once-before-external-entry)
-explains the resulting inspection and publication behavior.
-
-## Run the maintained daemon/CLI lane
-
-The maintained workflow evaluates `model_response` through the built-in acceptance task before
-its success terminal. A successful invocation with `length` or unusable final text takes the
-rejection route. Generic model tasks still permit tool-only and structured-only results; choose
-the corresponding [acceptance requirement](result-acceptance.md) when that is the intended output.
-
-Build the actual applications and the byte-pinned evidence producer:
-
-```sh
-cargo build -p milkdrift-daemon --bin milkdrift-daemon \
-  -p milkdrift-cli --bin milkdrift \
-  -p milkdrift-evidence --bin evidence-process-helper --bin local-model-evidence
-```
-
-First prove the harness with its controlled loopback parser. The selected output directory must be
-empty or absent and remains untracked:
-
-```sh
-target/debug/local-model-evidence \
-  --daemon target/debug/milkdrift-daemon \
-  --cli target/debug/milkdrift \
-  --process-helper target/debug/evidence-process-helper \
-  --mode deterministic \
-  --output target/local-model-evidence
-```
-
-For a separately running real loopback server, use the explicit real mode. It rejects a missing or
-non-loopback profile and never falls back to the controlled endpoint:
-
-```sh
-target/debug/local-model-evidence \
-  --daemon target/debug/milkdrift-daemon \
-  --cli target/debug/milkdrift \
-  --process-helper target/debug/evidence-process-helper \
-  --mode operator-real-endpoint \
-  --model-profile /operator/private/local-model-profile.json \
-  --model-capability local-model-loopback \
-  --output target/local-model-real
-```
-
-Each workflow-state observation waits at most 180 seconds by default; `--timeout-secs` accepts
-1–3,600 and applies to the initial hold, model completion, acceptance, continuation, uncertainty
-and local refusal checks. The allowance starts separately for each expected state, so it is not
-a total scenario deadline. Nested CLI probes share that observation's remaining time.
-Its default output allowance is 64 units. Set `--max-output-units` (1–65,536) when the chosen model
-needs a larger bounded allowance before returning final text. The harness deadline is separate
-from the adapter's HTTP timeout. The adapter currently uses the smaller of the profile's request
-and idle limits as a whole-request deadline; incoming fragments do not reset an idle timer.
-Reasoning-only output that reaches its limit does not establish the streaming/final-text evidence
-required by this lane. Relative profile and credential-reference
-paths are resolved before the generated daemon configuration is written.
-
-If the profile names `secret:model-token`, add
-`--secret-source secret:model-token=/absolute/private/model.token`. Unix secret files must be
-private regular files. The lane derives a schema-11 daemon configuration and canonical ordinary
-blueprints from their owning Rust contracts, then uses the actual CLI for these structural actions:
-
-```sh
-milkdrift daemon readiness
-milkdrift capability show local-model-loopback
-milkdrift --command-id local-model-validate-1 blueprint validate -
-milkdrift --command-id local-model-import-1 blueprint import MODEL_BLUEPRINT
-milkdrift --command-id local-model-start-1 run start \
-  run-local-model-dogfood local-model-dogfood REVISION_ID --request-file local-model-run.request.json
-milkdrift --timeout-secs 180 run timeline run-local-model-dogfood --limit 100 --follow
-milkdrift --command-id local-model-signal-1 --expected-sequence SEQUENCE \
-  run signal run-local-model-dogfood --signal-id local-model-release-1 \
-  --signal-type evidence.model.release --payload '{"release":true}'
-milkdrift attempt inspect run-local-model-dogfood ATTEMPT_ID
-milkdrift artifact get ARTIFACT_ID --output /operator/private/model-response.json
-```
-
-The harness owns shutdown/restart and repeats run and attempt inspection against the same store. It
-also drives a controlled post-entry connection close and proves retained uncertainty, refusal of
-an unsafe retry, explicit retain through `attempt resolve`, and restart visibility. Its redacted
-`report.json` records only identities, counts, boolean structural facts, safe endpoint origin, and
-the reason `qualifying` is false. Session state includes prompts and generated artifacts, so treat
-the complete output directory as sensitive scratch data.
-Both modes additionally exercise a controlled local request-bound refusal through actual binaries.
-The rejected attempt remains identical after restart and its loopback listener observes no connection.
-
-Expected success is structural: exactly one attempt and endpoint entry, exact profile/model/context
-provenance, selected and omitted evidence identities, ordered bounded fragments when streaming,
-one accepted terminal, verified output artifact digests/linkage, and usage/response identity only
-when supplied by the server. This model-only smoke never qualifies the repository's strict
-external-evidence gate; that separate gate also requires a real byte-pinned coding agent and is
-documented in [`external-evidence.md`](external-evidence.md).
-
-## llama.cpp reasoning stream compatibility
-
-The exercised Ornith servers emit nonstandard `reasoning_content` fields by default. Milkdrift's
-strict OpenAI-compatible response reader refuses those unmapped message semantics; after request
-entry the result remains uncertain, with no fabricated response or automatic retry. Switching from
-LM Studio to llama.cpp alone does not remove that mismatch.
-
-For these llama.cpp instances, the existing namespaced request extension can explicitly select the
-server's documented `reasoning_effort: "none"` behavior. Put this in a fresh model task's
-`request.extensions`, or in the endpoint profile's `provider_options`:
-
-```json
-{"org.milkdrift.openai/request":{"reasoning_effort":"none"}}
-```
-
-The finite byte-BPE accounting path accepts this exact value while preserving the configured
-complete-request input bound and total-output cap. Other reasoning values and options that add
-unaccounted generation still refuse. Template and output-enforcement declarations remain the
-operator's responsibility. This choice is supported by
-[llama.cpp's chat endpoint](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md);
-it is not a portable promise for every OpenAI-compatible server.
-
-Desktop `ornith-9b` and Drifty `ornith` passed the actual daemon/CLI smoke with this explicit choice.
-The desktop also passed a managed direct call with finite accounting. Drifty was reached through
-an authenticated SSH tunnel to its NetBird listener; no non-loopback HTTP policy was weakened.
-These results qualify the exercised request configuration, not default reasoning streams or
-termination of remote work after disconnect. The
-[generation-policy discussion](../development/virtual-office/whiteboard/discussions/model-generation-policy.md)
-retains the broader choice of how to preserve and replay separate reasoning output.
+The Rust `connected-tasks` fixture supplies a controlled input-dependent model endpoint for browser
+verification. It proves the local integration path, not a real provider. The
+[external evidence harness](external-evidence.md) requires an operator-supplied model profile and
+real coding process for its combined qualification; explicit fixture mode remains non-qualifying.
+Retired `local-model-evidence` and graph/controller recipes are not current operating procedures.

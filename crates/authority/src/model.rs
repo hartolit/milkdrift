@@ -13,7 +13,6 @@ pub use execution::{AuthorityExecutionProvenance, ExecutionAuthorityBasis};
 pub use grant::{AuthorityGrant, AuthorityGrantBuilder};
 pub use resource::{
     AccessMode, ArtifactAuthorityScope, AuthorityBudget, AuthorityOperation, BoundaryTimeMillis,
-    CapabilityExecutionRequirements, DaemonAuthorityScope, FilesystemScope, LayoutAuthorityScope,
-    LayoutOwner, NetworkScope, PeerAuthorityScope, ResourceScope, WorkflowRunScope, WorkflowSet,
-    WorkspaceAuthorityScope,
+    CapabilityExecutionRequirements, DaemonAuthorityScope, FilesystemScope, NetworkScope,
+    PeerAuthorityScope, ResourceScope, WorkflowRunScope, WorkflowSet, WorkspaceAuthorityScope,
 };

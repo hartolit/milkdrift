@@ -6,13 +6,8 @@ use response::{
 };
 mod peers;
 use peers::{peer, peer_connect, peer_disconnect, peer_revoke, peers};
-mod commands;
-use commands::command;
 mod reads;
-use reads::{
-    attempt, authority, capabilities, health, layout, node, proposal, proposals, readiness,
-    revision, revision_diff, revisions, run, runs, timeline, version,
-};
+use reads::{authority, capabilities, health, readiness, version};
 mod artifacts;
 mod invocations;
 mod resources;
@@ -20,7 +15,7 @@ use artifacts::{artifact_content, artifact_metadata};
 mod streams;
 use reads::ListQuery;
 use response::ApiError;
-use streams::{CapabilityFeeds, capability_stream, health_stream, run_stream};
+use streams::{CapabilityFeeds, capability_stream, health_stream};
 
 use std::{future::Future, sync::Arc, sync::atomic::AtomicU64};
 
@@ -33,7 +28,6 @@ use tracing::{info, warn};
 use crate::{DaemonHost, HostError};
 
 const MAX_ARTIFACT_HTTP_RANGE: u32 = 1_048_576;
-const STREAM_PAGE_ITEMS: u32 = 128;
 const CAPABILITY_FEED_ITEMS: usize = 256;
 
 #[derive(Clone, Copy)]
@@ -56,12 +50,10 @@ impl RouteAuthorityMapping {
 #[derive(Clone, Copy)]
 enum RouteResourceMapping {
     Daemon,
-    WorkflowRevision,
     Run,
     Capability,
     Peer,
     Artifact,
-    Layout,
 }
 
 struct AuthorizedRouteDeclaration {
@@ -148,7 +140,6 @@ pub(crate) fn router(host: DaemonHost) -> Result<Router, HostError> {
         "/v1/artifacts/{artifact}" => get(artifact_metadata), RouteAuthorityMapping::Exact(AuthorityOperation::ReadArtifactMetadata), RouteResourceMapping::Artifact;
         "/v1/artifact-inputs" => post(artifacts::upload_input), RouteAuthorityMapping::Exact(AuthorityOperation::PublishArtifact), RouteResourceMapping::Artifact;
         "/v1/artifacts/{artifact}/content" => get(artifact_content), RouteAuthorityMapping::Exact(AuthorityOperation::ReadArtifactContent), RouteResourceMapping::Artifact;
-        "/v1/layouts/{workflow}/{revision}" => get(layout), RouteAuthorityMapping::Exact(AuthorityOperation::ReadLayout), RouteResourceMapping::Layout;
         "/v1/stream/health" => get(health_stream), RouteAuthorityMapping::Exact(AuthorityOperation::InspectDaemonHealth), RouteResourceMapping::Daemon;
         "/v1/stream/capabilities" => get(capability_stream), RouteAuthorityMapping::StreamDerived, RouteResourceMapping::Capability;
     }

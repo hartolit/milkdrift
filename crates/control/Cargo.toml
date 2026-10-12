@@ -10,10 +10,6 @@ rust-version.workspace = true
 blake3.workspace = true
 milkdrift-authority.workspace = true
 milkdrift-blueprint.workspace = true
-milkdrift-capability.workspace = true
-milkdrift-capability-host.workspace = true
-milkdrift-contracts.workspace = true
-milkdrift-model.workspace = true
 milkdrift-persistence.workspace = true
 milkdrift-runtime.workspace = true
 milkdrift-workspace.workspace = true
@@ -22,8 +18,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-milkdrift-peer-protocol.workspace = true
-milkdrift-capability-host = { workspace = true, features = ["test-support"] }
+milkdrift-capability.workspace = true
 milkdrift-redb-store = { workspace = true, features = ["test-admin"] }
 milkdrift-runtime = { workspace = true, features = ["test-support"] }
 proptest.workspace = true

@@ -1,8 +1,8 @@
-//! Strict schema-13 TOML input and owner-specific configuration choices.
+//! Strict schema-14 TOML input and owner-specific configuration choices.
 use milkdrift_authority::{
     ArtifactAuthorityScope, AuthorityBudget, BoundaryTimeMillis, CapabilityAuthorityScope,
-    DaemonAuthorityScope, FilesystemScope, LayoutAuthorityScope, NetworkProfileRef, NetworkScope,
-    PeerAuthorityScope, ResourceScope, SecretRef, WorkflowRunScope, WorkspaceAuthorityScope,
+    DaemonAuthorityScope, FilesystemScope, NetworkProfileRef, NetworkScope, PeerAuthorityScope,
+    ResourceScope, SecretRef, WorkflowRunScope, WorkspaceAuthorityScope,
 };
 use milkdrift_capability::SideEffectClass;
 use milkdrift_peer_protocol::{PROTOCOL_MINOR_V1, PeerAction};
@@ -37,9 +37,9 @@ pub enum AuthorityPresetConfig {
     Invoker,
     /// Read-only inspection.
     Observer,
-    /// Inspection plus prospective proposal submission.
+    /// Read-only workflow and capability inspection.
     Advisor,
-    /// Operational run controls and approvals.
+    /// Prospective task edits and cancellation within granted scope.
     Supervisor,
     /// Full local workflow control within configured host bounds.
     Controller,
@@ -77,7 +77,7 @@ pub struct ActorGrantConfig {
     /// Exact workflow/run, capability, filesystem, network, and secret scope.
     pub resources: ResourceScope,
     /// Per-command/per-request permission ceilings, not cumulative consumption.
-    /// `None` means the resource is not granted. Controller accounts own lifetime usage.
+    /// `None` means the resource is not granted. Workflow accounts own lifetime usage.
     pub budget: AuthorityBudget,
     /// Inclusive grant validity start.
     pub valid_from: BoundaryTimeMillis,
@@ -109,7 +109,6 @@ impl ActorGrantConfig {
                 network: NetworkScope::empty(),
                 secrets: BTreeSet::new(),
                 artifacts: ArtifactAuthorityScope::dangerous_all(),
-                layouts: LayoutAuthorityScope::dangerous_all(),
                 peers: PeerAuthorityScope::dangerous_all(),
                 daemon: DaemonAuthorityScope::dangerous_all(),
                 workspace: WorkspaceAuthorityScope::dangerous_all_in_run(),
@@ -129,45 +128,16 @@ impl ActorGrantConfig {
     }
 }
 
-/// Selects ordinary execution or explicit installation of the accounted controller lifecycle.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ControllerActivation {
-    /// Ordinary workflows only; marked controllers and active controller recovery are refused.
-    #[default]
-    Disabled,
-    /// Isolated evidence using the `controller-qualification` build feature.
-    Qualification,
-    /// Explicit controller activation with cumulative accounting installed before recovery.
-    Enabled,
-}
-
 /// Fixed runtime-owner, scheduler, and effect-worker bounds.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeHostConfig {
-    /// Explicit public capability to configured service grant relationship. The named grant is
-    /// never inferred from a publisher or caller. Requires workflow role and accounted execution.
-    #[serde(default)]
-    pub publication_services:
-        BTreeMap<milkdrift_capability::CapabilityId, milkdrift_authority::GrantId>,
-    /// Explicit lifecycle installation policy, independent of actor permission and worker capacity.
-    #[serde(default)]
-    pub controller_activation: ControllerActivation,
     /// Bounded synchronous owner queue.
     pub request_queue: u32,
     /// Scheduler/effect notification maintenance maximum interval.
     pub maintenance_interval_ms: u64,
-    /// Runtime scheduler page bound.
-    pub maximum_tick_items: u16,
     /// Global active lease bound.
     pub global_concurrency: u32,
-    /// Per-run active lease bound.
-    pub per_run_concurrency: u32,
-    /// Per-branch active lease bound.
-    pub per_branch_concurrency: u32,
-    /// Default operation-class active lease bound.
-    pub per_capability_concurrency: u32,
     /// External invocation worker threads.
     pub effect_threads: u16,
     /// Bounded external invocation queue.
@@ -183,42 +153,14 @@ pub struct RuntimeHostConfig {
 impl Default for RuntimeHostConfig {
     fn default() -> Self {
         Self {
-            publication_services: BTreeMap::new(),
-            controller_activation: ControllerActivation::Disabled,
             request_queue: 128,
             maintenance_interval_ms: 100,
-            maximum_tick_items: 128,
             global_concurrency: 32,
-            per_run_concurrency: 8,
-            per_branch_concurrency: 4,
-            per_capability_concurrency: 8,
             effect_threads: 4,
             effect_queue: 64,
             cancellation_queue: 32,
             maximum_effect_claim: 32,
             lease_duration_ms: 30_000,
-        }
-    }
-}
-
-/// Limits recent receipt storage while preserving old command results for exact replay.
-///
-/// Archival moves complete receipts to cold storage; these settings do not bound total history
-/// or expire command IDs. Monitor disk capacity as cold receipts accumulate.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ApplicationReceiptConfig {
-    /// Maximum recent receipt documents retained in the hot operational tier.
-    pub hot_receipt_bound: u32,
-    /// Maximum oldest receipts moved atomically by one archival transaction.
-    pub archive_batch_size: u32,
-}
-
-impl Default for ApplicationReceiptConfig {
-    fn default() -> Self {
-        Self {
-            hot_receipt_bound: 10_000,
-            archive_batch_size: 256,
         }
     }
 }
@@ -583,9 +525,6 @@ pub struct DaemonConfig {
     /// Ordered shutdown policy.
     #[serde(default)]
     pub shutdown: ShutdownConfig,
-    /// Bounded hot lifecycle; cold exact replay grows until physical storage is exhausted.
-    #[serde(default)]
-    pub application_receipts: ApplicationReceiptConfig,
     /// Independently retained security-audit prefix bound.
     #[serde(default = "default_security_audit_record_bound")]
     pub security_audit_record_bound: u32,

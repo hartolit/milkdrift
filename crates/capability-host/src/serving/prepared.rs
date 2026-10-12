@@ -55,29 +55,6 @@ impl CapabilityHost {
 }
 
 impl PreparedServingExecution {
-    pub(crate) fn published_plan(
-        &self,
-    ) -> Option<&milkdrift_persistence::published::PublishedInvocationPlan> {
-        self.prepared.published_plan()
-    }
-
-    pub(crate) fn accept_published(
-        self,
-        entered: &PeerExecutionRecord,
-    ) -> Result<(), ExecutorError> {
-        if entered.caller != self.accepted.caller
-            || entered.execution != self.accepted.execution
-            || entered.request != self.accepted.request
-            || entered.published_invocation.as_ref() != self.prepared.published_plan()
-            || !matches!(entered.phase, PeerExecutionPhase::AwaitingWorkflow { .. })
-        {
-            return Err(ExecutorError::InvalidDispatch(
-                "published entry differs from its prepared acceptance".to_owned(),
-            ));
-        }
-        self.prepared.accept_published()
-    }
-
     /// Consumes prepared bytes only for the exact claim's committed entry record.
     pub(crate) fn enter(
         self,
@@ -125,7 +102,7 @@ fn serving_request(record: &PeerExecutionRecord) -> Result<InvocationRequest, Ex
         .map(|_| IdempotencyKey::new(identity.as_str()))
         .transpose()
         .map_err(|error| ExecutorError::InvalidDispatch(error.to_string()))?;
-    let mut request = InvocationRequest::new(
+    let request = InvocationRequest::new(
         identity,
         original.capability().clone(),
         original.operation().clone(),
@@ -135,11 +112,6 @@ fn serving_request(record: &PeerExecutionRecord) -> Result<InvocationRequest, Ex
         original.extensions().clone(),
     )
     .map_err(|error| ExecutorError::InvalidDispatch(error.to_string()))?;
-    if let Some(manifest) = original.context_manifest() {
-        request = request
-            .with_context_manifest(manifest.clone())
-            .map_err(|error| ExecutorError::InvalidDispatch(error.to_string()))?;
-    }
     Ok(request)
 }
 

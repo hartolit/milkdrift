@@ -10,7 +10,7 @@ use thiserror::Error;
 
 use milkdrift_contracts::{CanonicalJsonError, JsonBoundKind, JsonLimits, canonical_json_bytes};
 
-use crate::{ContextManifest, ModelResponse, ModelTaskRequest};
+use crate::{ModelResponse, ModelTaskRequest};
 
 /// Current provider-neutral model contract schema.
 const MODEL_CONTRACT_SCHEMA_VERSION_V1: u32 = 1;
@@ -198,12 +198,6 @@ document!(
     ModelResponse,
     response,
     "model response"
-);
-document!(
-    ContextManifestDocument,
-    ContextManifest,
-    manifest,
-    "context manifest"
 );
 document!(
     ContinuationHistoryDocument,

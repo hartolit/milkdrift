@@ -6,10 +6,6 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
-[features]
-# Builds the real composition for isolated development evidence; not production qualification.
-controller-qualification = []
-
 [dependencies]
 async-stream.workspace = true
 axum.workspace = true
@@ -27,12 +23,10 @@ milkdrift-control-protocol.workspace = true
 milkdrift-local-process.workspace = true
 milkdrift-managed-linux.workspace = true
 milkdrift-local-secret.workspace = true
-milkdrift-model.workspace = true
 milkdrift-model-provider.workspace = true
 milkdrift-peer-http.workspace = true
 milkdrift-peer-protocol.workspace = true
 milkdrift-persistence.workspace = true
-milkdrift-prompt-sequence.workspace = true
 milkdrift-redb-store.workspace = true
 milkdrift-runtime.workspace = true
 milkdrift-workspace.workspace = true

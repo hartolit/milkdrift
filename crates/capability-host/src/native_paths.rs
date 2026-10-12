@@ -48,9 +48,11 @@ impl NativePathClaims {
     }
 
     pub(crate) fn revalidate(&self, owner: &str) -> Result<(), ExecutorError> {
-        let Some(claim) = self.store.native_path_claim(owner).map_err(storage)? else {
-            return Ok(());
-        };
+        let claim = self
+            .store
+            .native_path_claim(owner)
+            .map_err(storage)?
+            .ok_or_else(|| refused("accepted native directory claim is missing; entry refused"))?;
         for root in claim.roots {
             if capture(&root.requested, root.write)? != root {
                 return Err(refused(
@@ -145,6 +147,25 @@ mod tests {
             host.acquire("writer", &[path(true, project.path())])
                 .is_err()
         );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn disappearing_claim_refuses_final_entry() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        let store = Arc::new(RedbStore::open(root.path())?);
+        let host = NativePathClaims::new(store.clone());
+        host.acquire(
+            "writer",
+            &[TaskPathAccess {
+                path: project.path().to_string_lossy().into_owned(),
+                write: true,
+            }],
+        )?;
+        store.release_native_paths("writer")?;
+        assert!(host.revalidate("writer").is_err());
         Ok(())
     }
 

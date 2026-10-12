@@ -1,5 +1,5 @@
 //! Independent physical corruption fixtures for both transaction kinds.
-mod published;
+mod serving;
 mod tombstone;
 use milkdrift_peer_protocol::PeerExecutionId;
 use milkdrift_persistence::{PersistenceError, StorageFailureClass};

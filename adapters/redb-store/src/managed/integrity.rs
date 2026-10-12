@@ -89,55 +89,47 @@ pub(crate) fn record(
         {
             return Err(invalid("managed hold missing its index"));
         }
-        let evidence = match &u.phase {
-            milkdrift_persistence::managed::ManagedUsePhase::Quiescent { evidence }
-            | milkdrift_persistence::managed::ManagedUsePhase::Suspended { evidence, .. } => {
-                Some(evidence)
-            }
-            _ => None,
-        };
-        if let Some(milkdrift_persistence::managed::QuiescenceEvidence::NoExternalEntry {
-            source,
-        }) = evidence
-        {
-            let plan = crate::published::association_read(read, source)?
-                .ok_or_else(|| invalid("no-entry proof lost its publication acceptance"))?;
-            if !super::execution::publication_parent_matches(u, &plan) {
-                return Err(invalid(
-                    "no-entry proof belongs to a different resource use",
-                ));
-            }
-        }
         match &u.execution {
-            ManagedExecution::Local {
-                run,
-                execution,
-                attempt,
+            ManagedExecution::Task {
+                workflow,
+                task,
                 invocation,
-                accepted_at,
+                accepted_generation,
             } => {
-                let key = crate::codec::run_sequence(run.as_str(), *accepted_at)?;
                 let table = read
-                    .open_table(crate::schema::RUN_EVENTS)
+                    .open_table(crate::schema::TASK_WORKFLOWS)
                     .map_err(error::redb)?;
                 let bytes = table
-                    .get(key.as_slice())
+                    .get(workflow.as_str())
                     .map_err(error::redb)?
-                    .ok_or_else(|| invalid("managed use lost runtime acceptance"))?;
-                let event = crate::journal::decode_stored_event(bytes.value())?;
-                if !matches!(event.kind(), milkdrift_persistence::RunEventKind::NodeScheduled { execution: e, attempt: a, invocation: i, .. } if e == execution && a == attempt && i == invocation)
+                    .ok_or_else(|| invalid("managed task use lost its workflow"))?;
+                let snapshot: milkdrift_persistence::WorkflowSnapshot =
+                    json::decode(bytes.value(), "task workflow")?;
+                let fact = snapshot
+                    .managed_executions
+                    .iter()
+                    .find(|fact| &fact.invocation == invocation)
+                    .ok_or_else(|| invalid("managed task use lost its accepted start"))?;
+                if &fact.task != task
+                    || &fact.accepted_generation != accepted_generation
+                    || fact.entered != u.entry_committed
+                    || fact.settled != u.execution_terminal
                 {
-                    return Err(invalid("managed use differs from runtime acceptance"));
+                    return Err(invalid("managed task use differs from runtime acceptance"));
                 }
-                let index = read
-                    .open_table(crate::schema::MANAGED_LOCAL_USES)
-                    .map_err(error::redb)?;
-                if index
-                    .get(format!("local:{run}:{attempt}").as_str())
-                    .map_err(error::redb)?
-                    .is_none_or(|id| id.value() != u.id)
-                {
-                    return Err(invalid("managed local lookup differs from acceptance"));
+                let extension = fact
+                    .selection
+                    .descriptor_extensions()
+                    .iter()
+                    .find(|(key, _)| {
+                        key.as_str() == milkdrift_capability::managed::MANAGED_BINDING_EXTENSION
+                    })
+                    .ok_or_else(|| invalid("managed task acceptance lacks its binding"))?;
+                let binding: milkdrift_capability::managed::ManagedBinding =
+                    serde_json::from_value(extension.1.value().clone())
+                        .map_err(|error| invalid(&error.to_string()))?;
+                if binding != u.binding {
+                    return Err(invalid("managed task binding differs from its use"));
                 }
             }
             ManagedExecution::Serving {

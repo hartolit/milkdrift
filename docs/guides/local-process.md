@@ -7,7 +7,7 @@ configured paths. It is not a sandbox.
 
 ## Profile schema 2
 
-For ordinary setup use the [operator process example](../../examples/operator/README.md#one-byte-pinned-local-process).
+For ordinary setup use the [operator recipe](../../examples/operator/README.md#configure-the-host-and-account).
 The complete [coding-agent profile template](../../examples/external-evidence/coding-agent-profile.example.json)
 is validated by the production reader. Copy it outside the repository and supply the actual
 executable digest, size, paths, arguments, and declared resources before registration.
@@ -28,10 +28,11 @@ The descriptor freezes:
   side-effect/idempotency/cancellation, admission, trust, and platform facts; and
 - the exact `trusted_host_process` trust class and honest process-group support facts.
 
-The resolved capability snapshot retains those bounded descriptor facts in durable attempt
-provenance. The attempt inspector returns the snapshot, implementation, content, profile, and
-execution-policy digests plus optional safe package/documentation references; it never returns an
-executable path.
+The resolved capability snapshot retains those bounded descriptor facts in durable execution
+provenance. The ordinary task inspector identifies the frozen capability generation and selected
+inputs. Independent invocation and capability inspection retain the implementation, content,
+profile, and execution-policy digests plus safe package/documentation references; these descriptor
+facts do not disclose an executable path.
 
 Capability selection checks the profile's full resource ceilings, even for a smaller task. The
 grant's `artifact_bytes` must cover `max_total_materialized_bytes + max_total_output_bytes`;
@@ -40,7 +41,7 @@ duration, invocation, and concurrency grants must also cover the declared requir
 ### Persistent authorized repository working directory
 
 `working_directory` normally uses `isolated_root` or a relative directory beneath the fresh
-Milkdrift-owned execution root. Ordered coding prompts may instead select one exact operator-owned
+Milkdrift-owned execution root. Dependent coding tasks may instead select one exact operator-owned
 repository:
 
 ```json
@@ -59,7 +60,7 @@ same repository files.
 
 This mode is for operator-authorized sequential work. It is not safe implicit concurrency and does
 not implement Git, branch selection, dirty-tree checks, credentials, merges, cleanup, or rollback.
-Those remain explicit process/capability operations and prompt-sequence repository-policy facts.
+Those remain explicit process/capability operations and operator-owned repository policy.
 Parallel alternatives should use separately prepared worktrees or another adapter with a stronger
 workspace isolation contract.
 
@@ -101,7 +102,7 @@ operator identity decision. Regenerate v1 profiles as schema v2 under operator c
 
 For one invocation, the host creates the input workspace, the adapter prepares direct arguments
 and explicit environment, and the final identity check precedes spawn. Captured output becomes
-an artifact only through declared publication. Inspect the attempt and its artifacts to distinguish
+an artifact only through declared publication. Inspect the task or independent invocation and its artifacts to distinguish
 process exit, accepted output, cancellation, and an unknown outcome.
 
 An isolated workflow may materialize a selected repository input into its fresh execution

@@ -59,12 +59,6 @@ async fn fresh_view(session: &CliSession, path: &str) -> Result<(), CliError> {
             "capability.list.fresh",
             &session.client().capabilities().await?,
         ),
-        _ => {
-            let run = path
-                .strip_prefix("v1/runs/")
-                .and_then(|path| path.strip_suffix("/stream"))
-                .ok_or_else(|| CliError::Invalid("unsupported observation feed".into()))?;
-            session.output("run.result.fresh", &session.client().run_result(run).await?)
-        }
+        _ => Err(CliError::Invalid("unsupported observation feed".into())),
     }
 }

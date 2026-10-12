@@ -51,7 +51,7 @@ This is **not** a preservation veto. A large rewrite may be the right route. A l
 
 ## The archived vocabulary is evidence, not the destination
 
-The baseline has a generic capability-driven task and separately typed control constructs. Its blueprint is a graph/definition, not simply one text node. See [node definitions](../../../../crates/blueprint/src/model/node.rs) and [graph definitions](../../../../crates/blueprint/src/model/graph.rs).
+The baseline has a generic capability-driven task and separately typed control constructs. Its blueprint is a graph/definition, not simply one text node. See [node definitions](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/blueprint/src/model/node.rs) and [graph definitions](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/blueprint/src/model/graph.rs).
 
 Its architecture distinguishes a pinned subworkflow, a workflow published as a callable service, and remote delegated execution. The [independent-host decision](../../../decisions/0038-independent-host-execution.md) does not require method publication for ordinary remote execution. The [publication decision](../../../decisions/0041-published-method-invocation.md) adds service authority and a recoverable internal run. Trace current implementations before relying on those descriptions.
 

@@ -82,7 +82,7 @@ fn empty_transfer_reports_failed_abort_and_recovers_exactly()
     };
     let transfers = CorePeerArtifactStore::new(core.clone(), 1024, 1024, Arc::new(FixedClock))?;
     let error = transfers
-        .negotiate(&peer, &offer, 1024, None)
+        .negotiate(&peer, &offer, 1024)
         .err()
         .ok_or("empty publication unexpectedly succeeded")?;
     assert!(
@@ -92,7 +92,7 @@ fn empty_transfer_reports_failed_abort_and_recovers_exactly()
     );
     assert!(!core.is_committed(&offer.artifact)?);
     assert_eq!(
-        transfers.negotiate(&peer, &offer, 1024, None)?,
+        transfers.negotiate(&peer, &offer, 1024)?,
         ArtifactTransferDecision::AlreadyPresent
     );
     assert!(core.is_committed(&offer.artifact)?);
@@ -146,7 +146,7 @@ fn failed_abort_retains_transfer_until_cleanup_succeeds() -> Result<(), Box<dyn 
             expires_at_unix_ms: 200,
         };
         assert!(matches!(
-            transfers.negotiate(&peer, &offer, 1024, None)?,
+            transfers.negotiate(&peer, &offer, 1024)?,
             ArtifactTransferDecision::Transfer { next_offset: 0, .. }
         ));
         clock.0.store(201, Ordering::SeqCst);
@@ -174,7 +174,7 @@ fn failed_abort_retains_transfer_until_cleanup_succeeds() -> Result<(), Box<dyn 
             transfers.transfer_facts(&peer, &offer.transfer).is_ok(),
             "{route}"
         );
-        let request = transfers.publication_request(&peer, &offer, None)?;
+        let request = transfers.publication_request(&peer, &offer)?;
         assert!(matches!(
             core.begin_publication(&request)?,
             BeginArtifactOutcome::Resumed { next_offset: 0 }

@@ -13,9 +13,8 @@ pub(super) fn reserve(
     envelope: &InvocationAdmissionEnvelope,
 ) -> Result<(AuthorityBudget, Option<String>), RuntimeError> {
     let artifact_limit = dispatch
-        .task_artifact_budget()
-        .ok_or_else(|| denied("task artifact ceiling is absent"))?
-        .max_total_artifact_bytes();
+        .task_output_bytes()
+        .ok_or_else(|| denied("task artifact ceiling is absent"))?;
     let artifact_bytes = match envelope.artifact_bytes() {
         AdmissionBound::Bounded(value) => (*value).min(artifact_limit),
         AdmissionBound::NotApplicable => 0,

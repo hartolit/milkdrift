@@ -15,10 +15,6 @@ fn active_capacity_reopen_refuses_missing_counts_and_index_drift()
             "milkdrift.v1.managed.pending_evaluations",
             "evaluation_pending_count",
         ),
-        (
-            "milkdrift.v1.published.active_methods",
-            "publication_active_count",
-        ),
     ] {
         for corruption in ["missing-count", "missing-row", "extra-row"] {
             let root = TempDir::new()?;
@@ -54,13 +50,11 @@ fn active_capacity_reopen_refuses_missing_counts_and_index_drift()
 #[test]
 fn active_capacity_configuration_refuses_zero_without_creating_a_database()
 -> Result<(), Box<dyn std::error::Error>> {
-    for (installations, evaluations, publications) in [(0, 1, 1), (1, 0, 1), (1, 1, 0)] {
+    for (installations, evaluations) in [(0, 1), (1, 0)] {
         let root = TempDir::new()?;
         assert!(matches!(
             RedbStore::open_with_config(
-                RedbStoreConfig::new(root.path())
-                    .with_managed_limits(installations, evaluations)
-                    .with_publication_limit(publications)
+                RedbStoreConfig::new(root.path()).with_managed_limits(installations, evaluations)
             ),
             Err(PersistenceError::Bounds {
                 location: "redb_store_config",

@@ -48,67 +48,23 @@ macro_rules! identity_type {
 }
 
 identity_type!(
-    /// Reusable blueprint package identity.
-    BlueprintId,
-    128
+    /// Daemon-issued workflow identity.
+    WorkflowId, 128
 );
 identity_type!(
-    /// Top-level workflow identity with a revision lineage.
-    WorkflowId,
-    128
+    /// Mechanical task provenance coordinate retained by independent capability-host contracts.
+    NodeId, 128
 );
 identity_type!(
-    /// Definition-time graph node identity.
-    NodeId,
-    128
+    /// Daemon-assigned task identity, or an alias before atomic admission.
+    TaskId, 128
 );
-identity_type!(
-    /// Daemon-assigned ordinary task identity, or a request-local task alias before admission.
-    TaskId,
-    128
-);
-identity_type!(
-    /// Data or control port identity scoped to a node.
-    PortId,
-    96
-);
-identity_type!(
-    /// Graph edge identity.
-    EdgeId,
-    128
-);
-identity_type!(
-    /// Workflow interface field identity.
-    FieldId,
-    96
-);
-identity_type!(
-    /// Bounded provenance reference; it grants no authority.
-    AuthorRef,
-    192
-);
-identity_type!(
-    /// Identity used to correlate an atomic mutation batch.
-    MutationBatchId,
-    128
-);
-
-impl MutationBatchId {
-    pub(crate) fn from_hash(hash: blake3::Hash) -> Self {
-        Self(format!("batch_{hash}"))
-    }
-}
-
-/// Exact immutable revision identity derived by the kernel.
+/// Content-derived identity retained by capability provenance and exact authority snapshots.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
 pub struct RevisionId(String);
 
 impl RevisionId {
-    pub(crate) fn from_hash(hash: blake3::Hash) -> Self {
-        Self(format!("rev_{hash}"))
-    }
-
     pub(crate) fn parse(value: String) -> Result<Self, IdentityError> {
         validate_digest_identity(&value, "RevisionId", "rev_")?;
         Ok(Self(value))
@@ -128,72 +84,6 @@ impl fmt::Display for RevisionId {
         formatter.write_str(&self.0)
     }
 }
-
-/// Digest of deterministic semantic blueprint content, independent of lineage and layout.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(transparent)]
-pub struct ContentDigest(String);
-
-impl ContentDigest {
-    pub(crate) fn from_hash(hash: blake3::Hash) -> Self {
-        Self(format!("b3_{hash}"))
-    }
-
-    pub(crate) fn parse(value: String) -> Result<Self, IdentityError> {
-        if !milkdrift_contracts::is_canonical_blake3_digest(&value) {
-            return Err(IdentityError {
-                kind: "ContentDigest",
-                reason: "must contain a canonical BLAKE3 digest".to_owned(),
-            });
-        }
-        Ok(Self(value))
-    }
-
-    /// Returns the digest text.
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-milkdrift_contracts::deserialize_via!(ContentDigest, String, |value| Self::parse(value));
-
-impl fmt::Display for ContentDigest {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-/// Domain-separated digest of one node configuration or its incident dependencies.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(transparent)]
-pub struct NodeFingerprint(String);
-
-impl NodeFingerprint {
-    pub(crate) fn from_hash(hash: blake3::Hash) -> Self {
-        Self(format!("node_b3_{hash}"))
-    }
-
-    fn parse(value: String) -> Result<Self, IdentityError> {
-        validate_digest_identity(&value, "NodeFingerprint", "node_b3_")?;
-        Ok(Self(value))
-    }
-
-    /// Returns the stable lowercase digest identity.
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-milkdrift_contracts::deserialize_via!(NodeFingerprint, String, |value| Self::parse(value));
-
-impl fmt::Display for NodeFingerprint {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
 fn validate_digest_identity(
     value: &str,
     kind: &'static str,

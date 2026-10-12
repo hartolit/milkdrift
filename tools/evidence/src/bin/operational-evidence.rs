@@ -4,11 +4,11 @@ use std::io::Write as _;
 use std::{fs, path::PathBuf, process::Command};
 
 use milkdrift_evidence::{
-    DEFAULT_OPERATION_COUNT, EvidenceResult, application_receipt_paths, artifact_range_read,
-    context_discovery_and_selection, context_materialization, daemon_owner_round_trip,
-    journal_append_batch, journal_append_one, local_process_stream_drain,
+    DEFAULT_OPERATION_COUNT, EvidenceResult, artifact_range_read, daemon_owner_round_trip,
+    explicit_input_materialization, explicit_input_selection, local_process_stream_drain,
     measure_daemon_saturation, measure_storage_growth, model_stream_parsers,
-    peer_observation_paths, projection_rebuild, projection_snapshot_tail,
+    peer_observation_paths, workflow_commit_batch, workflow_commit_one, workflow_read_page,
+    workflow_receipt_paths, workflow_snapshot_reopen,
 };
 
 fn main() -> std::process::ExitCode {
@@ -56,14 +56,14 @@ fn run() -> EvidenceResult {
     let source_dirty = !command_stdout("git", &["status", "--porcelain=v1"])?.is_empty();
     let rustc_verbose = command_stdout("rustc", &["-vV"])?;
     let scenarios = vec![
-        journal_append_one()?,
-        journal_append_batch()?,
-        projection_rebuild()?,
-        projection_snapshot_tail()?,
-        application_receipt_paths()?,
+        workflow_commit_one()?,
+        workflow_commit_batch()?,
+        workflow_read_page()?,
+        workflow_snapshot_reopen()?,
+        workflow_receipt_paths()?,
         peer_observation_paths()?,
-        context_discovery_and_selection()?,
-        context_materialization()?,
+        explicit_input_selection()?,
+        explicit_input_materialization()?,
         artifact_range_read()?,
         local_process_stream_drain()?,
         model_stream_parsers()?,

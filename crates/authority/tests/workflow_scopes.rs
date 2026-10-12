@@ -68,14 +68,14 @@ fn actions_workflow_facts_digests_and_frozen_basis_cannot_expand_the_set() -> Te
     let actor = ActorRef::new("human:named")?;
     let identity = GrantId::new("grant:named")?;
     let mut resources = AuthorityGrantBuilder::new(identity.clone(), 1, actor.clone())
-        .operations(BTreeSet::from([AuthorityOperation::InspectRevision]))
+        .operations(BTreeSet::from([AuthorityOperation::InspectRun]))
         .build()?
         .resources()
         .clone();
     resources.workflow_run = scope()?;
     let grant = AuthorityGrantBuilder::new(identity, 1, actor.clone())
         .operations(BTreeSet::from([
-            AuthorityOperation::InspectRevision,
+            AuthorityOperation::InspectRun,
             AuthorityOperation::StartRun,
         ]))
         .resources(resources)
@@ -96,7 +96,7 @@ fn actions_workflow_facts_digests_and_frozen_basis_cannot_expand_the_set() -> Te
         grant_revision: 1,
         grant_digest: grant.digest()?,
         revocation_generation: 0,
-        operation: AuthorityOperation::InspectRevision,
+        operation: AuthorityOperation::InspectRun,
         resources: RequestedResourceFacts::empty(),
         budget: AuthorityBudget::default(),
         evaluated_at: BoundaryTimeMillis::new(1),
@@ -112,7 +112,7 @@ fn actions_workflow_facts_digests_and_frozen_basis_cannot_expand_the_set() -> Te
         assert_eq!(evaluator.evaluate(&request)?.is_allowed(), allowed);
     }
     request.resources.workflow = Some(WorkflowId::new("a")?);
-    request.operation = AuthorityOperation::ImportBlueprint;
+    request.operation = AuthorityOperation::CreateRun;
     assert!(
         !evaluator.evaluate(&request)?.is_allowed(),
         "selection must not add an action"
@@ -134,7 +134,7 @@ fn actions_workflow_facts_digests_and_frozen_basis_cannot_expand_the_set() -> Te
     request.resources.run = Some(RunId::new("run-c")?);
     let child = basis.request(
         DecisionId::new("decision:child")?,
-        AuthorityOperation::InspectRevision,
+        AuthorityOperation::InspectRun,
         request.resources.clone(),
         AuthorityBudget::default(),
         BoundaryTimeMillis::new(2),
@@ -167,11 +167,11 @@ fn actions_workflow_facts_digests_and_frozen_basis_cannot_expand_the_set() -> Te
         BTreeMap::from([(grant.identity().clone(), 1)]),
     )?;
     assert!(!revoked.evaluate(&child)?.is_allowed());
-    // Destination import permission alone must not supply source inspection.
+    // Workflow creation permission alone must not supply source inspection.
     let mut write_only: serde_json::Value = serde_json::from_slice(&grant.to_canonical_json()?)?;
     *write_only
         .get_mut("operations")
-        .ok_or("operations absent")? = serde_json::json!(["import_blueprint"]);
+        .ok_or("operations absent")? = serde_json::json!(["create_run"]);
     let write_only = AuthorityGrant::from_json(&serde_json::to_vec(&write_only)?)?;
     let writer = GrantSetEvaluator::new(
         PolicyId::new("policy:writer")?,

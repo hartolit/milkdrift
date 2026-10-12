@@ -1,80 +1,30 @@
-//! Turn authorized commands and execution observations into durable workflow progress.
+//! Own ordinary workflow admission, immutable task starts and durable execution evidence.
 //!
-//! [`RuntimeService`] plans and commits events through [`RuntimeStore`]. Drive it with
-//! command, scheduler, recovery, and effect calls; it starts no worker threads.
-//! [`TaskExecutor`] resolves external capabilities and prepares their exact entry, while
-//! [`ExecutionReporter`] returns observations to runtime for durable acceptance.
-//!
-//! [`RunProjection`] reconstructs current obligations from accepted history.
-//! [`CausalContextBuilder`] selects task evidence before dispatch; reconciliation changes
-//! future work without changing the definitions governing old executions. Command replay
-//! recovers a saved response. External retry is a separate decision based on attempt
-//! evidence, side effects, idempotency, and [`RetryPolicy`].
+//! [`TaskRuntime`] admits generation-guarded changes through one storage owner and freezes
+//! exact definitions, inputs, capability selections and authority before execution. External
+//! effects enter through [`TaskExecutor`]; observations become durable before they are acknowledged.
+//! Missing terminal evidence remains uncertain across restart and never authorizes automatic retry.
 
 mod boundary;
 mod command;
-mod context;
-mod controller;
-mod engine;
 mod error;
 mod executor;
-mod projection;
-mod query;
-mod reconciliation;
-mod scheduler;
 mod tasks;
 
-pub use tasks::{
-    FrozenTaskStart, TaskRecord, TaskResult, TaskRuntime, TaskState, WorkflowRecord, WorkflowState,
-};
+use executor::MAX_REPORTS_PER_DISPATCH;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use boundary::ManualClock;
 pub use boundary::{BoundaryClock, IdGenerator, SequentialIdGenerator, SystemBoundaryClock};
-pub use command::{
-    AUTHORIZED_RUN_COMMAND_SCHEMA_VERSION_V1, CommandAuthorityClaim, ExternalWorkAction,
-    MAX_COMMAND_ITEMS, RUN_COMMAND_SCHEMA_VERSION_V1, RunCommand, RunCommandDocument,
-    SystemTransition, WorkerReport,
-};
-pub use context::{
-    CausalContextBuilder, ContextBuildError, ContextBuildIdentity, ContextBuildRequest,
-    ContextCandidate, ContextCandidateArtifactFacts, ContextCandidateAvailability,
-    ContextCandidateSource, ContextSourceRequest, DurableContextCandidateSource,
-    materialize_selected_context, persist_context_manifest, read_context_manifest,
-    validate_retained_manifest,
-};
-pub use controller::{
-    CONTROLLER_POLICY_EXTENSION_KEY, ControllerAssessment, ControllerAssessmentContext,
-    ControllerLifecycle,
-};
-pub use engine::{
-    CommandExecution, EffectExecutionResult, RecoveryResult, RuntimeConfig, RuntimeHealth,
-    RuntimeService, RuntimeStartupState, RuntimeStore, SchedulerTickResult,
-};
+pub use command::CommandAuthorityClaim;
 pub use error::RuntimeError;
 #[cfg(any(test, feature = "test-support"))]
 pub use executor::DeterministicExecutor;
 pub use executor::{
     CancellationDispatch, CapabilityResolutionContext, EffectAction, ExecutionDispatch,
-    ExecutionReporter, ExecutorError, MAX_REPORTS_PER_DISPATCH, ObservationDisposition,
-    PreparedExecution, ResolvedCapability, TaskExecutor,
+    ExecutionReporter, ExecutorError, ObservationDisposition, PreparedExecution,
+    ResolvedCapability, TaskExecutor,
 };
-pub use projection::{
-    AttemptState, AttemptTerminal, BranchProjection, BranchState, CapabilityResolution,
-    ControllerAssessmentProjection, CurrentNodeExecution, DeterministicNodeTerminalProjection,
-    ExternalOutcomeObligation, IterationProjection, IterationState, JoinProjection,
-    LateTerminalEvidence, LeaseProjection, LeaseState, NodeAttemptProjection,
-    NodeExecutionCancellationProjection, NodeExecutionProjection, NodeExecutionState,
-    ProgressObservation, PublishedNodeOutput, ReconciliationCancellationProjection,
-    ReconciliationDecision, ReconciliationPlanProjection, ReconciliationProjection,
-    ReconciliationRemediationProjection, ReconciliationRequestProjection,
-    ReconciliationRequestState, RecoveryDecision, RecoveryObservation, RecoveryProjection,
-    RemediationProjection, RepeatContinuationDecisionProjection, RepeatContinuationProjection,
-    RepeatContinuationRequestProjection, RepeatTermination, ResourceUsage, RetainedExternalOutcome,
-    RetryProjection, RetryState, RevisionPin, RunCancellation, RunLifecycle, RunProjection,
-    RunTerminalProjection, RunTerminationIntent, SettledNodeExecutionProjection,
-    SideEffectClassification, SignalProjection, SubworkflowOutputImport, SubworkflowProjection,
-    SubworkflowState, SubworkflowUsageSummary, TimerCancellationProjection, TimerProjection,
-    TimerPurpose, TimerState, WaitCancellationProjection, WaitProjection,
+pub use tasks::{
+    FrozenTaskStart, TaskRecord, TaskResult, TaskRuntime, TaskState, WorkflowRecord, WorkflowState,
 };
-pub use scheduler::{RetryPolicy, SchedulerLimits};

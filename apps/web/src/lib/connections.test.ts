@@ -17,4 +17,9 @@ describe('connection profiles', () => {
     expect(() => endpointUrl('https://secret@example.com', 'https:')).toThrow('credentials');
     expect(() => endpointUrl('https://example.com?token=secret', 'https:')).toThrow('query');
   });
+
+  it('refuses saved-profile overflow without silently dropping a connection', () => {
+    const profiles = Array.from({ length: 17 }, (_, index) => ({ id: String(index), label: `Daemon ${index}`, endpoint: 'https://studio.example', daemonId: String(index) }));
+    expect(() => saveProfiles(profiles)).toThrow('At most 16');
+  });
 });

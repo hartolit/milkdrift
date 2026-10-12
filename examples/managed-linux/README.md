@@ -46,7 +46,7 @@ another model's tokenizer or template assumptions. For a self-hosted service wit
 
 For the exercised Ornith llama.cpp instances, request `reasoning_effort: "none"` through the
 existing OpenAI request extension on the model task. See the
-[endpoint guide](../../docs/guides/local-model-endpoint.md#llamacpp-reasoning-stream-compatibility).
+[endpoint guide](../../docs/guides/local-model-endpoint.md#transport-and-unsupported-features).
 This is an explicit per-request choice; it does not change the server's defaults.
 
 Worker networking can remain `none` because Milkdrift invokes the model through its scoped provider

@@ -1,40 +1,38 @@
 # External process and model interoperability evidence
 
-The operator-driven evidence harness runs a real coding-agent executable and a real supported model
-endpoint through the actual `milkdrift-daemon` executable. It creates a disposable Git repository, explicit
-scoped grants, process/model profiles, prompt-sequence remediation, artifacts, causal context, and
-controlled restart boundaries. It does not benchmark model quality.
+`milkdrift-external-evidence` runs a byte-pinned coding process and configured model endpoint through
+the production daemon task API. It creates a disposable Git repository, explicit grants and captured
+artifacts, then verifies corrective future work and restart discovery. The harness tests structural
+interoperability and evidence retention; it does not evaluate model quality.
 
-A report qualifies only when both real scenarios succeed. `--fixture --allow-fixture` is the
-credential-free CI/self-test mode; it deliberately sets the report and both scenarios to
-`qualifying: false` even when every harness assertion passes.
+Both real scenarios must succeed for qualification. `--fixture --allow-fixture` uses the Rust helper
+and controlled loopback endpoint, and always reports non-qualifying even when every assertion passes.
+Missing real resources never cause a silent fallback to those fixtures.
 
-## Prerequisites
+## Prepare operator resources
 
-- Build prerequisites from the [development workflow](../development/workflow.md), Git, the pinned
-  Rust toolchain and a `b3sum` CLI for preparing exact executable facts. The harness resolves Git
-  and the real toolchain compiler from `PATH`. Verifier/reviewer/evidence helpers are native roles
-  of the byte-pinned Rust harness. Generated Rust tests compile with that compiler and run through
-  bounded child processes. The preparation commands below use
-  a Unix shell and GNU `stat`; use your host's file-length command on other platforms.
-- A clean Milkdrift checkout at the exact commit/tree being cited. Real mode refuses a dirty
-  checkout because the recorded Git tree would not identify the tested source; fixture mode records
-  `dirty_at_start` but remains non-qualifying.
-- One real non-interactive coding-agent executable. Its process-profile schema-v2 document must
-  pin the exact executable bytes and expose a writable `process.execute` capability. The executable
-  must read the bounded prompt from the declared `prompt` input, work in its current directory,
-  modify the disposable repository without committing, and publish an output named `diff` (a
-  bounded stdout capture is permitted).
-- One reachable endpoint supported by the existing `open_ai_compatible` chat-completions or native
-  `anthropic` profile mapping. Its feature declarations must be truthful. `system_role` is required
-  for the frozen causal manifest; the harness uses streaming and structured output when advertised.
-  The provider response must include usage plus bounded response identity/model metadata.
-- Every credential must be available through an environment variable or private file. Profiles
-  contain only opaque `secret:…` references.
+Build the daemon and harness with the repository's pinned Rust toolchain. Git and the real compiler
+must be available for the disposable repository and independent verifier. Real qualification requires
+a clean Milkdrift checkout so the recorded commit/tree identify the tested source.
 
-Copy the templates in [`examples/external-evidence`](../../examples/external-evidence/README.md) to an
-untracked operator directory and replace every placeholder. For the executable declaration,
-compute the exact facts without loading the file into a shell variable:
+The coding process profile must pin executable digest and byte size, provide a writable
+`process.execute` capability, accept the named `prompt` input, work in its current repository without
+committing, and publish a `diff` output. A bounded stdout artifact is permitted. The harness validates
+the profile, rejects known fixture/test agents in real mode, rehashes the executable and runs a bounded
+version command directly. It replaces the working directory with its disposable repository and adds
+only its private session/repository roots. Review argv, filesystem needs and authentication against the
+exact executable you intend to run; a template does not establish that compatibility.
+
+The model profile selects one supported endpoint/protocol and exact model alias. Its accounting must
+provide enforceable input/output and monetary bounds. Unknown counting or billing cannot reserve
+ordinary task execution. The current task owner sends a fresh nonstream request with 4096 output units;
+the profile must admit and enforce that request. The harness expects a normal `stop` response with
+its exact bounded text contract, provider usage and response identity/model metadata. It does not expose
+streaming, structured-output or custom output-unit switches for ordinary tasks.
+
+Profiles contain opaque secret references. Resolve them from private files or environment variables.
+Use [profile templates](../../examples/external-evidence/README.md) outside tracked source and replace
+every placeholder. Exact executable facts can be inspected without putting bytes in a shell variable:
 
 ```sh
 b3sum /absolute/path/to/agent
@@ -42,217 +40,76 @@ stat -c '%s' /absolute/path/to/agent
 /absolute/path/to/agent --version
 ```
 
-The generated grants include exact execute scopes for the coding agent and the native harness
-used by the verifier, reviewer, and model-evidence producer. They need not be installed in the same
-directory; sharing a directory does not add duplicate authority or grant write access there.
+## Run a finite scenario
 
-The harness revalidates the source document, rejects known deterministic/test helpers, replaces
-only its working directory with the disposable repository, appends only its isolated
-session/repository roots, validates the rendered profile, rehashes the executable, and runs the
-version command directly without a shell. Pass each version argument separately; `--version` is the
-default.
-
-## Run the evidence command
-
-Use an empty external directory or a new directory beneath `target/`. Tracked source paths and
-parent traversal are refused.
+Choose an empty external directory or a new path below ignored `target/`. The runner rejects tracked
+source paths, parent traversal and an existing nonempty output directory.
 
 ```sh
 cargo build -p milkdrift-daemon --bin milkdrift-daemon
-
-export MILKDRIFT_AGENT_TOKEN='replace-in-operator-environment'
-export MILKDRIFT_MODEL_TOKEN='replace-in-operator-environment'
-
 cargo external-evidence \
   --agent-profile /operator/private/coding-agent-profile.json \
   --agent-version-arg=--version \
   --model-profile /operator/private/model-profile.json \
   --model-capability external-evidence-model \
   --timeout-secs 900 \
-  --max-output-units 4096 \
   --secret-source secret:coding-agent-token=env:MILKDRIFT_AGENT_TOKEN \
-  --secret-source secret:model-token=env:MILKDRIFT_MODEL_TOKEN \
+  --secret-source secret:model-token=file:/operator/private/model.token \
   --output target/milkdrift-external-evidence
 ```
 
-The unpublished `milkdrift-evidence` package owns the executable and shared bounded child harness.
-The alias selects the built sibling daemon; `--daemon PATH` selects an explicit binary. Restarts
-terminate and reap that child, then reopen its durable state through a fresh daemon process.
+Set the referenced credentials in your operator environment beforehand. `--daemon PATH` selects an
+explicit binary; otherwise the harness uses its built sibling. `--timeout-secs` accepts 1–3600 and
+bounds each awaited workflow transition, including daemon reads. It is not a total scenario deadline.
+The generated grants explicitly permit dynamic workflow IDs in this isolated installation; separate
+capability, filesystem, network, secret, time and budget scopes remain declared. A broad workflow
+grant is not actor-only read isolation.
 
-Choose bounds for the selected resources before starting. `--timeout-secs` accepts 1–3,600 seconds
-and defaults to 180 for each workflow wait, including daemon reads. It does not change the process
-profile's wall limit or the model profile's HTTP limits; those must also allow the work to finish.
-`--max-output-units` accepts 1–65,536 and defaults to 64. Reasoning models may consume that small
-default before producing any final text. The example's 4,096 units are an operator choice, not a
-product-wide limit or a tested budget for every model. The harness does not discover the model's
-context window or choose its budget automatically. Reports record both bounds in scenario facts;
-the model allowance is also part of the immutable task revision. A timeout preserves the private
-session for diagnosis and does not authorize replay of entered work.
+The process scenario starts one coding task, a verifier with a deliberate failed check, and an
+independent reviewer bound to that settled verification. The verifier retains its check report but
+omits a required attestation, so the task owner's output contract fails. At the settled review boundary,
+the runner kills and reaps the daemon, then reopens the same store and compares the retained facts.
+An explicit atomic change adds fresh corrective coding and verification. The good verifier publishes
+the required attestation; adoption checks the original output contract and retains the failed original.
+The repository commit/tree must remain unchanged and its uncommitted diff must be nonempty.
 
-Output budgets bound the requested generation work; profile byte and time limits bound the local
-resources used to handle it. A workflow can select a different output allowance in each model task,
-within the [model request contract](../../crates/model/src/task.rs) and granted authority. Choose
-effective values before accepting the task; changing future requests must not rewrite an entered
-attempt's recorded settings.
+The model scenario creates two selected evidence producers and one unselected producer. A missing
+required release input keeps the model queued across another daemon restart. After an explicit input
+change, the model task freezes only its named inputs and retains its canonical response and provider
+metadata. Fixture mode additionally observes the actual HTTP body, checks selected bytes and absence
+of unselected bytes, and counts exactly one endpoint request. Real mode does not claim access to a
+remote provider's internal request counter.
 
-Thinking is not prohibited by the exact final-answer assertion. However, this harness currently
-omits reasoning controls, which leaves the endpoint's default in effect and does not mean thinking
-is disabled. The [adapter feature matrix](../../adapters/model-provider/README.md#choose-features-the-endpoint-actually-supports)
-describes the limited mappings available to ordinary model tasks. Record the server's effective
-thinking mode and context configuration with private resource provenance, identifying operator
-declarations separately from settings verified by the endpoint. Changing either mode or budget
-between probes does not establish which change caused a successful final answer.
+These restarts exercise settled or unentered boundaries. They do not establish graceful signal
+handling, remote cancellation or exactly-once provider effects.
 
-For a private credential file, use
-`--secret-source secret:model-token=file:/absolute/private/model.token`; Unix file sources must be
-regular files with no group/other permission. Do not put a token in a URL, argv, JSON value, or
-command log. Omit mappings for references the selected profiles do not use.
+## Read the report
 
-The command exits nonzero for a missing resource, invalid profile, fallback/helper profile,
-unexpected workflow state, missing proof, uncertain external outcome, duplicate external entry,
-redaction failure, or incomplete model response. An error still writes a non-qualifying report once
-the output directory has been accepted. The selected output directory must initially be empty.
+The writer validates strict schema 2 and the
+[consumer schema](../reference/external-evidence-report-v2.schema.json), caps encoded bytes, and rejects
+forbidden fields or exact secret values before writing. The report contains source/configuration
+digests, safe profile/executable facts, request receipts, workflows, tasks, adopted corrections,
+artifact metadata, restart generations, and bounded outcome facts. Those checks are not a signature
+or independent attestation of a fabricated report.
 
-## What the command proves
+`qualifying: true` requires both real scenarios, a clean source checkout and all required semantic
+facts. A normal model finish is required; a truncated answer cannot qualify. Fixture mode always
+sets both scenario qualification flags false. Configuration failures and partial scenario failures
+remain explicit rather than inventing success for unrun work.
 
-The process scenario initializes an exact Git commit containing a deliberately broken calculator,
-imports an ordinary prompt sequence, and starts a fresh real agent. A separate verifier publishes
-result/log facts but intentionally withholds the success artifact. That is labeled orchestration
-fault injection, not blamed on the agent. A fresh independent reviewer runs, the harness terminates
-and reaps the daemon at the settled approval boundary, and a new daemon recovers it. The harness then submits,
-approves, and applies an ordinary digest-bound remediation proposal, signals and resumes the run,
-starts a second fresh agent process, and runs the good verifier. It checks distinct invocation IDs,
-attempt provenance, output artifacts, no duplicate attempts, and the exact initial/final
-commit/tree plus dirty-diff digest and size. The agent must leave the initial commit and its tree
-unchanged and retain a nonempty working-tree diff. Process evidence is validated before the model
-scenario begins, including in fixture mode, so a committed or missing repair cannot consume a model
-request and fail only when the combined report is written.
+Only the report is a candidate for sharing after review. The rest of `session/` contains captured
+inputs, repository contents, provider results, credentials, profiles and the daemon store. Treat the
+whole output directory as sensitive scratch data. The harness never deletes the operator-selected
+directory automatically. A trusted host process has the daemon account's native host authority;
+its internal provider requests and spending are not metered as direct Milkdrift model tasks.
 
-The model scenario publishes two selected evidence artifacts and one intentionally unselected
-artifact, then stops at a durable signal wait before adapter entry. After terminating and reopening the daemon it
-verifies the same unreleased sequence, signals once, and permits one endpoint request. The model
-task uses the frozen manifest, Fresh session policy, the endpoint's advertised streaming mode, and
-either strict JSON `{ "ok": true }` or the exact text `MILKDRIFT_EVIDENCE_OK`. Success requires
-selected/omitted artifact identity, durable fragment counts, response/finish/usage facts, nonempty
-provider metadata, exact profile/protocol/model/origin provenance, committed output artifacts, and
-one attempt with no uncertainty.
-The response must finish normally (`stop`); reaching the output limit cannot qualify even if the
-retained text happens to match the requested answer.
-
-These are controlled abrupt process restarts at settled workflow boundaries. They do not exercise
-graceful OS-signal shutdown or filesystem power loss. The separate
-[operational lane](../development/verification-evidence.md#benchmarks-and-operations) owns graceful
-shutdown evidence. The harness uses the actual daemon and never edits redb directly.
-
-## Endpoint profiles
-
-For a real loopback llama.cpp-style server, start and secure the server separately, copy the
-OpenAI-compatible template, and use the server's actual behavior:
-
-```json
-{
-  "protocol": { "type": "open_ai_compatible", "path": "v1/chat/completions" },
-  "base_url": "http://127.0.0.1:8080",
-  "model": "exact-server-model-alias",
-  "auth": { "type": "no_auth" },
-  "features": ["streaming", "system_role"],
-  "local_development": true,
-  "allowed_hosts": ["127.0.0.1"]
-}
-```
-
-This fragment is not a complete profile; retain the template's explicit limits, TLS, proxy,
-redirect, concurrency, and trust-zone fields. Advertise `structured_output` only if the exact
-server/model combination implements the requested JSON-schema contract. If it is omitted, the
-harness requests the exact parseable text response. See the [local model endpoint guide](local-model-endpoint.md).
-
-For hosted OpenAI-compatible endpoints use HTTPS, the exact allowlisted host, bearer secret
-reference, and only verified chat-completions features. For native Anthropic use the Anthropic
-template, `anthropic_api_key`, its required API version/path, and do not claim structured output;
-the current native mapping uses the exact parseable response path. No Responses API or other
-provider family is implied.
-
-## Codex CLI profile example
-
-The committed coding-agent template uses the locally inspected
-`codex-cli 0.147.0-alpha.6.6` non-interactive interface:
-
-```text
-codex exec --ephemeral --ignore-user-config --sandbox workspace-write --color never -
-```
-
-That version documents `-` as prompt stdin, `--ephemeral` as no session persistence, and
-`--ignore-user-config` as ignoring configuration while retaining the `CODEX_HOME` authentication
-boundary. This checkout did not have credentials for a qualifying Codex run, so the example is not
-external proof. Revalidate the flags, executable bytes, authentication behavior, host filesystem
-needs, and package version you actually deploy. The Milkdrift process boundary is trusted-host
-mediation, not an OS sandbox; the child still has the daemon account's host authority.
-
-## Cost, network, and sensitive output
-
-The qualifying path normally starts the coding agent twice (initial and remediation) and calls the
-model endpoint once. The coding agent may itself make additional provider calls according to its
-own CLI. Provider charges, egress, rate limits, and model-side retention policies therefore apply.
-Milkdrift grants only the endpoint profile/destination and declared secret references, but a
-trusted-host coding process is not network-isolated by that declaration.
-
-`report.json` is the redacted machine-readable summary. The rest of `session/` intentionally
-contains the disposable repository, daemon store, restricted artifacts, rendered profiles, and
-private local bearer files needed for evidence reconstruction. Treat the entire output directory
-as sensitive scratch data, never commit it, and share only a separately reviewed report.
-
-## Read and clean up the report
-
-The report validates against strict serde v1 at write time; the consumer schema is
-[`external-evidence-report-v1.schema.json`](../reference/external-evidence-report-v1.schema.json).
-The writer also caps the encoded report, rejects a qualifying document unless its source commit is
-clean and exact, requires scenario-specific command/run/attempt/artifact/restart facts, validates
-every reported artifact digest, and scans the complete encoded bytes for generated and
-operator-mapped secret values before creating the file. These checks make malformed or leaked
-reports non-writable; they do not sign a report or make self-reported evidence independently
-attested. The consumer schema requires the recorded repository trees and nonempty diff evidence;
-the Rust validator additionally checks that the initial and final commit/tree pairs are equal.
-These are checks on existing v1 fields, not a new report format.
-The consumer schema and Rust validator also require the existing model `finish_reason` fact to
-be `stop`, so a truncated response cannot be presented as qualifying evidence.
-The harness sets the final qualification flags before writing the report once. Its writer checks
-both operator credentials and generated daemon tokens, and refuses forbidden fields before any
-report bytes reach disk. If final validation fails, retain the private session and command log;
-they do not substitute for a valid report.
-Interpret the top level first:
-
-- `qualifying: true` requires `fixture_mode: false` and both scenario `qualifying` fields true.
-- Each scenario records the safe profile/executable/model identity, command/run/revision/attempt/
-  proposal/artifact references, restart boundary, terminal facts, and failure reason.
-- `configuration_digest` identifies the exact validated, path-normalized daemon configuration
-  without disclosing its document or resolved credential values; it is `null` if validation never
-  produced a configuration.
-- Only digests, counts, bounded identities, redacted endpoint origin, safe version output, and
-  provider-supplied usage are summarized. Authorization headers, secret values, complete prompts,
-  complete outputs, environment dumps, and repository file contents are forbidden.
-- `dirty_at_start` describes the Milkdrift checkout used to build/run the harness. A final
-  qualifying record should be produced from the exact reviewed tree the operator intends to cite.
-
-After retaining the reviewed report where your evidence policy requires, remove the selected output
-directory using your normal secure cleanup process. The harness never deletes an operator-selected
-evidence directory automatically.
-
-## Hermetic self-test and optional peer evidence
-
-The local self-test performs both workflows against a byte-pinned Rust fixture and a loopback
-mock endpoint, without external network or credentials:
+## Check the harness locally
 
 ```sh
-cargo external-evidence \
-  --fixture --allow-fixture \
-  --output target/milkdrift-external-evidence-fixture
+cargo external-evidence --fixture --allow-fixture --output target/external-evidence-fixture
 ```
 
-It exits zero only when the harness assertions pass, while the report remains non-qualifying.
-Ordinary `cargo test` runs this fixture mode only; it never selects an operator real profile.
-
-The optional remote-peer extension is not implemented by this command and is not required to close
-the local process/model gate. The existing hermetic two-daemon proof can be run with
-`cargo test -p milkdrift-daemon --test two_daemon_peer --all-features`; it is not a substitute for a
-future operator-driven real remote-peer report. Do not label that deterministic test as external
-peer evidence.
+The fixture exits successfully only when its assertions pass while remaining non-qualifying.
+Integration tests also inject process/model failure and truncated output, verify secret redaction,
+and reject unsafe output paths. The independent remote-peer evidence scenario remains outside this
+command; hermetic daemon peer tests are not proof about an operator's remote host.

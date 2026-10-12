@@ -186,7 +186,6 @@ fn tombstone_from_record(
     let operation = record.request.selection.operation_contract();
     let tombstone = PeerExecutionTombstone {
         output_observations,
-        published_invocation: record.published_invocation.clone(),
         schema_version: SERVING_EXECUTION_TOMBSTONE_SCHEMA_VERSION,
         caller: record.caller.clone(),
         authorization: record.request.authorization.clone(),

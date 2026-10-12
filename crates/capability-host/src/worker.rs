@@ -14,10 +14,7 @@ use std::{
 
 use milkdrift_capability::InvocationId;
 use milkdrift_persistence::PageSize;
-use milkdrift_runtime::{
-    EffectAction, EffectExecutionResult, ExecutionDispatch, RuntimeError, RuntimeService,
-    TaskRuntime,
-};
+use milkdrift_runtime::{EffectAction, ExecutionDispatch, RuntimeError, TaskRuntime};
 use thiserror::Error;
 
 use crate::{CapabilityHost, HostError, ShutdownReport};
@@ -151,74 +148,59 @@ pub struct EffectWorkerHost {
     joins: Mutex<Vec<JoinHandle<()>>>,
 }
 
-enum WorkerRuntime {
-    Legacy(Arc<RuntimeService>),
-    Tasks {
-        runtime: Arc<TaskRuntime>,
-        recovered: Mutex<VecDeque<ExecutionDispatch>>,
-    },
+struct WorkerRuntime {
+    runtime: Arc<TaskRuntime>,
+    recovered: Mutex<VecDeque<ExecutionDispatch>>,
 }
 
 impl WorkerRuntime {
     fn claim_execution_effects(&self, page: PageSize) -> Result<Vec<EffectAction>, RuntimeError> {
-        match self {
-            Self::Legacy(runtime) => runtime.claim_execution_effects(page),
-            Self::Tasks { runtime, recovered } => {
-                let mut recovered = recovered.lock().map_err(|_| {
-                    RuntimeError::Scheduling("task recovery queue unavailable".into())
-                })?;
-                let maximum = usize::try_from(page.get())
-                    .map_err(|e| RuntimeError::Scheduling(e.to_string()))?;
-                let mut actions = Vec::new();
-                while actions.len() < maximum {
-                    let Some(dispatch) = recovered.pop_front() else {
-                        break;
-                    };
-                    actions.push(EffectAction::Execute(Box::new(dispatch)));
-                }
-                let remaining = maximum.checked_sub(actions.len()).ok_or_else(|| {
-                    RuntimeError::Scheduling("worker claim accounting overflow".into())
-                })?;
-                if remaining != 0 {
-                    actions.extend(
-                        runtime
-                            .tick(
-                                u16::try_from(remaining.min(200))
-                                    .map_err(|e| RuntimeError::Scheduling(e.to_string()))?,
-                            )?
-                            .into_iter()
-                            .map(|dispatch| EffectAction::Execute(Box::new(dispatch))),
-                    );
-                }
-                Ok(actions)
-            }
+        let mut recovered = self
+            .recovered
+            .lock()
+            .map_err(|_| RuntimeError::Scheduling("task recovery queue unavailable".into()))?;
+        let maximum =
+            usize::try_from(page.get()).map_err(|e| RuntimeError::Scheduling(e.to_string()))?;
+        let mut actions = Vec::new();
+        while actions.len() < maximum {
+            let Some(dispatch) = recovered.pop_front() else {
+                break;
+            };
+            actions.push(EffectAction::Execute(Box::new(dispatch)));
         }
+        let remaining = maximum
+            .checked_sub(actions.len())
+            .ok_or_else(|| RuntimeError::Scheduling("worker claim accounting overflow".into()))?;
+        if remaining != 0 {
+            actions.extend(
+                self.runtime
+                    .tick(
+                        u16::try_from(remaining.min(200))
+                            .map_err(|e| RuntimeError::Scheduling(e.to_string()))?,
+                    )?
+                    .into_iter()
+                    .map(|dispatch| EffectAction::Execute(Box::new(dispatch))),
+            );
+        }
+        Ok(actions)
     }
 
     fn claim_cancellation_effects(
         &self,
         page: PageSize,
     ) -> Result<Vec<EffectAction>, RuntimeError> {
-        match self {
-            Self::Legacy(runtime) => runtime.claim_cancellation_effects(page),
-            Self::Tasks { runtime, .. } => runtime.cancellation_actions(
-                u16::try_from(page.get().min(200))
-                    .map_err(|e| RuntimeError::Scheduling(e.to_string()))?,
-            ),
-        }
+        self.runtime.cancellation_actions(
+            u16::try_from(page.get().min(200))
+                .map_err(|e| RuntimeError::Scheduling(e.to_string()))?,
+        )
     }
 
-    fn execute_effect(&self, action: EffectAction) -> Result<EffectExecutionResult, RuntimeError> {
-        match self {
-            Self::Legacy(runtime) => runtime.execute_effect(action),
-            Self::Tasks { runtime, .. } => {
-                match action {
-                    EffectAction::Execute(dispatch) => runtime.execute(*dispatch)?,
-                    EffectAction::Cancel(_) => runtime.cancel_pending()?,
-                }
-                Ok(EffectExecutionResult::Pending)
-            }
+    fn execute_effect(&self, action: EffectAction) -> Result<(), RuntimeError> {
+        match action {
+            EffectAction::Execute(dispatch) => self.runtime.execute(*dispatch)?,
+            EffectAction::Cancel(dispatch) => self.runtime.execute_cancellation(&dispatch)?,
         }
+        Ok(())
     }
 }
 
@@ -251,15 +233,11 @@ impl EffectWorkerHost {
     /// Rejects invalid worker bounds and returns thread-spawn failures. Partial startup closes
     /// the unexposed queues and joins every thread already started.
     pub fn start(
-        runtime: Arc<RuntimeService>,
+        runtime: Arc<TaskRuntime>,
         capability_host: CapabilityHost,
         config: EffectWorkerConfig,
     ) -> Result<Self, EffectWorkerError> {
-        Self::start_owner(
-            Arc::new(WorkerRuntime::Legacy(runtime)),
-            capability_host,
-            config,
-        )
+        Self::start_tasks(runtime, capability_host, config)
     }
 
     /// Starts the production ordinary-task workers after recovering exact accepted starts.
@@ -275,7 +253,7 @@ impl EffectWorkerHost {
             .recover()
             .map_err(|error| EffectWorkerError::Runtime(error.to_string()))?;
         Self::start_owner(
-            Arc::new(WorkerRuntime::Tasks {
+            Arc::new(WorkerRuntime {
                 runtime,
                 recovered: Mutex::new(recovered.into()),
             }),
@@ -629,13 +607,7 @@ fn cancellation_worker(
 
 fn execute_contained(runtime: &WorkerRuntime, action: EffectAction, shared: &WorkerShared) {
     match catch_unwind(AssertUnwindSafe(|| runtime.execute_effect(action))) {
-        Ok(Ok(
-            EffectExecutionResult::Pending
-            | EffectExecutionResult::Completed { .. }
-            | EffectExecutionResult::Uncertain { .. }
-            | EffectExecutionResult::CancellationAcknowledged
-            | EffectExecutionResult::CancellationDeferred,
-        )) => record_complete(shared),
+        Ok(Ok(())) => record_complete(shared),
         Ok(Err(error)) => record_failure(shared, &error.to_string()),
         Err(_panic) => record_panic(shared),
     }

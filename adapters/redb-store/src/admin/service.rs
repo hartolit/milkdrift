@@ -1,8 +1,8 @@
 use super::{
-    ApplicationCommandStore, BoundedDetail, IntegrityScanRequest, IntegrityScanResult, METADATA,
-    PersistenceError, RedbStore, SCHEMA_VERSION_KEY, StorageAdmin, StorageComponentHealth,
-    StorageHealth, StorageHealthStatus, StorageSchemaCompatibility, StorageSchemaInfo,
-    TimestampMillis, cursor::scan_index_sample, error,
+    BoundedDetail, IntegrityScanRequest, IntegrityScanResult, METADATA, PersistenceError,
+    RedbStore, SCHEMA_VERSION_KEY, StorageAdmin, StorageComponentHealth, StorageHealth,
+    StorageHealthStatus, StorageSchemaCompatibility, StorageSchemaInfo, TimestampMillis,
+    cursor::scan_index_sample, error,
 };
 
 mod integrity_scan;
@@ -41,7 +41,6 @@ impl StorageAdmin for RedbStore {
             cursor: None,
         })?;
         let index_scan = scan_index_sample(self, 32)?;
-        let receipt_status = self.application_receipt_status()?;
         let status = if scan.failures.is_empty() && index_scan.failures.is_empty() {
             StorageHealthStatus::Healthy
         } else {
@@ -86,20 +85,6 @@ impl StorageAdmin for RedbStore {
             } else {
                 "bounded index sample reached the current end of the checked indexes; it does not prove artifact-content integrity"
             })?,
-        });
-        components.push(StorageComponentHealth {
-            component: BoundedDetail::new("application_receipt_lifecycle")?,
-            status: StorageHealthStatus::Healthy,
-            detail: BoundedDetail::new(format!(
-                "hot {}/{}; cold {}; archive generation {}; last archive time {}",
-                receipt_status.hot_count,
-                receipt_status.hot_bound,
-                receipt_status.cold_count,
-                receipt_status.archive_generation,
-                receipt_status
-                    .last_archived_at
-                    .map_or_else(|| "none".to_owned(), |value| value.get().to_string())
-            ))?,
         });
         components.extend(scan.failures);
         components.extend(index_scan.failures);

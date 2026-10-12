@@ -147,7 +147,8 @@ fn artifact_path_intent_and_finalize_faults_resume_after_reopen()
                 .is_none()
         );
         assert_eq!(
-            reopened.workspace_usage(
+            usage(
+                &reopened,
                 request
                     .owner()
                     .run()

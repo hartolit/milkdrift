@@ -43,12 +43,45 @@ impl TaskControlService {
         key: &str,
         request: WorkflowCreate,
     ) -> Result<WorkflowCommandReceipt, ControlError> {
+        self.create_request(context, key, request, None)
+    }
+
+    /// Admits mapped task content while binding replay to the original canonical public request.
+    ///
+    /// # Errors
+    /// Returns authority, canonical request, task validation, replay or storage failures.
+    pub fn create_exact(
+        &self,
+        context: &ActorAuthorityContext,
+        key: &str,
+        request: WorkflowCreate,
+        canonical_transport: &[u8],
+    ) -> Result<WorkflowCommandReceipt, ControlError> {
+        self.create_request(context, key, request, Some(canonical_transport))
+    }
+
+    fn create_request(
+        &self,
+        context: &ActorAuthorityContext,
+        key: &str,
+        request: WorkflowCreate,
+        transport: Option<&[u8]>,
+    ) -> Result<WorkflowCommandReceipt, ControlError> {
         let workflow = TaskRuntime::workflow_identity(context.actor().as_str(), key)?;
         self.authorize(context, &workflow, AuthorityOperation::CreateRun, key)?;
         let decision = self.authorize(context, &workflow, AuthorityOperation::StartRun, key)?;
-        Ok(self
-            .runtime
-            .create(context.actor().as_str(), key, request, decision)?)
+        Ok(match transport {
+            Some(bytes) => self.runtime.create_exact(
+                context.actor().as_str(),
+                key,
+                request,
+                decision,
+                bytes,
+            )?,
+            None => self
+                .runtime
+                .create(context.actor().as_str(), key, request, decision)?,
+        })
     }
 
     /// Stop requires cancellation scope; changing future definitions requires scoped edit scope.
@@ -61,6 +94,32 @@ impl TaskControlService {
         key: &str,
         workflow: &WorkflowId,
         batch: TaskBatch,
+    ) -> Result<WorkflowCommandReceipt, ControlError> {
+        self.edit_request(context, key, workflow, batch, None)
+    }
+
+    /// Applies an authorized edit with exact public-envelope replay identity.
+    ///
+    /// # Errors
+    /// Returns authority, canonical request, task edit, replay or storage failures.
+    pub fn edit_exact(
+        &self,
+        context: &ActorAuthorityContext,
+        key: &str,
+        workflow: &WorkflowId,
+        batch: TaskBatch,
+        canonical_transport: &[u8],
+    ) -> Result<WorkflowCommandReceipt, ControlError> {
+        self.edit_request(context, key, workflow, batch, Some(canonical_transport))
+    }
+
+    fn edit_request(
+        &self,
+        context: &ActorAuthorityContext,
+        key: &str,
+        workflow: &WorkflowId,
+        batch: TaskBatch,
+        transport: Option<&[u8]>,
     ) -> Result<WorkflowCommandReceipt, ControlError> {
         if batch
             .changes
@@ -76,9 +135,15 @@ impl TaskControlService {
         {
             self.authorize(context, workflow, AuthorityOperation::Apply, key)?;
         }
-        Ok(self
-            .runtime
-            .edit(context.actor().as_str(), key, workflow, batch)?)
+        Ok(match transport {
+            Some(bytes) => {
+                self.runtime
+                    .edit_exact(context.actor().as_str(), key, workflow, batch, bytes)?
+            }
+            None => self
+                .runtime
+                .edit(context.actor().as_str(), key, workflow, batch)?,
+        })
     }
 
     /// Rechecks current grants for every read, including reconnect and cached stream refresh.

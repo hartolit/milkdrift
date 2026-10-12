@@ -101,6 +101,15 @@ fn run() -> Result<u8, Box<dyn std::error::Error>> {
             writeln!(std::io::stderr(), "fixture stderr")?;
             Ok(0)
         }
+        "text-output-pair" => {
+            let bytes: usize = arguments.next().ok_or("missing byte count")?.parse()?;
+            if bytes > 1_048_576 {
+                return Err("fixture text output exceeds 1 MiB per file".into());
+            }
+            std::fs::write("stdout.txt", vec![b'o'; bytes])?;
+            std::fs::write("stderr.txt", vec![b'e'; bytes])?;
+            Ok(0)
+        }
         "emit" => {
             let bytes: usize = arguments.next().ok_or("missing byte count")?.parse()?;
             let stdout_thread =

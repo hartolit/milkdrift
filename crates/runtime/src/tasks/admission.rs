@@ -34,15 +34,55 @@ impl TaskRuntime {
         request: WorkflowCreate,
         decision: AuthorityDecisionSnapshot,
     ) -> Result<WorkflowCommandReceipt, RuntimeError> {
+        self.create_request(owner_actor, key, request, decision, None)
+    }
+
+    /// Preserves the exact canonical public envelope before transport defaults or uploads are resolved.
+    /// The authenticated control owner supplies both representations of the same request.
+    ///
+    /// # Errors
+    /// Refuses noncanonical/oversized transport JSON and the ordinary admission failures.
+    pub fn create_exact(
+        &self,
+        owner_actor: &str,
+        key: &str,
+        request: WorkflowCreate,
+        decision: AuthorityDecisionSnapshot,
+        canonical_transport: &[u8],
+    ) -> Result<WorkflowCommandReceipt, RuntimeError> {
+        self.create_request(
+            owner_actor,
+            key,
+            request,
+            decision,
+            Some(canonical_transport),
+        )
+    }
+
+    fn create_request(
+        &self,
+        owner_actor: &str,
+        key: &str,
+        request: WorkflowCreate,
+        decision: AuthorityDecisionSnapshot,
+        transport: Option<&[u8]>,
+    ) -> Result<WorkflowCommandReceipt, RuntimeError> {
         let _guard = self
             .gate
             .lock()
             .map_err(|_| invalid("task admission lock unavailable"))?;
+        let request_identity = transport
+            .map(canonical_transport_value)
+            .transpose()?
+            .unwrap_or(serde_json::to_value(&request)?);
         let canonical_request = serde_json::to_vec(
-            &serde_json::json!({"operation":"create_workflow","request":request}),
+            &serde_json::json!({"operation":"create_workflow","request":request_identity}),
         )?;
         if let Some(receipt) = self.replay(owner_actor, key, &canonical_request)? {
             return Ok(receipt);
+        }
+        if self.is_closed() {
+            return Err(invalid("task admission is closed"));
         }
         if request.title.trim().is_empty()
             || request.title.len() > 256
@@ -113,6 +153,11 @@ impl TaskRuntime {
         for value in request.inputs.values() {
             value.validate().map_err(invalid)?;
         }
+        for task in tasks.values() {
+            task.definition
+                .validate_supplied_inputs(&request.inputs)
+                .map_err(invalid)?;
+        }
         let record = WorkflowRecord {
             schema_version: 1,
             id: id.clone(),
@@ -136,6 +181,7 @@ impl TaskRuntime {
             spending_currency: None,
         };
         let acceptance = WorkflowCommandAcceptance {
+            reserved_action: None,
             actor: owner_actor.to_owned(),
             key: key.to_owned(),
             canonical_request,
@@ -155,15 +201,55 @@ impl TaskRuntime {
         workflow: &WorkflowId,
         batch: TaskBatch,
     ) -> Result<WorkflowCommandReceipt, RuntimeError> {
+        self.edit_request(owner_actor, key, workflow, batch, None)
+    }
+
+    /// Binds replay to the original canonical public edit, including explicit defaults.
+    ///
+    /// # Errors
+    /// Refuses noncanonical/oversized transport JSON and the ordinary edit failures.
+    pub fn edit_exact(
+        &self,
+        owner_actor: &str,
+        key: &str,
+        workflow: &WorkflowId,
+        batch: TaskBatch,
+        canonical_transport: &[u8],
+    ) -> Result<WorkflowCommandReceipt, RuntimeError> {
+        self.edit_request(owner_actor, key, workflow, batch, Some(canonical_transport))
+    }
+
+    fn edit_request(
+        &self,
+        owner_actor: &str,
+        key: &str,
+        workflow: &WorkflowId,
+        batch: TaskBatch,
+        transport: Option<&[u8]>,
+    ) -> Result<WorkflowCommandReceipt, RuntimeError> {
         let _guard = self
             .gate
             .lock()
             .map_err(|_| invalid("task admission lock unavailable"))?;
+        let request_identity = transport
+            .map(canonical_transport_value)
+            .transpose()?
+            .unwrap_or(serde_json::to_value(&batch)?);
         let canonical_request = serde_json::to_vec(
-            &serde_json::json!({"operation":"edit_workflow","workflow":workflow,"batch":batch}),
+            &serde_json::json!({"operation":"edit_workflow","workflow":workflow,"batch":request_identity}),
         )?;
         if let Some(receipt) = self.replay(owner_actor, key, &canonical_request)? {
             return Ok(receipt);
+        }
+        if self.is_closed()
+            && batch
+                .changes
+                .iter()
+                .any(|change| !matches!(change, TaskChange::Stop { .. }))
+        {
+            return Err(invalid(
+                "task edits are closed during shutdown; stop remains available",
+            ));
         }
         let mut record = self.require_workflow(workflow)?;
         if batch.expected_generation != record.generation {
@@ -175,6 +261,18 @@ impl TaskRuntime {
         if batch.changes.is_empty() || batch.changes.len() > MAX_TASK_BATCH_ACTIONS {
             return Err(invalid("task batch must contain 1..=32 changes"));
         }
+        let reserved_action = match batch.changes.as_slice() {
+            [TaskChange::Stop { task }]
+                if key == format!("stop:{workflow}:{task}")
+                    && record
+                        .tasks
+                        .get(task)
+                        .is_some_and(|task| !task.stop_requested && !task.state.is_settled()) =>
+            {
+                Some(key.to_owned())
+            }
+            _ => None,
+        };
         let mut aliases = BTreeMap::new();
         for change in &batch.changes {
             if let TaskChange::Add { alias, .. } = change {
@@ -282,29 +380,13 @@ impl TaskRuntime {
                         }
                     }
                 }
-                TaskChange::AdoptCorrection { task, correction } => {
+                TaskChange::AdoptCorrection {
+                    task,
+                    correction,
+                    redirects,
+                } => {
                     let correction = aliases.get(&correction).unwrap_or(&correction);
-                    let replacement = record
-                        .tasks
-                        .get(correction)
-                        .ok_or_else(|| invalid("corrective task does not exist"))?;
-                    if replacement.state != TaskState::Completed
-                        || replacement.definition.corrective_of.as_ref() != Some(&task)
-                    {
-                        return Err(invalid(
-                            "adoption requires a successful explicitly linked correction",
-                        ));
-                    }
-                    let original = record
-                        .tasks
-                        .get_mut(&task)
-                        .ok_or_else(|| invalid("corrected task does not exist"))?;
-                    if !matches!(original.state, TaskState::Failed | TaskState::Stopped) {
-                        return Err(invalid(
-                            "only settled failed/stopped work can adopt correction",
-                        ));
-                    }
-                    original.adopted_correction = Some(correction.clone());
+                    adopt_correction(&mut record, &task, correction, &redirects)?;
                 }
                 TaskChange::Continue => record.wait_question = None,
                 TaskChange::Wait { question } => {
@@ -317,8 +399,18 @@ impl TaskRuntime {
             }
         }
         validate_task_set(&definitions(&record.tasks), &record.limits).map_err(invalid)?;
+        for task in record
+            .tasks
+            .values()
+            .filter(|task| task.frozen.is_none() && !task.removed)
+        {
+            task.definition
+                .validate_supplied_inputs(&record.inputs)
+                .map_err(invalid)?;
+        }
         let expected = self.advance(&mut record)?;
         let acceptance = WorkflowCommandAcceptance {
+            reserved_action,
             actor: owner_actor.to_owned(),
             key: key.to_owned(),
             canonical_request,
@@ -335,14 +427,134 @@ impl TaskRuntime {
     ) -> Result<Option<WorkflowCommandReceipt>, RuntimeError> {
         if let Some(receipt) = self.store.workflow_receipt(actor, key)? {
             if receipt.acceptance.canonical_request != request {
-                return Err(invalid(
-                    "request idempotency key was reused with a different canonical request",
-                ));
+                return Err(
+                    milkdrift_persistence::PersistenceError::WorkflowIdempotencyConflict {
+                        actor: actor.to_owned(),
+                        key: key.to_owned(),
+                    }
+                    .into(),
+                );
             }
             return Ok(Some(receipt));
         }
         Ok(None)
     }
+}
+
+fn adopt_correction(
+    record: &mut WorkflowRecord,
+    original_id: &TaskId,
+    correction: &TaskId,
+    redirects: &[milkdrift_blueprint::TaskBindingRedirect],
+) -> Result<(), RuntimeError> {
+    if redirects.len() > 64 || original_id == correction {
+        return Err(invalid(
+            "correction redirects exceed their bound or form a cycle",
+        ));
+    }
+    let original = record
+        .tasks
+        .get(original_id)
+        .ok_or_else(|| invalid("corrected task does not exist"))?;
+    if !matches!(original.state, TaskState::Failed | TaskState::Stopped)
+        || original.adopted_correction.is_some()
+    {
+        return Err(invalid(
+            "adoption requires a settled failed/stopped task without an existing adoption",
+        ));
+    }
+    let replacement = record
+        .tasks
+        .get(correction)
+        .ok_or_else(|| invalid("corrective task does not exist"))?;
+    if replacement.state != TaskState::Completed
+        || replacement.definition.corrective_of.as_ref() != Some(original_id)
+        || replacement.adopted_correction.is_some()
+    {
+        return Err(invalid(
+            "adoption requires successful explicitly linked correction without an adoption chain",
+        ));
+    }
+    let outputs = replacement
+        .result
+        .as_ref()
+        .ok_or_else(|| invalid("successful correction lacks immutable result"))?
+        .outputs
+        .clone();
+    if let Some(reason) = super::output_contract_failure(&original.definition, &outputs) {
+        return Err(invalid(format!(
+            "correction does not satisfy original outputs: {reason}"
+        )));
+    }
+    let mut changed = BTreeSet::new();
+    let mut seen = BTreeSet::new();
+    for redirect in redirects {
+        if !seen.insert((redirect.consumer.clone(), redirect.input.clone())) {
+            return Err(invalid(
+                "correction redirects the same input more than once",
+            ));
+        }
+        let consumer = future_task(record, &redirect.consumer, redirect.expected_version)?;
+        let Some(TaskInputBinding::TaskOutput { task, output, .. }) =
+            consumer.definition.inputs.get_mut(&redirect.input)
+        else {
+            return Err(invalid(
+                "correction redirect must name an existing task-output binding",
+            ));
+        };
+        if task != original_id || !outputs.contains_key(output) {
+            return Err(invalid(
+                "correction redirect names another source or an absent replacement output",
+            ));
+        }
+        if changed.insert(redirect.consumer.clone()) {
+            if consumer.previous_definitions.len() >= 128 {
+                return Err(invalid("retained task definition capacity exhausted"));
+            }
+            consumer
+                .previous_definitions
+                .push(consumer.definition.clone());
+        }
+        if let Some(TaskInputBinding::TaskOutput { task, .. }) =
+            consumer.definition.inputs.get_mut(&redirect.input)
+        {
+            *task = correction.clone();
+        }
+        consumer.definition.dependencies.insert(correction.clone());
+    }
+    for id in changed {
+        let consumer = record
+            .tasks
+            .get_mut(&id)
+            .ok_or_else(|| invalid("redirected consumer disappeared"))?;
+        if !consumer.definition.inputs.values().any(|binding| matches!(binding, TaskInputBinding::TaskOutput { task, .. } | TaskInputBinding::SettledOutcome { task } if task == original_id)) {
+            consumer.definition.dependencies.remove(original_id);
+        }
+        consumer.version = consumer
+            .version
+            .checked_add(1)
+            .ok_or_else(|| invalid("task version exhausted"))?;
+        consumer.reason = None;
+    }
+    record
+        .tasks
+        .get_mut(original_id)
+        .ok_or_else(|| invalid("corrected task disappeared"))?
+        .adopted_correction = Some(correction.clone());
+    Ok(())
+}
+
+fn canonical_transport_value(bytes: &[u8]) -> Result<serde_json::Value, RuntimeError> {
+    if bytes.is_empty() || bytes.len() > 1_000_000 {
+        return Err(invalid(
+            "canonical public request exceeds its bounded receipt allowance",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_slice(bytes)?;
+    if !value.is_object() || serde_json::to_vec(&value)? != bytes {
+        return Err(invalid("public request must be a canonical JSON object"));
+    }
+    Ok(value)
 }
 
 fn receipt(outcome: WorkflowCommitOutcome) -> Result<WorkflowCommandReceipt, RuntimeError> {

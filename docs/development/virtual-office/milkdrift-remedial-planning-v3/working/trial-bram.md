@@ -88,15 +88,15 @@ No Cargo or external calls were made. Source observations are scoped to the HEAD
 
 1. **Local nested use.** `NodeKind::Subworkflow` carries a `PinnedSubworkflow`; its owner contains
    workflow/revision/interface facts. In
-   [the runtime child owner](../../../../../crates/runtime/src/engine/structured/subworkflow.rs),
+   [the runtime child owner](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/runtime/src/engine/structured/subworkflow.rs),
    child creation loads the exact revision and copies the parent's execution-authority basis,
    accepted agreement where present, and published-source binding where present. Stable child
    identity lets interrupted creation be recovered. This supports distinct local nesting without
    evidence that publication is a prerequisite. It does not prove a finished GUI authoring path.
 2. **Restricted service use.**
-   [Protocol commands](../../../../../crates/control-protocol/src/command.rs) separate method
+   [Protocol commands](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control-protocol/src/command.rs) separate method
    preparation, publication and administrative inspection. The
-   [public contract](../../../../reference/control-api.md#published-workflow-capabilities)
+   [public contract at the reviewed source](https://github.com/hartolit/milkdrift/blob/908e7893f5dadb84d12712573c8daaa946829e39/docs/reference/control-api.md#published-workflow-capabilities)
    describes callable discovery without graph or service identity, a configured service grant,
    and caller-owned terminal-output reads. This is more than a collapsed node: the boundary
    permits invocation without granting general internal inspection. The distinction is supported

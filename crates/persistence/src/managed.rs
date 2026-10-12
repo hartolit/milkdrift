@@ -1,6 +1,6 @@
 //! Durable installation inventory and transactional resource-use ownership.
 //!
-//! Local attempts remain journal-owned; incoming operations remain serving-owned. Their acceptance
+//! Local attempts remain task-owned; incoming operations remain serving-owned. Their acceptance
 //! transactions acquire these holds. Resource records retain physical identities and stop evidence
 //! even when execution detail is archived. A lease or terminal workflow state is never stop proof.
 

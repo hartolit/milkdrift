@@ -112,27 +112,6 @@ pub(super) fn validate_record(record: &PeerExecutionRecord) -> Result<(), Persis
         .request
         .validate()
         .map_err(|cause| corruption(format!("stored peer request is invalid: {cause}")))?;
-    if let Some(plan) = &record.published_invocation {
-        plan.validate()?;
-        if plan.source
-            != (milkdrift_persistence::published::PublishedInvocationSource::Serving {
-                caller: record.caller.clone(),
-                execution: record.execution.clone(),
-            })
-            || plan.invocation != record.managed_invocation()?
-            || plan.capability != *record.request.selection.capability()
-            || plan.generation != record.request.selection.descriptor_revision()
-            || plan.request.inputs() != record.request.request.inputs()
-            || record.phase.entry_evidence().is_none()
-                && !matches!(record.phase, PeerExecutionPhase::Terminal { .. })
-        {
-            return Err(corruption(
-                "published serving link differs from accepted operation",
-            ));
-        }
-    } else if matches!(record.phase, PeerExecutionPhase::AwaitingWorkflow { .. }) {
-        return Err(corruption("pending published operation has no association"));
-    }
     if record.schema_version != SERVING_EXECUTION_RECORD_SCHEMA_VERSION
         || record.relationship_generation == 0
         || record.acceptance_sequence == 0
@@ -184,22 +163,6 @@ pub(super) fn validate_record(record: &PeerExecutionRecord) -> Result<(), Persis
 pub(super) fn validate_tombstone(
     tombstone: &PeerExecutionTombstone,
 ) -> Result<(), PersistenceError> {
-    if let Some(plan) = &tombstone.published_invocation {
-        plan.validate()?;
-        if plan.source
-            != (milkdrift_persistence::published::PublishedInvocationSource::Serving {
-                caller: tombstone.caller.clone(),
-                execution: tombstone.execution.clone(),
-            })
-            || plan.invocation != tombstone.managed_invocation()?
-            || plan.capability != tombstone.capability
-            || plan.generation != tombstone.capability_generation
-        {
-            return Err(corruption(
-                "archived published operation lost exact linkage",
-            ));
-        }
-    }
     if tombstone.output_observations.len() != tombstone.accounting.outputs as usize
         || tombstone.output_observations.len() > 256
     {
@@ -227,6 +190,31 @@ pub(super) fn validate_tombstone(
         return Err(corruption(
             "archived serving caller contradicts accepted authority",
         ));
+    }
+    match &tombstone.authorization {
+        milkdrift_peer_protocol::ServingAuthorization::Peer(delegation) => {
+            if delegation.capability != tombstone.capability
+                || delegation.operation != tombstone.operation
+                || delegation.request != tombstone.request_id
+                || tombstone.accounting.artifact_bytes > delegation.limits.artifact_bytes
+                || tombstone.accounting.observations > delegation.limits.observations
+            {
+                return Err(corruption(
+                    "archived execution contradicts its exact accepted delegation",
+                ));
+            }
+        }
+        milkdrift_peer_protocol::ServingAuthorization::Client(client) => {
+            if client.grant != tombstone.authority.grant
+                || client.grant_revision != tombstone.authority.grant_revision
+                || client.grant_digest != tombstone.authority.grant_digest
+                || client.revocation_generation != tombstone.authority.revocation_generation
+            {
+                return Err(corruption(
+                    "archived client execution contradicts its accepted grant",
+                ));
+            }
+        }
     }
     if tombstone.schema_version != SERVING_EXECUTION_TOMBSTONE_SCHEMA_VERSION
         || tombstone.relationship_generation == 0

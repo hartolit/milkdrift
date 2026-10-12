@@ -15,11 +15,6 @@ const MAX_INPUT_NAME: usize = 128;
 pub const MAX_DURABLE_REFERENCE_BYTES: usize = 1_024;
 const MAX_ARTIFACT_MEDIA_TYPE_BYTES: usize = 255;
 const MAX_EVENT_TEXT: usize = 4_096;
-/// Reserved request-input name for an exact durable context manifest.
-pub const CONTEXT_MANIFEST_INPUT_NAME: &str = "milkdrift.context_manifest";
-/// Prefix for ordinal-bound materialized items from a frozen context manifest.
-pub const CONTEXT_ITEM_INPUT_PREFIX: &str = "milkdrift.context.";
-
 /// Reference to an immutable artifact rather than its unbounded bytes.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -304,8 +299,6 @@ pub struct InvocationRequest {
     operation: OperationId,
     provider_profile: Option<ProviderProfileRef>,
     idempotency_key: Option<IdempotencyKey>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    context_manifest: Option<ArtifactReference>,
     inputs: Vec<InputReference>,
     extensions: BTreeMap<ExtensionKey, BoundedJson>,
 }
@@ -318,8 +311,6 @@ struct InvocationRequestWire {
     operation: OperationId,
     provider_profile: Option<ProviderProfileRef>,
     idempotency_key: Option<IdempotencyKey>,
-    #[serde(default)]
-    context_manifest: Option<ArtifactReference>,
     inputs: Vec<InputReference>,
     extensions: BTreeMap<ExtensionKey, BoundedJson>,
 }
@@ -330,7 +321,7 @@ impl<'de> Deserialize<'de> for InvocationRequest {
         D: serde::Deserializer<'de>,
     {
         let wire = InvocationRequestWire::deserialize(deserializer)?;
-        let mut request = Self::new(
+        Self::new(
             wire.invocation,
             wire.capability,
             wire.operation,
@@ -339,18 +330,12 @@ impl<'de> Deserialize<'de> for InvocationRequest {
             wire.inputs,
             wire.extensions,
         )
-        .map_err(serde::de::Error::custom)?;
-        if let Some(reference) = wire.context_manifest {
-            request = request
-                .with_context_manifest(reference)
-                .map_err(serde::de::Error::custom)?;
-        }
-        Ok(request)
+        .map_err(serde::de::Error::custom)
     }
 }
 
 impl InvocationRequest {
-    /// Maximum named input references, including any later context inputs.
+    /// Maximum explicitly named input references.
     pub const MAX_INPUTS: usize = 256;
 
     /// Constructs a completely validated invocation request.
@@ -390,7 +375,6 @@ impl InvocationRequest {
             operation,
             provider_profile,
             idempotency_key,
-            context_manifest: None,
             inputs,
             extensions,
         })
@@ -424,72 +408,6 @@ impl InvocationRequest {
     #[must_use]
     pub const fn idempotency_key(&self) -> Option<&IdempotencyKey> {
         self.idempotency_key.as_ref()
-    }
-
-    /// Binds an exact, already persisted context manifest before external dispatch.
-    ///
-    /// # Errors
-    /// Rejects an invalid artifact reference, a missing exact size, or media type other
-    /// than `application/vnd.milkdrift.context-manifest.v2+json`.
-    pub fn with_context_manifest(
-        mut self,
-        reference: ArtifactReference,
-    ) -> Result<Self, ContractError> {
-        reference.validate()?;
-        if reference.media_type() != Some("application/vnd.milkdrift.context-manifest.v2+json")
-            || reference.size_bytes().is_none()
-        {
-            return Err(ContractError::InvalidContract(
-                "context manifest reference requires exact v2 media type and byte size".to_owned(),
-            ));
-        }
-        self.context_manifest = Some(reference);
-        Ok(self)
-    }
-
-    /// Binds the durable manifest and appends only its selected materialized inputs.
-    ///
-    /// Context inputs use a reserved name prefix so adapters can distinguish them
-    /// from workflow-declared task inputs without an implicit global file.
-    ///
-    /// # Errors
-    /// Rejects excess inputs, invalid references, duplicate/nonreserved input names,
-    /// or a manifest refused by [`Self::with_context_manifest`].
-    pub fn with_context_materialization(
-        mut self,
-        reference: ArtifactReference,
-        context_inputs: Vec<InputReference>,
-    ) -> Result<Self, ContractError> {
-        if self.inputs.len().saturating_add(context_inputs.len()) > Self::MAX_INPUTS {
-            return Err(ContractError::Bounds {
-                location: "invocation.inputs".to_owned(),
-                reason: format!("at most {} inputs are allowed", Self::MAX_INPUTS),
-            });
-        }
-        let mut names = self
-            .inputs
-            .iter()
-            .map(InputReference::name)
-            .collect::<std::collections::BTreeSet<_>>();
-        for input in &context_inputs {
-            input.validate()?;
-            if !input.name().starts_with(CONTEXT_ITEM_INPUT_PREFIX)
-                || input.name() == CONTEXT_MANIFEST_INPUT_NAME
-                || !names.insert(input.name())
-            {
-                return Err(ContractError::InvalidContract(
-                    "materialized context inputs require unique reserved names".to_owned(),
-                ));
-            }
-        }
-        self.inputs.extend(context_inputs);
-        self.with_context_manifest(reference)
-    }
-
-    /// Exact immutable context manifest bound to this request, when applicable.
-    #[must_use]
-    pub const fn context_manifest(&self) -> Option<&ArtifactReference> {
-        self.context_manifest.as_ref()
     }
 
     /// Bounded named input references in caller-defined order.

@@ -184,7 +184,7 @@ fn canonical_version_cells_match_all_owning_constants() -> TestResult {
     let mut expected = BTreeMap::new();
     for (family, sources) in [
         (
-            "Capability descriptor/events/cancellation / resolved snapshot",
+            "Capability descriptor / resolved snapshot",
             vec![
                 ("crates/capability/src/document.rs", "SCHEMA_VERSION_V1"),
                 (
@@ -197,31 +197,12 @@ fn canonical_version_cells_match_all_owning_constants() -> TestResult {
             "Invocation request",
             vec![(
                 "crates/capability/src/document.rs",
-                "INVOCATION_REQUEST_SCHEMA_VERSION_V2",
+                "INVOCATION_REQUEST_SCHEMA_VERSION_V3",
             )],
         ),
         (
-            "Blueprint revision and mutation",
-            vec![("crates/blueprint/src/lib.rs", "BLUEPRINT_SCHEMA_VERSION_V3")],
-        ),
-        (
-            "Context manifest",
-            vec![(
-                "crates/model/src/context.rs",
-                "CONTEXT_MANIFEST_SCHEMA_VERSION_V2",
-            )],
-        ),
-        (
-            "Model document / task / response / endpoint profile",
+            "Model document / endpoint profile",
             vec![
-                (
-                    "crates/model/src/document.rs",
-                    "MODEL_CONTRACT_SCHEMA_VERSION_V1",
-                ),
-                (
-                    "crates/model/src/document.rs",
-                    "MODEL_CONTRACT_SCHEMA_VERSION_V1",
-                ),
                 (
                     "crates/model/src/document.rs",
                     "MODEL_CONTRACT_SCHEMA_VERSION_V1",
@@ -233,89 +214,15 @@ fn canonical_version_cells_match_all_owning_constants() -> TestResult {
             ],
         ),
         (
-            "Explicit continuation companion",
-            vec![(
-                "crates/model/src/document.rs",
-                "MODEL_CONTRACT_SCHEMA_VERSION_V1",
-            )],
-        ),
-        (
-            "Proposal / workflow-control command / risk policy / controller policy",
-            vec![
-                (
-                    "crates/control/src/document.rs",
-                    "PROPOSAL_SCHEMA_VERSION_V1",
-                ),
-                (
-                    "crates/control/src/command.rs",
-                    "CONTROL_COMMAND_SCHEMA_VERSION_V1",
-                ),
-                (
-                    "crates/control/src/policy.rs",
-                    "CONTROL_RISK_POLICY_VERSION_V1",
-                ),
-                (
-                    "crates/control/src/controller/policy.rs",
-                    "CONTROLLER_POLICY_SCHEMA_VERSION_V2",
-                ),
-            ],
-        ),
-        (
-            "Prompt-sequence import",
-            vec![(
-                "crates/prompt-sequence/src/document.rs",
-                "PROMPT_SEQUENCE_SCHEMA_VERSION_V3",
-            )],
-        ),
-        (
-            "Run command / run event",
-            vec![
-                (
-                    "crates/runtime/src/command.rs",
-                    "RUN_COMMAND_SCHEMA_VERSION_V1",
-                ),
-                (
-                    "crates/persistence/src/document.rs",
-                    "RUN_EVENT_SCHEMA_VERSION_V5",
-                ),
-            ],
-        ),
-        (
             "Authority grant / authorization decision",
             vec![
                 (
                     "crates/authority/src/document.rs",
-                    "AUTHORITY_GRANT_SCHEMA_VERSION_V4",
+                    "AUTHORITY_GRANT_SCHEMA_VERSION_V5",
                 ),
                 (
                     "crates/authority/src/document.rs",
-                    "AUTHORITY_DECISION_SCHEMA_VERSION_V2",
-                ),
-            ],
-        ),
-        (
-            "Authorized-command wrapper / command result",
-            vec![
-                (
-                    "crates/runtime/src/command.rs",
-                    "AUTHORIZED_RUN_COMMAND_SCHEMA_VERSION_V1",
-                ),
-                (
-                    "crates/persistence/src/journal.rs",
-                    "COMMAND_RESULT_SCHEMA_VERSION_V2",
-                ),
-            ],
-        ),
-        (
-            "Projection snapshot envelope / runtime payload",
-            vec![
-                (
-                    "crates/persistence/src/snapshot.rs",
-                    "SNAPSHOT_ENVELOPE_SCHEMA_VERSION_V2",
-                ),
-                (
-                    "crates/runtime/src/query.rs",
-                    "RUN_PROJECTION_SNAPSHOT_SCHEMA_V6",
+                    "AUTHORITY_DECISION_SCHEMA_VERSION_V3",
                 ),
             ],
         ),
@@ -353,19 +260,6 @@ fn canonical_version_cells_match_all_owning_constants() -> TestResult {
             ],
         ),
         (
-            "Application command receipt / layout record",
-            vec![
-                (
-                    "crates/persistence/src/application.rs",
-                    "APPLICATION_COMMAND_RECEIPT_SCHEMA_VERSION_V1",
-                ),
-                (
-                    "crates/persistence/src/application.rs",
-                    "APPLICATION_LAYOUT_RECORD_SCHEMA_VERSION_V1",
-                ),
-            ],
-        ),
-        (
             "Local-process profile / host materialization",
             vec![
                 (
@@ -383,14 +277,12 @@ fn canonical_version_cells_match_all_owning_constants() -> TestResult {
             vec![("apps/daemon/src/config.rs", "DAEMON_CONFIG_SCHEMA_VERSION")],
         ),
         (
-            "Layout document / CLI JSON output",
-            vec![
-                (
-                    "crates/control-protocol/src/lib.rs",
-                    "LAYOUT_SCHEMA_VERSION",
-                ),
-                ("apps/cli/src/output.rs", "JSON_OUTPUT_SCHEMA_VERSION"),
-            ],
+            "CLI JSON output",
+            vec![("apps/cli/src/output.rs", "JSON_OUTPUT_SCHEMA_VERSION")],
+        ),
+        (
+            "Managed resource request / inventory",
+            vec![("crates/capability/src/managed.rs", "MANAGED_SCHEMA_VERSION")],
         ),
     ] {
         let versions = sources
@@ -399,18 +291,6 @@ fn canonical_version_cells_match_all_owning_constants() -> TestResult {
             .collect::<TestResult<Vec<_>>>()?;
         expected.insert(family.to_owned(), versions.join(" / "));
     }
-    expected.insert(
-        "Managed resource request / inventory".to_owned(),
-        numeric_const("crates/capability/src/managed.rs", "MANAGED_SCHEMA_VERSION")?.to_string(),
-    );
-    let publication = numeric_const(
-        "crates/persistence/src/published.rs",
-        "PUBLISHED_METHOD_SCHEMA_VERSION",
-    )?;
-    expected.insert(
-        "Published method / invocation association".to_owned(),
-        format!("{publication} / {publication}"),
-    );
     let control = format!(
         "{}.{}",
         numeric_const("crates/control-protocol/src/lib.rs", "PROTOCOL_MAJOR")?,
@@ -435,20 +315,7 @@ fn canonical_version_cells_match_all_owning_constants() -> TestResult {
         "Peer protocol and catalog messages".to_owned(),
         peer.clone(),
     );
-    let learning = numeric_const("crates/control/src/learning.rs", "LEARNING_SCHEMA_VERSION")?;
-    expected.insert(
-        "Learning declaration / comparison".to_owned(),
-        format!("{learning} / {learning}"),
-    );
-    let acceptance = numeric_const(
-        "crates/control/src/acceptance.rs",
-        "RESULT_ACCEPTANCE_SCHEMA_VERSION",
-    )?;
-    expected.insert(
-        "Result acceptance contract / decision".to_owned(),
-        format!("{acceptance} / {acceptance}"),
-    );
-    let status = read(root()?.join("docs/product/status.md"))?;
+    let status = read(root()?.join("docs/reference/versions.md"))?;
     let mut documented = BTreeMap::new();
     for line in status.lines().filter(|line| line.starts_with("| ")) {
         let cells: Vec<_> = line.split('|').map(str::trim).collect();
@@ -502,9 +369,9 @@ fn every_maintained_example_has_a_production_reader() -> TestResult {
             | "operator/process.json"
             | "operator/model.json"
             | "operator/peer-placement.json" => {
-                let (document, _) =
-                    milkdrift_blueprint::BlueprintRevisionDocument::from_json(&bytes)?;
-                assert_eq!(document.to_canonical_json()?, bytes, "{relative}");
+                let request: milkdrift_control_protocol::tasks::CreateWorkflowRequest =
+                    milkdrift_control_protocol::decode_json(&bytes)?;
+                assert!(!request.tasks.is_empty(), "{relative}");
             }
             "operator/daemon.toml" | "operator/execution-only.toml" => {
                 // Compile without starting a host or resolving secrets. Paths belong to a fresh directory.
@@ -557,31 +424,15 @@ fn every_maintained_example_has_a_production_reader() -> TestResult {
                     serde_json::from_slice(&bytes)?;
                 assert_eq!(inputs.len(), 1);
             }
-            "headless-dogfood-sequence.md" => {
-                milkdrift_prompt_sequence::PromptSequenceDocument::from_bytes(&bytes)?;
-            }
             "managed-linux/slotbook.json" => {
                 milkdrift_managed_linux::LinuxRecipe::from_json(&bytes)?;
             }
-            "managed-linux/Containerfile"
-            | "managed-linux/Containerfile.containerignore"
-            | "adaptive-slotbook/Containerfile"
-            | "adaptive-slotbook/Containerfile.development" => {
+            "managed-linux/Containerfile" | "managed-linux/Containerfile.containerignore" => {
                 // Podman owns these formats. The documented real image build reads both together;
                 // a local string assertion cannot qualify its build or ignore-file semantics.
                 std::str::from_utf8(&bytes)?;
             }
-            "adaptive-slotbook/Cargo.toml" => {
-                toml::from_str::<toml::Value>(std::str::from_utf8(&bytes)?)?;
-            }
-            path if path.starts_with("adaptive-slotbook/src/") && path.ends_with(".rs") => {
-                // The workspace compiler, tests and lint gate own the application source.
-                std::str::from_utf8(&bytes)?;
-            }
-            "adaptive-slotbook/README.md"
-            | "operator/README.md"
-            | "external-evidence/README.md"
-            | "managed-linux/README.md" => {}
+            "operator/README.md" | "external-evidence/README.md" | "managed-linux/README.md" => {}
             _ => {
                 return Err(
                     format!("maintained example has no production reader: {relative}").into(),
@@ -594,58 +445,27 @@ fn every_maintained_example_has_a_production_reader() -> TestResult {
 
 #[test]
 fn operator_task_requirements_fit_the_documented_grants() -> TestResult {
-    use milkdrift_authority::{CapabilityAuthorityScope, CapabilityAuthorityScopeBuilder};
-    use milkdrift_blueprint::{BlueprintRevisionDocument, NodeKind};
-    use milkdrift_capability::{CapabilityId, OperationId, SideEffectClass, TrustZone};
-
+    use milkdrift_authority::CapabilityAuthorityScope;
+    use milkdrift_capability::{CapabilityId, CapabilityRequirement, OperationId};
     let examples = root()?.join("examples/operator");
     let configuration: milkdrift_daemon::DaemonConfig =
         toml::from_str(&read(examples.join("daemon.toml"))?)?;
-    let process_grant = &configuration
+    let grant = &configuration
         .actors
         .first()
         .ok_or("operator actor absent")?
         .authority
         .resources
         .capability;
-    // These are the explicit model overrides in the operator guide, independent of the blueprint.
-    let model_grant = CapabilityAuthorityScopeBuilder::new(SideEffectClass::Unknown)
-        .only_capabilities(BTreeSet::from([
-            CapabilityId::new("operator-model")?,
-            CapabilityId::new("milkdrift-workflow-control")?,
-        ]))?
-        .only_operations(BTreeSet::from([
-            OperationId::new("model.generate")?,
-            OperationId::new("workflow.accept_result")?,
-        ]))?
-        .only_trust_zones(BTreeSet::from([
-            TrustZone::new("operator-configured-local-model")?,
-            TrustZone::new("milkdrift-control")?,
-        ]))?
-        .build();
-    for (name, grant) in [("process", process_grant), ("model", &model_grant)] {
-        let (_, revision) = BlueprintRevisionDocument::from_json(&fs::read(
-            examples.join(format!("{name}.json")),
-        )?)?;
-        let mut tasks = 0;
-        for node in revision.semantic().nodes().values() {
-            if let NodeKind::Task { config } = node.kind() {
-                let requested =
-                    CapabilityAuthorityScope::requirement_envelope(config.requirement())?;
-                assert!(
-                    requested.is_subset_of(grant),
-                    "{name} exceeds its operator grant"
-                );
-                assert!(config.requirement().exact_capability().is_some());
-                assert!(!config.requirement().trust_zones().is_empty());
-                tasks += 1;
-            }
-        }
-        assert_eq!(
-            tasks,
-            if name == "model" { 2 } else { 1 },
-            "operator example must retain its external task and declared acceptance task"
-        );
+    let request: milkdrift_control_protocol::tasks::CreateWorkflowRequest =
+        milkdrift_control_protocol::decode_json(&fs::read(examples.join("process.json"))?)?;
+    for task in request.tasks {
+        let requirement =
+            CapabilityRequirement::new(OperationId::new(task.definition.capability.operation)?)
+                .exact(CapabilityId::new(task.definition.capability.id)?)
+                .maximum_side_effect(milkdrift_capability::SideEffectClass::ReadOnly)
+                .trust_zone(milkdrift_capability::TrustZone::new("local-process")?);
+        assert!(CapabilityAuthorityScope::requirement_envelope(&requirement)?.is_subset_of(grant));
     }
     Ok(())
 }
@@ -653,8 +473,7 @@ fn operator_task_requirements_fit_the_documented_grants() -> TestResult {
 #[test]
 fn control_reference_json_uses_current_wire_readers_and_versions() -> TestResult {
     use milkdrift_control_protocol::{
-        CommandRequest, ErrorEnvelope, ProtocolVersion, ResponseEnvelope, VersionRequest,
-        decode_json,
+        ErrorEnvelope, ProtocolVersion, ResponseEnvelope, VersionRequest, decode_json,
     };
     let document = read(root()?.join("docs/reference/control-api.md"))?;
     let mut checked = 0;
@@ -671,15 +490,19 @@ fn control_reference_json_uses_current_wire_readers_and_versions() -> TestResult
                 serde_json::from_value::<ProtocolVersion>(protocol.clone())?,
                 ProtocolVersion::CURRENT
             );
-            if value.get("command").is_some() {
-                decode_json::<CommandRequest>(bytes)?;
-            } else if value.get("code").is_some() {
+            if value.get("code").is_some() {
                 decode_json::<ErrorEnvelope>(bytes)?;
             } else if value.get("value").is_some() {
                 decode_json::<ResponseEnvelope<serde_json::Value>>(bytes)?;
             } else {
                 decode_json::<VersionRequest>(bytes)?;
             }
+        } else if value.get("tasks").is_some() {
+            decode_json::<milkdrift_control_protocol::tasks::CreateWorkflowRequest>(bytes)?;
+        } else if value.get("changes").is_some() {
+            decode_json::<milkdrift_control_protocol::tasks::ChangeWorkflowRequest>(bytes)?;
+        } else if value.get("text").is_some() {
+            decode_json::<milkdrift_control_protocol::tasks::TaskUploadRequest>(bytes)?;
         } else if value.get("installation").is_some() {
             let request: milkdrift_capability::managed::ManagedRequest = decode_json(bytes)?;
             request.validate()?;
@@ -846,7 +669,7 @@ fn peer_protocol_version_is_exact_from_config_through_transport() -> TestResult 
     );
 
     let codec = read(root()?.join("crates/peer-protocol/src/document.rs"))?;
-    assert!(codec.contains("protocol != ProtocolVersion::V1_5"));
+    assert!(codec.contains("protocol != ProtocolVersion::V1_6"));
     let client = read(root()?.join("adapters/peer-http/src/client.rs"))?;
     assert!(
         client.contains("peer response envelope does not match the negotiated protocol version")

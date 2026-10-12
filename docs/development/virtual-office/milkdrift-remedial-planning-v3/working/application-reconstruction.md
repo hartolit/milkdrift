@@ -17,13 +17,13 @@ not approve implementation or claim every application path was exercised.
 | `crates/contracts` | Shared unambiguous bounded JSON/canonicalization and constructor-based deserialization; many independent schema owners consume it. | Package mostly inherited. | Read public implementation/embedded examples and selected checks. It owns bytes/structure, not workflow semantics. No new parser soundness claim. |
 | `examples/adaptive-slotbook` | Concrete workload and independent result oracle, consumed by evidence drivers. | Real controlled evidence cited. | Joined with Elin's driver trace: application result/fixture remains valuable, workload-specific driver orchestration is not a general product planner. Not a production owner to retain merely because it exists. |
 
-Source anchors are [authoring](../../../../../apps/daemon/src/host/commands/authoring.rs),
-[private graph compiler](../../../../../apps/daemon/src/host/commands/authoring/graph.rs),
-[repair](../../../../../apps/daemon/src/host/commands/authoring/repair.rs),
-[wire authoring](../../../../../crates/control-protocol/src/authoring.rs),
-[prompt-sequence](../../../../../crates/prompt-sequence/src/lib.rs),
+Source anchors are [authoring](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/src/host/commands/authoring.rs),
+[private graph compiler](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/src/host/commands/authoring/graph.rs),
+[repair](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/src/host/commands/authoring/repair.rs),
+[wire authoring](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control-protocol/src/authoring.rs),
+[prompt-sequence](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/prompt-sequence/src/lib.rs),
 [CLI](../../../../../apps/cli/src/command.rs),
-[saved requests](../../../../../crates/control-client/src/saved_run.rs), and
+[saved requests](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/control-client/src/saved_run.rs), and
 [contracts](../../../../../crates/contracts/src/lib.rs). The package audit is joined in the
 [system dossier](system-dossier.md); depth in one command is not package-wide approval.
 
@@ -108,15 +108,15 @@ nor a model response can create truthful current descriptor or grant facts.
 
 ## Receipts: actual duplication versus distinct promises
 
-The daemon [receipt owner](../../../../../apps/daemon/src/host/receipts.rs) binds original actor,
+The daemon [receipt owner](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/src/host/receipts.rs) binds original actor,
 exact grant and canonical external envelope, including guards, to a complete response/refusal.
 Layout and receipt commit together. Definitions are immutable and preflight bounded result capacity
 before retention. Runtime/control commands may commit before the application receipt; the code
 explicitly returns uncertain if it cannot retain that result. This is not one global transaction.
 
-For StartRun, [runs.rs](../../../../../apps/daemon/src/host/commands/runs.rs) creates, then starts.
+For StartRun, [runs.rs](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/src/host/commands/runs.rs) creates, then starts.
 `internal_control_id` derives stable actor/request/phase identities; control derives stable runtime
-phase identities. Runtime [command receipts](../../../../../crates/persistence/src/journal/receipt.rs)
+phase identities. Runtime [command receipts](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/crates/persistence/src/journal/receipt.rs)
 separate audit document from semantic retry intent, excluding delivery time and planning sequence
 where the runtime owns replanning. The external receipt binds the complete external request. Thus
 the two levels make different promises even when a particular response is only a run sequence.
@@ -135,7 +135,7 @@ before effects, and recover a committed proposal after reporter loss. Merely cho
 IDs while reconstructing different command meaning is insufficient. Faris's cross-review states the
 required fault boundaries; the chosen session design must use them explicitly.
 
-Existing [durability tests](../../../../../apps/daemon/tests/control_plane/durability.rs) establish
+Existing [durability tests](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/tests/control_plane/durability.rs) establish
 retained accepted/rejected replay and restart for their fixtures. They do not independently simulate
 every crash between underlying acceptance and external receipt. Required future assistance tests
 fault each such boundary and inspect one accepted child/proposal, rather than just replaying a
@@ -144,7 +144,7 @@ request whose final receipt was already committed.
 ## Read contracts and avoiding a false finding
 
 `ListMethods`/`InspectMethod` in
-[publications.rs](../../../../../apps/daemon/src/host/commands/publications.rs) are administrator
+[publications.rs](https://github.com/hartolit/milkdrift/blob/9134430650ee82bafb4f9a1271f7e553df7fb40c/apps/daemon/src/host/commands/publications.rs) are administrator
 commands with retained snapshots and `AdministerCapabilities`/`method.inspect` authority. List first
 requires unqualified administration, then checks each record. These are not the invoke-only service
 catalog. The prior R-A05 suggestion to universally filter this command conflated two contracts.

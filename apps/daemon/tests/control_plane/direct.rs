@@ -9,7 +9,7 @@ use milkdrift_peer_protocol::{
     DirectInvocationRequest, InvocationAcceptance, InvocationLookup, InvocationOrigin,
     PeerRequestId,
 };
-use milkdrift_persistence::{RunQueryStore, RunSummaryFilter, RunSummaryPageQuery};
+
 use serde_json::json;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -250,16 +250,7 @@ async fn direct_process_upload_replay_and_restart_have_no_workflow_records() -> 
     daemon.stop().await?;
     {
         let store = RedbStore::open(directory.path().join("data"))?;
-        assert!(
-            store
-                .run_summaries(&RunSummaryPageQuery {
-                    filter: RunSummaryFilter::default(),
-                    cursor: None,
-                    limit: PageSize::new(1)?
-                })?
-                .runs
-                .is_empty()
-        );
+        assert!(store.workflows(None, 1)?.items.is_empty());
         let metadata = store
             .metadata(&ArtifactId::new(metadata.artifact_id)?)?
             .ok_or("input metadata missing")?;

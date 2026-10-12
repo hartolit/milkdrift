@@ -3,7 +3,7 @@ use milkdrift_evidence::{
     EvidenceResult,
     application::{ensure, run_command},
 };
-use serde_json::{Value, json};
+use serde_json::json;
 use std::io::Write as _;
 use std::{fs, io::Read, path::Path, process::Command, time::Duration};
 
@@ -74,7 +74,7 @@ pub(super) fn run(arguments: Vec<String>) -> EvidenceResult {
             fs::write(
                 root.join("review.json"),
                 serde_json::to_vec(
-                    &json!({"schema_version":1,"independent_process":true,"context_manifest_observed":root.join("context/manifest.json").exists(),"finding":"controlled verifier gate requires remediation workflow"}),
+                    &json!({"schema_version":1,"independent_process":true,"selected_verification_observed":root.join("inputs/verification.json").exists(),"finding":"controlled verifier gate requires remediation workflow"}),
                 )?,
             )?;
             fs::write(
@@ -87,12 +87,8 @@ pub(super) fn run(arguments: Vec<String>) -> EvidenceResult {
         }
         Some("evidence") => {
             let root = Path::new(arguments.get(1).ok_or("evidence root absent")?);
-            let payload: Value =
-                serde_json::from_slice(&fs::read(root.join("inputs/payload.json"))?)?;
-            fs::write(
-                root.join("evidence.txt"),
-                payload.as_str().ok_or("evidence payload must be text")?,
-            )?;
+            let payload = fs::read_to_string(root.join("inputs/payload.json"))?;
+            fs::write(root.join("evidence.txt"), payload)?;
             Ok(())
         }
         _ => Err("unknown native fixture operation".into()),
@@ -150,6 +146,12 @@ fn verify(arguments: &[String]) -> EvidenceResult {
             &json!({"checkpoint":before,"checked_checkpoint":after,"checks":{"rust.tests":mode=="good" && successful,"git.diff":diff.status.success()},"coding":coding}),
         )?,
     )?;
+    if mode == "good" && diff.status.success() && successful {
+        fs::write(
+            root.join("verified.txt"),
+            "Independent Rust tests and Git diff verified",
+        )?;
+    }
     ensure(
         diff.status.success() && successful,
         "independent Rust verification failed",

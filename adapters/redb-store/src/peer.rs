@@ -330,11 +330,6 @@ impl PeerExecutionStore for RedbStore {
 
         // Retirement and acceptance serialize in this transaction. An old catalog cannot add
         // a new obligation after the publication owner has begun checking for idle retirement.
-        if crate::published::retired_in_transaction(&write, &admission.request.selection)? {
-            return Ok(PeerAdmissionOutcome::Rejected(
-                PeerAdmissionRejection::CatalogUnavailable,
-            ));
-        }
 
         let mut global = global_accounting(&write)?;
         if !global.admission_open {
@@ -435,7 +430,6 @@ impl PeerExecutionStore for RedbStore {
             .checked_add(1)
             .ok_or_else(|| corruption("per-peer accounting revision overflowed"))?;
         let record = PeerExecutionRecord {
-            published_invocation: None,
             schema_version: SERVING_EXECUTION_RECORD_SCHEMA_VERSION,
             caller: admission.caller.clone(),
             relationship_generation: admission.relationship_generation,
@@ -633,9 +627,7 @@ impl PeerExecutionStore for RedbStore {
         }
         let is_terminal = observation.event.kind().terminal().is_some();
         let phase_allows = match &record.phase {
-            PeerExecutionPhase::Entered { .. }
-            | PeerExecutionPhase::AwaitingWorkflow { .. }
-            | PeerExecutionPhase::Uncertain { .. } => true,
+            PeerExecutionPhase::Entered { .. } | PeerExecutionPhase::Uncertain { .. } => true,
             PeerExecutionPhase::CancellationRequested { evidence, .. } => {
                 evidence.is_some() || is_terminal
             }
@@ -832,12 +824,6 @@ impl PeerExecutionStore for RedbStore {
                 Some(PeerExecutionPhase::CancellationRequested {
                     claim: None,
                     evidence: None,
-                })
-            }
-            PeerExecutionPhase::AwaitingWorkflow { evidence } => {
-                Some(PeerExecutionPhase::CancellationRequested {
-                    claim: None,
-                    evidence: Some(evidence.clone()),
                 })
             }
             PeerExecutionPhase::Entered { claim, evidence } => {
