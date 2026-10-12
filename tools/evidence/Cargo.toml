@@ -12,6 +12,7 @@ name = "core_paths"
 harness = false
 
 [dependencies]
+getrandom.workspace = true
 blake3.workspace = true
 clap.workspace = true
 futures-util.workspace = true

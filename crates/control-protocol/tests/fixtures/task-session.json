@@ -1,0 +1,1 @@
+{"protocol":{"major":3,"minor":0},"request_id":"fixture-session","value":{"daemon_id":"fixture-daemon-a","actor_id":"fixture-actor","limits":{"tasks":256,"concurrent_tasks":4,"model_batches":32,"rejected_responses":3,"corrective_failures":3,"active_execution_ms":3600000,"tool_calls_per_task":16},"capabilities":[{"id":"fixture-report","operation":"process.run"}]}}

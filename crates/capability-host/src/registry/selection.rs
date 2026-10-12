@@ -18,6 +18,21 @@ use super::{
 use crate::CapabilityAdapter;
 
 impl CapabilityHost {
+    /// Installs the daemon's durable native-directory claim owner before task admission.
+    /// A configured owner cannot be replaced while accepted or uncertain work may retain claims.
+    ///
+    /// # Errors
+    /// Refuses a second installation; create one host per owning daemon store.
+    pub fn install_native_path_store(
+        &self,
+        store: Arc<dyn milkdrift_persistence::NativePathClaimStore>,
+    ) -> Result<(), HostError> {
+        self.core
+            .native_paths
+            .set(crate::native_paths::NativePathClaims::new(store))
+            .map_err(|_| HostError::InvalidConfig)
+    }
+
     /// Constructs an empty host with admission open.
     ///
     /// # Errors
@@ -26,6 +41,7 @@ impl CapabilityHost {
         let config = config.validate()?;
         Ok(Self {
             core: Arc::new(HostCore {
+                native_paths: std::sync::OnceLock::new(),
                 published: Mutex::new(None),
                 published_serving: Mutex::new(None),
                 config,

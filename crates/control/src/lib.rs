@@ -22,6 +22,8 @@ mod policy;
 mod preset;
 mod read;
 mod service;
+mod tasks;
+pub use tasks::TaskControlService;
 
 pub use acceptance::{
     ACCEPTED_RESULT_OUTPUT, AcceptanceModelDiagnostics, AcceptanceReason, CodingResult,

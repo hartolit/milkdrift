@@ -1,4 +1,5 @@
 //! Compile operator configuration once, then give each host component only its owned plan.
+mod browser;
 mod compile;
 mod redaction;
 mod wire;

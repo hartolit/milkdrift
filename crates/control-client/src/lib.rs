@@ -39,6 +39,7 @@ use url::Url;
 mod invocation;
 mod saved_run;
 mod sse;
+mod tasks;
 pub use saved_run::SavedRunRequest;
 
 /// Default maximum artifact range materialized by one client call.

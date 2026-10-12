@@ -5,6 +5,20 @@ This package defines what must be saved together so a runtime decision can be re
 implement the synchronous traits here. Change this package when callers and storage need a
 different durable contract, not to add database mechanics.
 
+Ordinary daemon tasks use [`WorkflowStore`](src/task.rs). Runtime supplies one bounded document
+containing definitions, frozen starts and retained results. The store atomically saves that document,
+discovery fields, its compare-and-swap generation, capacity reservation and the exact actor-scoped
+request receipt. The runtime remains responsible for legal state changes; storage does not schedule
+tasks or interpret model output. Discovery does not require a caller to retain a workflow ID: the
+public owner filters the bounded storage pages against current grants.
+
+Task receipt lookup requires the authenticated actor and original request key. Identical canonical
+bytes return the saved result before stale-generation or capacity checks; different bytes conflict.
+Every accepted task keeps space for its remaining settlement and mandatory controls. Exhaustion
+refuses admission while those reservations remain available. Native directory claims use the
+separate [`NativePathClaimStore`](src/native_paths.rs): only the capability host captures physical
+identities, and claims survive loss of the host until runtime settlement or authorized reconciliation.
+
 ## Commit a command and recover its reply
 
 Accepting a new run must save its creation event, root scope, initial values, usage, discovery

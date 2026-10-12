@@ -74,6 +74,7 @@ impl DaemonConfig {
                 "plaintext HTTP bind must be loopback".to_owned(),
             ));
         }
+        super::browser::validate_origins(&self.serving.browser_origins)?;
         if self.actors.is_empty() || self.actors.len() > super::MAX_ACTOR_BINDINGS {
             return Err(ConfigError::Invalid(
                 "authentication requires 1..=256 actor bindings".to_owned(),

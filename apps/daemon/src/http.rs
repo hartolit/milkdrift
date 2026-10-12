@@ -1,4 +1,6 @@
+mod browser;
 mod response;
+mod tasks;
 use response::{
     authenticate, bearer_header, not_found_response, owner_error, protocol_error, success,
 };
@@ -97,8 +99,9 @@ struct AppState {
     serving_requests: Arc<tokio::sync::Semaphore>,
 }
 
-/// Builds the bounded control router. CORS is intentionally absent.
+/// Builds the bounded control router with exact configured browser origins.
 pub(crate) fn router(host: DaemonHost) -> Result<Router, HostError> {
+    let browser_origins = host.browser_origins();
     let mut stream_incarnation = [0; 32];
     getrandom::fill(&mut stream_incarnation)
         .map_err(|error| HostError::Startup(format!("stream incarnation unavailable: {error}")))?;
@@ -111,23 +114,20 @@ pub(crate) fn router(host: DaemonHost) -> Result<Router, HostError> {
         serving_requests: Arc::new(tokio::sync::Semaphore::new(256)),
     };
     let router = authorized_routes! { Router::new();
+        "/v1/session" => get(tasks::session), RouteAuthorityMapping::QueryDerived, RouteResourceMapping::Daemon;
+        "/v1/workflows" => get(tasks::list).post(tasks::create), RouteAuthorityMapping::CommandDerived, RouteResourceMapping::Run;
+        "/v1/workflows/stream" => get(tasks::stream), RouteAuthorityMapping::StreamDerived, RouteResourceMapping::Run;
+        "/v1/workflows/{workflow}" => get(tasks::workflow), RouteAuthorityMapping::QueryDerived, RouteResourceMapping::Run;
+        "/v1/workflows/{workflow}/changes" => post(tasks::change), RouteAuthorityMapping::CommandDerived, RouteResourceMapping::Run;
+        "/v1/workflows/{workflow}/tasks/{task}" => get(tasks::task), RouteAuthorityMapping::QueryDerived, RouteResourceMapping::Run;
+        "/v1/workflows/{workflow}/tasks/{task}/result" => get(tasks::result), RouteAuthorityMapping::QueryDerived, RouteResourceMapping::Run;
+        "/v1/workflows/{workflow}/tasks/{task}/result/content" => get(tasks::result_content), RouteAuthorityMapping::QueryDerived, RouteResourceMapping::Run;
+        "/v1/workflow-requests/{request}" => get(tasks::receipt), RouteAuthorityMapping::QueryDerived, RouteResourceMapping::Run;
+        "/v1/task-inputs" => post(tasks::upload), RouteAuthorityMapping::CommandDerived, RouteResourceMapping::Artifact;
         "/v1/version" => post(version), RouteAuthorityMapping::Exact(AuthorityOperation::NegotiateControlProtocol), RouteResourceMapping::Daemon;
         "/v1/health" => get(health), RouteAuthorityMapping::Exact(AuthorityOperation::InspectDaemonHealth), RouteResourceMapping::Daemon;
         "/v1/readiness" => get(readiness), RouteAuthorityMapping::Exact(AuthorityOperation::ReadReadiness), RouteResourceMapping::Daemon;
-        "/v1/commands" => post(command), RouteAuthorityMapping::CommandDerived, RouteResourceMapping::Run;
         "/v1/resources" => post(resources::manage), RouteAuthorityMapping::CommandDerived, RouteResourceMapping::Capability;
-        "/v1/revisions" => get(revisions), RouteAuthorityMapping::Exact(AuthorityOperation::InspectRevision), RouteResourceMapping::WorkflowRevision;
-        "/v1/revisions/{revision}" => get(revision), RouteAuthorityMapping::Exact(AuthorityOperation::InspectRevision), RouteResourceMapping::WorkflowRevision;
-        "/v1/revisions/{from}/diff/{to}" => get(revision_diff), RouteAuthorityMapping::Exact(AuthorityOperation::InspectRevision), RouteResourceMapping::WorkflowRevision;
-        "/v1/runs" => get(runs), RouteAuthorityMapping::Exact(AuthorityOperation::InspectRun), RouteResourceMapping::Run;
-        "/v1/runs/{run}" => get(run), RouteAuthorityMapping::Exact(AuthorityOperation::InspectRun), RouteResourceMapping::Run;
-        "/v1/runs/{run}/nodes/{execution}" => get(node), RouteAuthorityMapping::Exact(AuthorityOperation::InspectNodeExecution), RouteResourceMapping::Run;
-        "/v1/runs/{run}/attempts/{attempt}" => get(attempt), RouteAuthorityMapping::Exact(AuthorityOperation::InspectAttempt), RouteResourceMapping::Run;
-        "/v1/runs/{run}/result" => get(reads::run_result), RouteAuthorityMapping::Exact(AuthorityOperation::InspectRun), RouteResourceMapping::Run;
-        "/v1/runs/{run}/timeline" => get(timeline), RouteAuthorityMapping::Exact(AuthorityOperation::InspectTimeline), RouteResourceMapping::Run;
-        "/v1/runs/{run}/stream" => get(run_stream), RouteAuthorityMapping::StreamDerived, RouteResourceMapping::Run;
-        "/v1/runs/{run}/proposals" => get(proposals), RouteAuthorityMapping::Exact(AuthorityOperation::InspectProposal), RouteResourceMapping::Run;
-        "/v1/runs/{run}/proposals/{proposal}" => get(proposal), RouteAuthorityMapping::Exact(AuthorityOperation::InspectProposal), RouteResourceMapping::Run;
         "/v1/capabilities" => get(capabilities), RouteAuthorityMapping::QueryDerived, RouteResourceMapping::Capability;
         "/v1/execution/catalog" => get(invocations::catalog), RouteAuthorityMapping::QueryDerived, RouteResourceMapping::Capability;
         "/v1/invocations/prepare" => post(invocations::prepare), RouteAuthorityMapping::QueryDerived, RouteResourceMapping::Capability;
@@ -155,6 +155,7 @@ pub(crate) fn router(host: DaemonHost) -> Result<Router, HostError> {
         .layer(DefaultBodyLimit::max(
             milkdrift_control_protocol::MAX_DOCUMENT_BYTES,
         ))
+        .layer(axum::middleware::from_fn_with_state(browser_origins, browser::allow_origin))
         .layer(
             ServiceBuilder::new()
                 .layer(CatchPanicLayer::new())

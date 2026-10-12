@@ -48,6 +48,36 @@ const COPY_CHUNK_BYTES: usize = 1024 * 1024;
 /// reviewed operational limit; reaching this ceiling never yields a partial inspection.
 const MAX_OFFLINE_DATABASE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 
+/// redb 2.6 performs housekeeping writes while opening. Check an existing generation
+/// through the same locked read-only copy used by offline inspection first, so an
+/// incompatible source never receives those writes. The writable open takes its own
+/// exclusive lock after this read session ends.
+pub(crate) fn preflight_format(root: &Path) -> Result<(), PersistenceError> {
+    let path = root.join(DATABASE_FILENAME);
+    if !path.try_exists().map_err(error::io)? {
+        return Ok(());
+    }
+    let source = FileBackend::new(paths::read_file(&path)?).map_err(error::database)?;
+    let database_bytes = source.len().map_err(error::io)?;
+    if database_bytes == 0 || database_bytes > MAX_OFFLINE_DATABASE_BYTES {
+        return Err(error::corruption(
+            "existing database is empty or exceeds the 64 GiB inspection ceiling",
+        ));
+    }
+    let scratch = tempfile::Builder::new()
+        .prefix("milkdrift-format-check-")
+        .tempdir()
+        .map_err(error::io)?;
+    let copy = scratch.path().join(DATABASE_FILENAME);
+    copy_database(&source, &copy, database_bytes)?;
+    let database = Database::open(&copy).map_err(error::database)?;
+    // An interrupted first schema transaction can leave a genuine empty redb file.
+    if !crate::store::open::database_is_uninitialized(&database)? {
+        crate::store::schema::validate_format(&database)?;
+    }
+    Ok(())
+}
+
 /// An exclusive offline read session. Drop it before restarting the source daemon.
 /// The embedded mutable store never escapes this read-only facade.
 pub struct OfflineStore {
@@ -105,6 +135,7 @@ impl OfflineStore {
         let temp_root = artifact_root.join(TEMP_DIRECTORY);
         paths::directory(&temp_root)?;
         let store = RedbStore {
+            workflow_limits: milkdrift_persistence::WorkflowStorageLimits::default(),
             max_active_installations: config.max_active_installations,
             max_pending_evaluations: config.max_pending_evaluations,
             max_active_publications: config.max_active_publications,

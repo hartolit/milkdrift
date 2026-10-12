@@ -1,6 +1,6 @@
 # 01 — A real task through standalone Svelte
 
-**Prepared, not assigned.** Execute only on the user's implementation instruction. Own the first
+**Assigned on 2026-10-12 by the user's implementation instruction.** Own the first
 production journey across semantic owners, daemon, public clients and Svelte. Do not stop at an API,
 a UI shell or a plan to integrate them. Stop before prompt 02 after the focused acceptance below.
 

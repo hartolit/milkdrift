@@ -53,6 +53,7 @@ impl RedbStore {
         crate::offline::refuse_inspection_clone(&config.root)?;
         let database_path = config.root.join(DATABASE_FILENAME);
         ensure_regular_file_or_absent(&database_path, "storage database")?;
+        crate::offline::preflight_format(&config.root)?;
         let database = Database::create(&database_path).map_err(error::database)?;
 
         if database_is_uninitialized(&database)? {
@@ -68,6 +69,7 @@ impl RedbStore {
         prepare_owned_directory(&temp_root, "artifact temporary directory")?;
 
         let store = Self {
+            workflow_limits: config.workflow_limits,
             database,
             root: config.root,
             artifact_root,
@@ -96,6 +98,15 @@ impl RedbStore {
 }
 
 pub(crate) fn validate_config(config: &RedbStoreConfig) -> Result<(), PersistenceError> {
+    if config.workflow_limits.history_bytes == 0
+        || config.workflow_limits.receipt_bytes == 0
+        || config.workflow_limits.receipt_entries == 0
+    {
+        return Err(PersistenceError::Bounds {
+            location: "workflow_storage_limits",
+            reason: "task history and receipt capacities must be nonzero".to_owned(),
+        });
+    }
     if config.max_active_installations == 0
         || config.max_pending_evaluations == 0
         || config.max_active_publications == 0

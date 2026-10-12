@@ -1,8 +1,9 @@
 # Daemon workflows — implementation sprint
 
-**Ready for authorization; unassigned and unexecuted.** Planning is complete. This is the replacement
-implementation sprint requested on 2026-10-12, not another investigation. The user authorized its
-design, documentation and local commits; production implementation needs the next instruction.
+**Prompt 01 assigned and in progress; 02–07 unassigned.** The user's 2026-10-12 instruction authorizes
+the connected production daemon, CLI and Svelte assignment and tested local commits. Stop at the
+01 handoff for the actual user review in 02. This is the replacement implementation sprint,
+not another investigation.
 The former remedial P00–P09 is superseded and must not be resumed.
 
 ## Outcome and design
@@ -49,7 +50,7 @@ service permissions. Missing real-user/external prerequisites remain explicit ev
 
 ## Ordered assignments
 
-All rows are prepared, with no implementer assigned. Assigning one prompt authorizes its whole
+Prompt 01 is assigned to the current implementation team. Assigning one prompt authorizes its whole
 responsibility and local coherent commits; it does not silently assign its successor.
 
 | Order | Full execution prompt | Prerequisite | Usable outcome |

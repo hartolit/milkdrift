@@ -81,6 +81,7 @@ impl DaemonHost {
             mut peers,
             shutdown,
         } = config.into_parts();
+        let browser_origins = Arc::new(serving.browser_origins.clone());
         if recovery_controls {
             if role == milkdrift_control_protocol::HostRole::ExecutionOnly {
                 return Err(HostError::Configuration(
@@ -181,6 +182,7 @@ impl DaemonHost {
                 peer: peer_runtime,
                 managed,
             })) => Ok(Self {
+                browser_origins,
                 managed: managed.as_ref().map(Arc::downgrade),
                 sender,
                 health,
@@ -383,6 +385,9 @@ impl Owner {
             CapabilitySelectionPolicy::priorities(BTreeMap::new()),
         )
         .map_err(|error| error.to_string())?;
+        capability_host
+            .install_native_path_store(store.clone())
+            .map_err(|error| error.to_string())?;
         let mut startup_cleanup = StartupCleanup {
             host: Some(capability_host.clone()),
             service: None,
@@ -455,7 +460,23 @@ impl Owner {
                         .install_controller_lifecycle(control.controller_lifecycle_owner())
                         .map_err(|error| error.to_string())?;
                 }
+                let tasks = Arc::new(milkdrift_runtime::TaskRuntime::new(
+                    store.clone(),
+                    Arc::new(capability_host.clone()),
+                    authority.clone(),
+                    clock.runtime_adapter(),
+                    Arc::new(
+                        SequentialIdGenerator::new("task", startup_now)
+                            .map_err(|error| error.to_string())?,
+                    ),
+                ));
                 Some(WorkflowServices {
+                    task_control: milkdrift_control::TaskControlService::new(
+                        tasks.clone(),
+                        authority.clone(),
+                        clock.runtime_adapter(),
+                    ),
+                    tasks,
                     runtime,
                     control,
                     publications: None,
@@ -543,17 +564,6 @@ impl Owner {
                     limit: PageSize::new(1).map_err(|error| error.to_string())?,
                 })
                 .map_err(|error| error.to_string())?;
-            if let Some(workflow) = &workflow {
-                capabilities::register_control(
-                    &capability_host,
-                    workflow.control.clone(),
-                    data.clone(),
-                    store.clone(),
-                    store.clone(),
-                    authority.clone(),
-                    startup_now,
-                )?;
-            }
             let managed = adapters
                 .managed_linux
                 .clone()
@@ -635,8 +645,8 @@ impl Owner {
                 );
             }
             if let Some(workflow) = &workflow {
-                let workers = EffectWorkerHost::start(
-                    workflow.runtime.clone(),
+                let workers = EffectWorkerHost::start_tasks(
+                    workflow.tasks.clone(),
                     capability_host.clone(),
                     EffectWorkerConfig {
                         execution_threads: runtime_plan.effect_threads,

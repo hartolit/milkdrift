@@ -245,7 +245,8 @@ impl ModelEndpointAdapter {
         let limits = self.materialization_limits();
         let mut materialization = MaterializationLedger::new(limits);
         let (selection_text, context_parts, continuation) = match context.selection() {
-            milkdrift_capability_host::AdapterInputSelection::Direct(selection) => {
+            milkdrift_capability_host::AdapterInputSelection::Direct(selection)
+            | milkdrift_capability_host::AdapterInputSelection::Task { selection, .. } => {
                 selection
                     .validate_request(request)
                     .map_err(|error| AdapterError::rejected(error.to_string()))?;

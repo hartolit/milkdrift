@@ -940,3 +940,6 @@ fn create_and_start_revocable_run(
 
 #[path = "durable_runtime/authority.rs"]
 mod authority;
+
+#[path = "durable_runtime/tasks.rs"]
+mod tasks;

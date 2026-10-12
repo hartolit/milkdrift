@@ -2,9 +2,10 @@
 
 The product account and technical choices are finished for the
 [daemon-workflows implementation sprint](../development/virtual-office/daemon-workflows-implementation/README.md).
-It is **ready for authorization, unassigned and unexecuted**. The user authorized planning and local
-commits, not production implementation. The next explicit instruction may assign prompt 01; it does
-not automatically assign later prompts. The superseded remedial P00–P09 is historical evidence only.
+**Prompt 01 is assigned and in progress** under the user's October 12 implementation instruction,
+including production daemon, CLI and Svelte integration and tested local commits. Its handoff stops
+before the actual user review in 02. Prompts 02–07 remain unassigned; 07 owns the named final full-system
+test-and-repair gate. The superseded remedial P00–P09 is historical evidence only.
 
 [Vision](vision.md) owns the intended experience, [ADR 0051](../decisions/0051-daemon-task-workflows.md)
 the selected design, and [status](status.md) the earlier implementation and its qualified evidence.

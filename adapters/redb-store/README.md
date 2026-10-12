@@ -5,6 +5,12 @@ on a local filesystem. It implements the journal, revision, workspace, artifact,
 application, peer, clock, and administrative ports with one redb database and owned artifact
 directories. Runtime decides what to commit; this package owns how those facts survive reopening.
 
+The fresh task format uses physical schema 18. An existing database is locked through a read-only
+handle and copied to a private temporary directory for its format check before redb can open the
+source for housekeeping writes. An older format is refused; it is never treated as empty or
+upgraded. Keep old generations with the preserved binary and use an explicitly new directory for
+task development. This is software-level refusal and does not establish power-loss behavior.
+
 ## Open and share the store
 
 `RedbStore::open` uses the ordinary limits for an owned data directory. Use
@@ -28,6 +34,19 @@ copy inspection-only. The [operator procedure](../../docs/operations/daemon.md#o
 explains private destinations, copy limits, completion verification and explicit activation.
 
 ## What a write makes durable
+
+[`task.rs`](src/task.rs) atomically commits the runtime's workflow snapshot, discovery fields,
+exact command result and aggregate capacity counters. Defaults allow 1 GiB of task documents and
+reserved settlement bytes, plus a separate 256 MiB or 100,000 receipt allowance, whichever is
+exhausted first. `with_workflow_limits` selects smaller or larger explicit bounds. Every mandatory
+control slot reserves 8 KiB as well as one receipt entry. No task record or accepted key is evicted
+to admit new work. The runtime consumes the reserved control slot when saving a server-issued
+stop action, and releases remaining task space only after its durable settlement.
+
+Native-directory claims have a separate bounded table. Whole-set acquisition checks equal and
+ancestor/descendant paths in the same transaction; overlapping readers may coexist, but any writer
+conflicts. Neither restart nor elapsed time releases a claim. The host must report durable
+settlement before release, so an uncertain writer continues blocking new conflicting work.
 
 [`journal/append.rs`](src/journal/append.rs) checks replay before optimistic guards. For a new
 command it commits events, receipt/result, history links, workspace usage and values, discovery

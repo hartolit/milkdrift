@@ -45,6 +45,13 @@ impl WorkflowExecutionContext {
 /// How the owner selected the inputs supplied to this adapter.
 #[derive(Clone, Debug, PartialEq)]
 pub enum AdapterInputSelection {
+    /// Frozen ordinary task inputs with their real owning workflow coordinates.
+    Task {
+        /// Durable workflow/task/attempt provenance.
+        workflow: WorkflowExecutionContext,
+        /// Exact supplied bytes and immutable references selected at task start.
+        selection: DirectInputSelection,
+    },
     /// A causal selection whose manifest must match these exact coordinates.
     Workflow(WorkflowExecutionContext),
     /// Only the accepted caller-supplied inputs, without a workflow-history lookup.
@@ -54,6 +61,7 @@ pub enum AdapterInputSelection {
 /// Exact input selection and durable authority supplied to materializing adapters.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AdapterExecutionContext {
+    task_artifact_budget: Option<milkdrift_workspace::WorkspaceBudget>,
     publication_ancestry: Vec<milkdrift_capability::PublicationAncestor>,
     serving_source: Option<milkdrift_persistence::published::PublishedInvocationSource>,
     selection: AdapterInputSelection,
@@ -192,6 +200,7 @@ impl AdapterExecutionContext {
         attempt: AttemptId,
     ) -> Self {
         Self {
+            task_artifact_budget: None,
             publication_ancestry: Vec::new(),
             serving_source: None,
             selection: AdapterInputSelection::Workflow(WorkflowExecutionContext {
@@ -214,6 +223,7 @@ impl AdapterExecutionContext {
     #[must_use]
     pub const fn direct(selection: DirectInputSelection) -> Self {
         Self {
+            task_artifact_budget: None,
             publication_ancestry: Vec::new(),
             serving_source: None,
             selection: AdapterInputSelection::Direct(selection),
@@ -235,6 +245,7 @@ impl AdapterExecutionContext {
     #[must_use]
     pub const fn workflow(&self) -> Option<&WorkflowExecutionContext> {
         match &self.selection {
+            AdapterInputSelection::Task { workflow, .. } => Some(workflow),
             AdapterInputSelection::Workflow(workflow) => Some(workflow),
             AdapterInputSelection::Direct(_) => None,
         }
@@ -244,6 +255,7 @@ impl AdapterExecutionContext {
     #[must_use]
     pub const fn direct_selection(&self) -> Option<&DirectInputSelection> {
         match &self.selection {
+            AdapterInputSelection::Task { selection, .. } => Some(selection),
             AdapterInputSelection::Direct(direct) => Some(direct),
             AdapterInputSelection::Workflow(_) => None,
         }
@@ -252,23 +264,36 @@ impl AdapterExecutionContext {
     pub(crate) fn from_dispatch(
         dispatch: &milkdrift_runtime::ExecutionDispatch,
         controller_reservation: Option<&ControllerReservationId>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, crate::InvocationDataError> {
+        let workflow = WorkflowExecutionContext {
+            run: dispatch.run().clone(),
+            revision: dispatch.revision().clone(),
+            node: dispatch.node().clone(),
+            execution: dispatch.execution().clone(),
+            attempt: dispatch.attempt().clone(),
+        };
+        let selection = if dispatch.is_task() {
+            AdapterInputSelection::Task {
+                workflow,
+                selection: DirectInputSelection::new(
+                    dispatch.request(),
+                    milkdrift_blueprint::MAX_TASK_DEFINITION_BYTES as u64,
+                )?,
+            }
+        } else {
+            AdapterInputSelection::Workflow(workflow)
+        };
+        Ok(Self {
+            task_artifact_budget: dispatch.task_artifact_budget().cloned(),
             publication_ancestry: dispatch.publication_ancestry().to_vec(),
             serving_source: None,
-            selection: AdapterInputSelection::Workflow(WorkflowExecutionContext {
-                run: dispatch.run().clone(),
-                revision: dispatch.revision().clone(),
-                node: dispatch.node().clone(),
-                execution: dispatch.execution().clone(),
-                attempt: dispatch.attempt().clone(),
-            }),
+            selection,
             authority: Some(dispatch.execution_authority().clone()),
             resolution_authorization: Some(dispatch.resolution_authorization().clone()),
             entry_authorization: Some(dispatch.entry_authorization().clone()),
             controller_reservation: controller_reservation.cloned(),
             peer_artifacts: None,
-        }
+        })
     }
 
     /// Binds artifact publication to the serving host's durably entered peer execution.
@@ -380,6 +405,10 @@ impl AdapterExecutionContext {
 
     pub(crate) fn peer_artifact_budget(&self) -> Option<&milkdrift_workspace::WorkspaceBudget> {
         self.peer_artifacts.as_ref().map(|(_, budget)| budget)
+    }
+
+    pub(crate) fn task_artifact_budget(&self) -> Option<&milkdrift_workspace::WorkspaceBudget> {
+        self.task_artifact_budget.as_ref()
     }
 
     /// Exact controller reservation committed before this adapter entry, when controlled.

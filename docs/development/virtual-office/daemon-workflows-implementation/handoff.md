@@ -1,4 +1,38 @@
-# Planning handoff
+# Implementation handoff
+
+Prompt 01 is assigned and in progress from clean checkpoint `9134430`. The user authorized its
+production daemon, CLI and Svelte paths and coherent tested local commits, with the first real
+browser-to-task checkpoint reported before broad retirement cleanup. The completion boundary is
+the prompt 01 handoff; actual user review in 02 and all later prompts remain unassigned. The named
+full-system gate stays in 07; this assignment follows its focused-check schedule.
+
+The current team separates semantic runtime/control, persistence and host claims, and Svelte work;
+the coordinator owns daemon/public clients, shared files, Cargo jobs, integration and commits.
+Development uses fresh named roots under `target/daemon-workflows/01-connected-20261012*`. Read-only preservation
+inspection found no daemon process but did find existing managed Podman services. Those services,
+their roots and retained stores remain untouched. Preservation refs still point to the recorded
+pre-reset commit.
+
+The first working browser checkpoint was reported before broad retirement cleanup. The production
+Svelte client submitted the actual repository Cargo manifest to a configured trusted Rust process,
+observed Running, disposed the entire browser context, and discovered the completed workflow and
+retained report in a fresh context with only connection credentials. A second task supplied the
+runtime crate's manifest and produced a different dependency/target report. Two daemon connections,
+credential disposal, keyboard access, installation mismatch and actual rejected browser origin
+passed in the initial 3-case Chromium suite. Desktop and 390-pixel phone screenshots were inspected.
+Raw evidence is under `target/daemon-workflows/frontend/first-checkpoint/`; the successful fixture
+uses `target/daemon-workflows/01-connected-20261012-d/`. Earlier attempted roots are preserved.
+
+The production CLI separately uploaded the real manifest, created a task, read its computed result,
+and replayed the exact acceptance with the same workflow/task identities against daemon A. Focused
+storage, task-runtime, protocol, CORS and clock checks pass. These observations establish the first
+connected slice, not prompt 01 completion or the final gate. Remaining work includes controlled-model
+evidence, complete old-path retirement, all assigned owner suites, current documentation adoption and
+the final prompt 01 handoff. Actual user review in 02 remains unperformed and unassigned.
+
+The prior planning evidence below remains scoped to its own checkpoint.
+
+## Preserved planning handoff
 
 The implementation sprint is complete as a planning packet and remains unassigned/unexecuted.
 [README](README.md) owns order and the exact start instruction; [ADR 0051](../../../decisions/0051-daemon-task-workflows.md)

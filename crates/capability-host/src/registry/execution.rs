@@ -254,7 +254,18 @@ impl TaskExecutor for CapabilityHost {
         &'a self,
         dispatch: &ExecutionDispatch,
     ) -> Result<PreparedExecution<'a>, ExecutorError> {
-        let context = AdapterExecutionContext::from_dispatch(dispatch, None);
+        let claims = self.core.native_paths.get();
+        if dispatch.is_task() && !dispatch.native_path_claims().is_empty() {
+            claims
+                .ok_or_else(|| {
+                    ExecutorError::BoundaryBeforeEntry(
+                        "native project path owner is not configured".to_owned(),
+                    )
+                })?
+                .acquire(dispatch.attempt().as_str(), dispatch.native_path_claims())?;
+        }
+        let context = AdapterExecutionContext::from_dispatch(dispatch, None)
+            .map_err(|error| ExecutorError::InvalidDispatch(error.to_string()))?;
         let prepared =
             self.prepare_invocation(dispatch.resolution(), dispatch.request(), Some(&context))?;
         if let Some(plan) = prepared.published_plan() {
@@ -269,8 +280,14 @@ impl TaskExecutor for CapabilityHost {
             dispatch,
             prepared.envelope().clone(),
             move |dispatch, reservation, reporter| {
+                if dispatch.is_task() {
+                    if let Some(claims) = claims {
+                        claims.revalidate(dispatch.attempt().as_str())?;
+                    }
+                }
                 let bridge = ReporterBridge { reporter };
-                let context = AdapterExecutionContext::from_dispatch(dispatch, reservation);
+                let context = AdapterExecutionContext::from_dispatch(dispatch, reservation)
+                    .map_err(|error| ExecutorError::InvalidDispatch(error.to_string()))?;
                 prepared.enter(Some(&context), &bridge)
             },
         ))
@@ -281,6 +298,15 @@ impl TaskExecutor for CapabilityHost {
         request: &CancellationRequest,
     ) -> Result<CancellationAcknowledgement, ExecutorError> {
         self.cancel_exact(request)
+    }
+
+    fn settle(&self, dispatch: &ExecutionDispatch) -> Result<(), ExecutorError> {
+        if dispatch.is_task() {
+            if let Some(claims) = self.core.native_paths.get() {
+                claims.release_settled(dispatch.attempt().as_str())?;
+            }
+        }
+        Ok(())
     }
 }
 

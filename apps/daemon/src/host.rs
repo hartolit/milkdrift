@@ -58,7 +58,9 @@ mod results;
 mod runs;
 mod shutdown;
 mod startup;
+mod tasks;
 mod uploads;
+pub(crate) use tasks::TaskRequest;
 
 use clock::DurableClock;
 use health::SharedHealth;
@@ -120,6 +122,7 @@ impl PublicFailure {
 /// does not finish external work or its final persistence calls.
 #[derive(Clone)]
 pub struct DaemonHost {
+    browser_origins: Arc<Vec<String>>,
     sender: Arc<SyncSender<OwnerRequest>>,
     health: Arc<SharedHealth>,
     auth: AuthRegistry,
@@ -144,6 +147,9 @@ impl std::fmt::Debug for DaemonHost {
 }
 
 impl DaemonHost {
+    pub(crate) fn browser_origins(&self) -> Arc<Vec<String>> {
+        self.browser_origins.clone()
+    }
     pub(crate) async fn now(&self) -> Result<u64, PublicFailure> {
         let clock = self.clock.clone();
         tokio::task::spawn_blocking(move || clock.now())
@@ -209,6 +215,8 @@ struct Owner {
 }
 
 struct WorkflowServices {
+    tasks: Arc<milkdrift_runtime::TaskRuntime>,
+    task_control: milkdrift_control::TaskControlService,
     runtime: Arc<RuntimeService>,
     control: Arc<ControlService>,
     publications: Option<Arc<milkdrift_control::PublishedWorkflowService>>,

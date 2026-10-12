@@ -24,6 +24,7 @@ mod fault;
 mod journal;
 mod json;
 mod managed;
+mod native_paths;
 pub mod offline;
 mod peer;
 mod published;
@@ -31,6 +32,7 @@ mod revision;
 mod schema;
 mod snapshot;
 mod store;
+mod task;
 
 #[cfg(feature = "test-admin")]
 pub mod testing;

@@ -27,10 +27,19 @@ mod error;
 mod event;
 mod identity;
 mod journal;
+mod native_paths;
 mod peer;
 pub mod published;
 mod revision;
 mod snapshot;
+mod task;
+pub use native_paths::{NativePathClaim, NativePathClaimStore, NativePathRoot};
+
+pub use task::{
+    MAX_WORKFLOW_DOCUMENT_BYTES, MAX_WORKFLOW_REQUEST_BYTES, WorkflowCommandAcceptance,
+    WorkflowCommandReceipt, WorkflowCommit, WorkflowCommitOutcome, WorkflowPage, WorkflowSnapshot,
+    WorkflowStorageLimits, WorkflowStore,
+};
 
 pub use admin::{
     IntegrityScanCursor, IntegrityScanFamily, IntegrityScanRequest, IntegrityScanResult,

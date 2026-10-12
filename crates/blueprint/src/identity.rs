@@ -63,6 +63,11 @@ identity_type!(
     128
 );
 identity_type!(
+    /// Daemon-assigned ordinary task identity, or a request-local task alias before admission.
+    TaskId,
+    128
+);
+identity_type!(
     /// Data or control port identity scoped to a node.
     PortId,
     96

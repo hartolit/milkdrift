@@ -33,6 +33,24 @@ pub enum StorageFailureClass {
 /// explains how to recover a result when an error may have arrived after commit.
 #[derive(Debug, Error)]
 pub enum PersistenceError {
+    /// A task workflow changed after its transition was planned.
+    #[error("workflow {workflow} generation conflict: expected {expected:?}, actual {actual:?}")]
+    WorkflowGenerationConflict {
+        /// Workflow whose state changed.
+        workflow: milkdrift_blueprint::WorkflowId,
+        /// Caller observation, or absence for creation.
+        expected: Option<u64>,
+        /// Durable state, or absence.
+        actual: Option<u64>,
+    },
+    /// Exact task request recovery refuses reuse with different canonical bytes.
+    #[error("workflow command {key} idempotency conflict for actor {actor}")]
+    WorkflowIdempotencyConflict {
+        /// Authenticated actor owning the key.
+        actor: String,
+        /// Conflicting request key.
+        key: String,
+    },
     /// A persistence-owned typed identity was malformed.
     #[error("invalid {kind}: {reason}")]
     InvalidIdentity {

@@ -1,0 +1,499 @@
+use milkdrift_authority::{BoundaryTimeMillis, DecisionId};
+use milkdrift_blueprint::{TaskId, WorkflowId};
+use milkdrift_capability::{CancellationRequest, InvocationEvent, TerminalStatus};
+
+use super::{TaskResult, TaskRuntime, TaskState};
+use crate::{
+    ExecutionDispatch, ExecutionReporter, ExecutorError, ObservationDisposition, RuntimeError,
+};
+
+impl TaskRuntime {
+    /// Prepares local resources, rechecks the grant, commits entry intent, then enters once.
+    ///
+    /// # Errors
+    /// Returns mismatched ownership, authority, storage, or reporting failures. A failure after
+    /// durable entry leaves uncertainty and never authorizes automatic re-entry.
+    pub fn execute(&self, dispatch: ExecutionDispatch) -> Result<(), RuntimeError> {
+        let workflow_id = WorkflowId::new(dispatch.run().as_str()).map_err(invalid)?;
+        let task_id = TaskId::new(dispatch.node().as_str()).map_err(invalid)?;
+        {
+            let _guard = self
+                .gate
+                .lock()
+                .map_err(|_| invalid("task execution lock unavailable"))?;
+            let workflow = self.require_workflow(&workflow_id)?;
+            let task = workflow
+                .tasks
+                .get(&task_id)
+                .ok_or_else(|| invalid("dispatch task is absent"))?;
+            let frozen = task
+                .frozen
+                .as_ref()
+                .ok_or_else(|| invalid("dispatch has no frozen start"))?;
+            if frozen.dispatch != dispatch || frozen.entered || task.state != TaskState::Running {
+                return Err(invalid("dispatch no longer owns the exact unentered task"));
+            }
+            if task.stop_requested {
+                drop(_guard);
+                return self.finish_without_entry(
+                    &workflow_id,
+                    &task_id,
+                    TaskState::Stopped,
+                    "stopped before external entry",
+                );
+            }
+        }
+        let prepared = match self.executor.prepare_exact_entry(&dispatch) {
+            Ok(prepared) => prepared,
+            Err(
+                error @ (ExecutorError::BoundaryBeforeEntry(_)
+                | ExecutorError::UnavailableGeneration { .. }
+                | ExecutorError::Unavailable(_)
+                | ExecutorError::AdmissionClosed
+                | ExecutorError::InvalidDispatch(_)
+                | ExecutorError::Contract(_)
+                | ExecutorError::AdapterPanicked { after_entry: false }),
+            ) => {
+                return self.finish_without_entry(
+                    &workflow_id,
+                    &task_id,
+                    TaskState::Failed,
+                    &format!("local preparation refused before entry: {error}"),
+                );
+            }
+            Err(error) => {
+                return self.mark_uncertain(
+                    &workflow_id,
+                    &task_id,
+                    &format!("preparation could not establish exclusive non-entry: {error}"),
+                );
+            }
+        };
+        let final_dispatch = {
+            let _guard = self
+                .gate
+                .lock()
+                .map_err(|_| invalid("task entry lock unavailable"))?;
+            let mut workflow = self.require_workflow(&workflow_id)?;
+            let now = self.clock.now()?;
+            let reservation =
+                super::account::reserve(&workflow, &dispatch, prepared.admission_envelope());
+            let (allowance, spending_currency) = match reservation {
+                Ok(value) => value,
+                Err(error) => {
+                    drop(_guard);
+                    return self.finish_without_entry(
+                        &workflow_id,
+                        &task_id,
+                        TaskState::Failed,
+                        &error.to_string(),
+                    );
+                }
+            };
+            let task = workflow
+                .tasks
+                .get_mut(&task_id)
+                .ok_or_else(|| invalid("dispatch task is absent"))?;
+            let frozen = task
+                .frozen
+                .as_mut()
+                .ok_or_else(|| invalid("dispatch has no frozen start"))?;
+            if frozen.dispatch != dispatch || frozen.entered || task.state != TaskState::Running {
+                return Err(invalid("task changed during preparation"));
+            }
+            if task.stop_requested {
+                drop(_guard);
+                return self.finish_without_entry(
+                    &workflow_id,
+                    &task_id,
+                    TaskState::Stopped,
+                    "stopped during local preparation",
+                );
+            }
+            let mut request = dispatch.entry_authorization().request().clone();
+            request.decision = DecisionId::new(format!(
+                "entry_{}",
+                blake3::hash(dispatch.request().invocation().as_str().as_bytes())
+            ))
+            .map_err(invalid)?;
+            request.evaluated_at = BoundaryTimeMillis::new(now.get());
+            let decision = self.authority.evaluate(&request)?;
+            if !decision.is_allowed() {
+                drop(_guard);
+                return self.finish_without_entry(
+                    &workflow_id,
+                    &task_id,
+                    TaskState::Failed,
+                    "authority was revoked before external entry",
+                );
+            }
+            if now >= dispatch.lease_expires_at() {
+                drop(_guard);
+                return self.finish_without_entry(
+                    &workflow_id,
+                    &task_id,
+                    TaskState::Failed,
+                    "task execution allowance expired before entry",
+                );
+            }
+            let exact = dispatch.with_entry_authorization(decision)?;
+            frozen.dispatch = exact.clone();
+            frozen.entered = true;
+            workflow.committed_allowance = allowance;
+            workflow.spending_currency = spending_currency;
+            let expected = self.advance(&mut workflow)?;
+            self.save(&workflow, Some(expected), None)?;
+            exact
+        };
+        let reporter = TaskReporter {
+            runtime: self,
+            workflow: workflow_id.clone(),
+            task: task_id.clone(),
+            dispatch: final_dispatch.clone(),
+        };
+        let outcome = prepared.enter(&final_dispatch, &reporter);
+        let workflow = self.require_workflow(&workflow_id)?;
+        let state = workflow
+            .tasks
+            .get(&task_id)
+            .ok_or_else(|| invalid("entered task disappeared"))?
+            .state;
+        if state.is_settled() {
+            self.executor.settle(&final_dispatch)?;
+            return Ok(());
+        }
+        if state == TaskState::Uncertain {
+            return Ok(());
+        }
+        let reason = match outcome {
+            Ok(()) => "adapter returned without durable terminal evidence".to_owned(),
+            Err(error) => format!("external outcome remains uncertain: {error}"),
+        };
+        self.mark_uncertain(&workflow_id, &task_id, &reason)
+    }
+
+    fn finish_without_entry(
+        &self,
+        workflow_id: &WorkflowId,
+        task_id: &TaskId,
+        state: TaskState,
+        reason: &str,
+    ) -> Result<(), RuntimeError> {
+        let _guard = self
+            .gate
+            .lock()
+            .map_err(|_| invalid("task settlement lock unavailable"))?;
+        let mut workflow = self.require_workflow(workflow_id)?;
+        let task = workflow
+            .tasks
+            .get_mut(task_id)
+            .ok_or_else(|| invalid("task is absent"))?;
+        if task.frozen.as_ref().is_some_and(|start| start.entered) {
+            return Err(invalid(
+                "entered task cannot be settled using non-entry evidence",
+            ));
+        }
+        task.state = state;
+        task.reason = Some(milkdrift_contracts::truncate_utf8(reason, 4096).to_owned());
+        task.ended_at = Some(self.clock.now()?);
+        let dispatch = task.frozen.as_ref().map(|start| start.dispatch.clone());
+        let expected = self.advance(&mut workflow)?;
+        self.save(&workflow, Some(expected), None)?;
+        if let Some(dispatch) = dispatch {
+            self.executor.settle(&dispatch)?;
+        }
+        Ok(())
+    }
+
+    fn mark_uncertain(
+        &self,
+        workflow_id: &WorkflowId,
+        task_id: &TaskId,
+        reason: &str,
+    ) -> Result<(), RuntimeError> {
+        let _guard = self
+            .gate
+            .lock()
+            .map_err(|_| invalid("task uncertainty lock unavailable"))?;
+        let mut workflow = self.require_workflow(workflow_id)?;
+        let task = workflow
+            .tasks
+            .get_mut(task_id)
+            .ok_or_else(|| invalid("task is absent"))?;
+        if task.state.is_settled() {
+            return Ok(());
+        }
+        task.state = TaskState::Uncertain;
+        task.reason = Some(milkdrift_contracts::truncate_utf8(reason, 4096).to_owned());
+        let expected = self.advance(&mut workflow)?;
+        self.save(&workflow, Some(expected), None)?;
+        Ok(())
+    }
+
+    /// Missing workers after restart never establish absence of an entered external effect.
+    /// Unentered frozen starts return unchanged for bounded dispatch by the worker owner.
+    ///
+    /// # Errors
+    /// Returns storage/integrity failures or a recovery page exceeding the bounded startup queue.
+    pub fn recover(&self) -> Result<Vec<ExecutionDispatch>, RuntimeError> {
+        let mut cursor = None;
+        let mut ready = Vec::new();
+        loop {
+            let page = self.store.workflows(cursor.as_deref(), 200)?;
+            for snapshot in page.items {
+                let workflow = self.require_workflow(&snapshot.workflow)?;
+                for (id, task) in &workflow.tasks {
+                    if task.state.is_settled() {
+                        if let Some(frozen) = &task.frozen {
+                            self.executor.settle(&frozen.dispatch)?;
+                        }
+                        continue;
+                    }
+                    if task.state != TaskState::Running {
+                        continue;
+                    }
+                    let frozen = task
+                        .frozen
+                        .as_ref()
+                        .ok_or_else(|| invalid("running task lost its frozen start"))?;
+                    if frozen.entered {
+                        self.mark_uncertain(&workflow.id, id, "daemon restarted after durable external entry; no terminal evidence is available")?;
+                    } else {
+                        if ready.len() >= 200 {
+                            return Err(invalid(
+                                "startup has more pending dispatches than its bounded recovery page",
+                            ));
+                        }
+                        ready.push(frozen.dispatch.clone());
+                    }
+                }
+            }
+            cursor = page.next;
+            if cursor.is_none() {
+                break;
+            }
+        }
+        Ok(ready)
+    }
+
+    /// Dispatches exact cancellation requests independently of occupied execution workers.
+    ///
+    /// # Errors
+    /// Returns durable read/write failures. Adapter refusal records unresolved stop evidence.
+    pub fn cancel_pending(&self) -> Result<(), RuntimeError> {
+        let page = self.store.workflows(None, 200)?;
+        for snapshot in page.items {
+            let workflow = self.require_workflow(&snapshot.workflow)?;
+            for (id, task) in &workflow.tasks {
+                if !task.stop_requested || task.cancellation_sent || task.state.is_settled() {
+                    continue;
+                }
+                let Some(frozen) = &task.frozen else {
+                    continue;
+                };
+                if !frozen.entered {
+                    self.finish_without_entry(
+                        &workflow.id,
+                        id,
+                        TaskState::Stopped,
+                        "stop won before external entry",
+                    )?;
+                    continue;
+                }
+                let request = CancellationRequest::new(
+                    frozen.dispatch.request().invocation().clone(),
+                    1,
+                    "authorized task stop request",
+                )
+                .map_err(invalid)?;
+                match self.executor.cancel(&request) {
+                    Ok(_) => {
+                        let _guard = self
+                            .gate
+                            .lock()
+                            .map_err(|_| invalid("task cancellation lock unavailable"))?;
+                        let mut current = self.require_workflow(&workflow.id)?;
+                        let task = current
+                            .tasks
+                            .get_mut(id)
+                            .ok_or_else(|| invalid("cancelled task disappeared"))?;
+                        task.cancellation_sent = true;
+                        if !task.state.is_settled() {
+                            task.reason =
+                                Some("stop requested; awaiting terminal stop evidence".into());
+                        }
+                        let expected = self.advance(&mut current)?;
+                        self.save(&current, Some(expected), None)?;
+                    }
+                    Err(error) => self.mark_uncertain(
+                        &workflow.id,
+                        id,
+                        &format!("stop request outcome is unresolved: {error}"),
+                    )?,
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Claims exact stop coordinates for the separate bounded cancellation worker.
+    ///
+    /// # Errors
+    /// Returns malformed cancellation coordinates or storage failures.
+    pub fn cancellation_actions(
+        &self,
+        maximum: u16,
+    ) -> Result<Vec<crate::EffectAction>, RuntimeError> {
+        let mut actions = Vec::new();
+        let page = self.store.workflows(None, maximum.min(200))?;
+        for snapshot in page.items {
+            let workflow = self.require_workflow(&snapshot.workflow)?;
+            for task in workflow.tasks.values() {
+                if actions.len() >= usize::from(maximum) {
+                    return Ok(actions);
+                }
+                if !task.stop_requested || task.cancellation_sent || task.state.is_settled() {
+                    continue;
+                }
+                let Some(frozen) = &task.frozen else {
+                    continue;
+                };
+                let request = CancellationRequest::new(
+                    frozen.dispatch.request().invocation().clone(),
+                    1,
+                    "authorized task stop request",
+                )
+                .map_err(invalid)?;
+                actions.push(crate::EffectAction::Cancel(
+                    crate::CancellationDispatch::new(
+                        frozen.dispatch.run().clone(),
+                        frozen.dispatch.attempt().clone(),
+                        request,
+                    ),
+                ));
+            }
+        }
+        Ok(actions)
+    }
+}
+
+struct TaskReporter<'a> {
+    runtime: &'a TaskRuntime,
+    workflow: WorkflowId,
+    task: TaskId,
+    dispatch: ExecutionDispatch,
+}
+
+impl ExecutionReporter for TaskReporter<'_> {
+    fn invocation(&self, report: InvocationEvent) -> Result<ObservationDisposition, ExecutorError> {
+        self.record(report)
+            .map_err(|error| ExecutorError::BoundaryAfterEntry(error.to_string()))
+    }
+    fn heartbeat(&self) -> Result<ObservationDisposition, ExecutorError> {
+        if self
+            .runtime
+            .clock
+            .now()
+            .map_err(|e| ExecutorError::BoundaryAfterEntry(e.to_string()))?
+            >= self.dispatch.lease_expires_at()
+        {
+            return Err(ExecutorError::BoundaryAfterEntry(
+                "workflow active execution allowance expired".into(),
+            ));
+        }
+        Ok(ObservationDisposition::Applied)
+    }
+}
+
+impl TaskReporter<'_> {
+    fn record(&self, report: InvocationEvent) -> Result<ObservationDisposition, RuntimeError> {
+        let _guard = self
+            .runtime
+            .gate
+            .lock()
+            .map_err(|_| invalid("task report lock unavailable"))?;
+        if report.invocation() != self.dispatch.request().invocation() {
+            return Err(invalid("report names another invocation"));
+        }
+        let mut workflow = self.runtime.require_workflow(&self.workflow)?;
+        let now = self.runtime.clock.now()?;
+        let task = workflow
+            .tasks
+            .get_mut(&self.task)
+            .ok_or_else(|| invalid("report task disappeared"))?;
+        let frozen = task
+            .frozen
+            .as_mut()
+            .ok_or_else(|| invalid("report task lost its start"))?;
+        if !frozen.entered || frozen.dispatch != self.dispatch {
+            return Err(invalid("report differs from exact entered dispatch"));
+        }
+        if let Some(existing) = frozen
+            .reports
+            .iter()
+            .find(|existing| existing.sequence() == report.sequence())
+        {
+            return if existing == &report {
+                Ok(ObservationDisposition::Replayed)
+            } else {
+                Err(invalid("report sequence reused with different content"))
+            };
+        }
+        if task.state.is_settled()
+            || frozen.reports.len() >= crate::MAX_REPORTS_PER_DISPATCH
+            || report.sequence()
+                != u64::try_from(frozen.reports.len())
+                    .map_err(invalid)?
+                    .checked_add(1)
+                    .ok_or_else(|| invalid("report sequence exhausted"))?
+        {
+            return Err(invalid("report sequence or task state is invalid"));
+        }
+        if let Some((message, _, _)) = report.kind().progress() {
+            task.reason = Some(message.to_owned());
+        }
+        frozen.reports.push(report.clone());
+        if let Some(terminal) = report.kind().terminal() {
+            task.state = match terminal.status() {
+                TerminalStatus::Success => TaskState::Completed,
+                TerminalStatus::Failure | TerminalStatus::Rejected => TaskState::Failed,
+                TerminalStatus::Cancelled => TaskState::Stopped,
+                TerminalStatus::Uncertain => TaskState::Uncertain,
+            };
+            task.ended_at = task.state.is_settled().then_some(now);
+            task.reason = terminal.failure().map(|failure| format!("{failure:?}"));
+            let outputs = frozen
+                .reports
+                .iter()
+                .filter_map(|report| {
+                    report
+                        .kind()
+                        .output()
+                        .map(|(name, reference)| (name.to_owned(), reference.clone()))
+                })
+                .collect();
+            task.result = Some(TaskResult {
+                terminal: terminal.clone(),
+                outputs,
+                recorded_at: now,
+            });
+            if let Some(started) = task.started_at {
+                let elapsed = now
+                    .get()
+                    .checked_sub(started.get())
+                    .ok_or_else(|| invalid("clock moved backward during task"))?;
+                workflow.active_execution_ms = workflow
+                    .active_execution_ms
+                    .checked_add(elapsed)
+                    .ok_or_else(|| invalid("workflow duration overflow"))?;
+            }
+        }
+        let expected = self.runtime.advance(&mut workflow)?;
+        self.runtime.save(&workflow, Some(expected), None)?;
+        Ok(ObservationDisposition::Applied)
+    }
+}
+
+fn invalid(error: impl std::fmt::Display) -> RuntimeError {
+    RuntimeError::InvalidTransition(error.to_string())
+}

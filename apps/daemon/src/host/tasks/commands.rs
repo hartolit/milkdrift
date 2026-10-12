@@ -1,0 +1,187 @@
+use super::{ActorSession, Owner, PublicFailure, failure, mapping, runtime_failure};
+use milkdrift_authority::AuthorityOperation;
+use milkdrift_blueprint::{NewTask, TaskBatch, TaskChange, TaskId, WorkflowCreate};
+use milkdrift_control_protocol::{
+    InputUploadRequest,
+    tasks::{
+        ChangeWorkflowRequest, CreateWorkflowRequest, TaskChangeDto, TaskUploadReceipt,
+        TaskUploadRequest, WorkflowReceipt,
+    },
+};
+use milkdrift_persistence::WorkflowStore;
+use milkdrift_runtime::TaskRuntime;
+use std::collections::BTreeMap;
+
+impl Owner {
+    pub(in crate::host) fn create_task_workflow(
+        &self,
+        session: &ActorSession,
+        request: CreateWorkflowRequest,
+    ) -> Result<WorkflowReceipt, PublicFailure> {
+        let tasks = request
+            .tasks
+            .into_iter()
+            .map(|task| {
+                Ok(NewTask {
+                    alias: TaskId::new(task.alias).map_err(failure)?,
+                    definition: self.task_definition(session, task.definition)?,
+                })
+            })
+            .collect::<Result<_, PublicFailure>>()?;
+        let inputs = request
+            .inputs
+            .into_iter()
+            .map(|(name, value)| Ok((name, self.task_value(session, value)?)))
+            .collect::<Result<_, PublicFailure>>()?;
+        let create = WorkflowCreate {
+            title: request.title,
+            description: request.description,
+            tasks,
+            inputs,
+            limits: request
+                .limits
+                .map(mapping::domain_limits)
+                .unwrap_or_default(),
+            finish_when_settled: request.finish_when_settled,
+        };
+        let receipt = self
+            .workflow()?
+            .task_control
+            .create(&session.context, &request.request_id, create)
+            .map_err(super::super::read_model::public_control)?;
+        public_receipt(receipt)
+    }
+
+    pub(in crate::host) fn change_task_workflow(
+        &self,
+        session: &ActorSession,
+        workflow: &str,
+        request: ChangeWorkflowRequest,
+    ) -> Result<WorkflowReceipt, PublicFailure> {
+        let workflow = milkdrift_blueprint::WorkflowId::new(workflow).map_err(failure)?;
+        let changes = request
+            .changes
+            .into_iter()
+            .map(|change| {
+                Ok(match change {
+                    TaskChangeDto::Add { alias, definition } => TaskChange::Add {
+                        alias: TaskId::new(alias).map_err(failure)?,
+                        definition: self.task_definition(session, definition)?,
+                    },
+                    TaskChangeDto::Revise {
+                        task,
+                        expected_version,
+                        definition,
+                    } => TaskChange::Revise {
+                        task: TaskId::new(task).map_err(failure)?,
+                        expected_version,
+                        definition: self.task_definition(session, definition)?,
+                    },
+                    TaskChangeDto::Remove {
+                        task,
+                        expected_version,
+                    } => TaskChange::Remove {
+                        task: TaskId::new(task).map_err(failure)?,
+                        expected_version,
+                    },
+                    TaskChangeDto::BindInput { name, value } => TaskChange::BindInput {
+                        name,
+                        value: self.task_value(session, value)?,
+                    },
+                    TaskChangeDto::Stop { task } => TaskChange::Stop {
+                        task: TaskId::new(task).map_err(failure)?,
+                    },
+                    TaskChangeDto::AdoptCorrection { task, correction } => {
+                        TaskChange::AdoptCorrection {
+                            task: TaskId::new(task).map_err(failure)?,
+                            correction: TaskId::new(correction).map_err(failure)?,
+                        }
+                    }
+                    TaskChangeDto::Continue => TaskChange::Continue,
+                    TaskChangeDto::Wait { question } => TaskChange::Wait { question },
+                    TaskChangeDto::Finish => TaskChange::Finish,
+                })
+            })
+            .collect::<Result<Vec<_>, PublicFailure>>()?;
+        let receipt = self
+            .workflow()?
+            .task_control
+            .edit(
+                &session.context,
+                &request.request_id,
+                &workflow,
+                TaskBatch {
+                    expected_generation: request.expected_generation,
+                    changes,
+                },
+            )
+            .map_err(super::super::read_model::public_control)?;
+        public_receipt(receipt)
+    }
+
+    pub(in crate::host) fn task_request_receipt(
+        &self,
+        session: &ActorSession,
+        request: &str,
+    ) -> Result<WorkflowReceipt, PublicFailure> {
+        let receipt = self
+            .store
+            .workflow_receipt(session.actor.as_str(), request)
+            .map_err(failure)?
+            .ok_or_else(super::super::read_model::not_found)?;
+        self.authorize_task_workflow(session, &receipt.workflow, AuthorityOperation::InspectRun)?;
+        public_receipt(receipt)
+    }
+
+    pub(in crate::host) fn upload_task_input(
+        &self,
+        session: &ActorSession,
+        request: TaskUploadRequest,
+    ) -> Result<TaskUploadReceipt, PublicFailure> {
+        if !request.media_type.starts_with("text/")
+            || request.name.is_empty()
+            || request.name.len() > 255
+            || request.name.contains(['/', '\\', '\0'])
+        {
+            return Err(failure(
+                "task upload requires a bounded filename and UTF-8 text media type",
+            ));
+        }
+        let bytes = milkdrift_control_protocol::encode_json(&request).map_err(failure)?;
+        let upload = InputUploadRequest::from_content(
+            self.host_id.to_string(),
+            request.request_id.clone(),
+            "application/vnd.milkdrift.task-input+json".into(),
+            "internal".into(),
+            &bytes,
+        )
+        .map_err(failure)?;
+        let metadata = self.upload_input(session, &upload)?;
+        Ok(TaskUploadReceipt {
+            input_id: metadata.artifact_id,
+            name: request.name,
+            digest: format!("b3_{}", blake3::hash(request.text.as_bytes())),
+            bytes: u64::try_from(request.text.len()).map_err(failure)?,
+        })
+    }
+}
+
+fn public_receipt(
+    receipt: milkdrift_persistence::WorkflowCommandReceipt,
+) -> Result<WorkflowReceipt, PublicFailure> {
+    let aliases: BTreeMap<String, String> = serde_json::from_value(
+        receipt
+            .acceptance
+            .result
+            .get("aliases")
+            .cloned()
+            .ok_or_else(|| failure("receipt alias map missing"))?,
+    )
+    .map_err(failure)?;
+    Ok(WorkflowReceipt {
+        request_id: receipt.acceptance.key,
+        workflow_id: receipt.workflow.to_string(),
+        generation: receipt.generation,
+        aliases,
+    })
+}

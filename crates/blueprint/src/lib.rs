@@ -76,7 +76,14 @@ mod identity;
 mod model;
 mod mutation;
 mod revision;
+mod task;
 mod validation;
+
+pub use task::{
+    DEFAULT_WORKFLOW_TASKS, MAX_TASK_BATCH_ACTIONS, MAX_TASK_DEFINITION_BYTES, NewTask, TaskBatch,
+    TaskChange, TaskDefinition, TaskDefinitionError, TaskInputBinding, TaskInputValue,
+    TaskPathAccess, WorkflowCreate, WorkflowLimits, validate_task_set,
+};
 
 pub use agreement::{
     AGREEMENT_SCHEMA_VERSION, AdaptationScope, GoverningAgreement, validate_agreement_adoption,
@@ -95,7 +102,7 @@ pub use document::{
 };
 pub use identity::{
     AuthorRef, BlueprintId, ContentDigest, EdgeId, FieldId, IdentityError, MutationBatchId,
-    NodeFingerprint, NodeId, PortId, RevisionId, WorkflowId,
+    NodeFingerprint, NodeId, PortId, RevisionId, TaskId, WorkflowId,
 };
 pub use model::{
     BindingSource, BlueprintMetadata, BranchConfig, CostCurrencyCode, DataPort, Edge, EdgeKind,

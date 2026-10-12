@@ -44,6 +44,8 @@ mod layout;
 mod read;
 mod result;
 pub use result::{RunOutputRead, RunResultRead};
+/// Ordinary task commands and projections used by every public client.
+pub mod tasks;
 mod upload;
 pub use upload::{InputUploadRequest, MAX_INPUT_UPLOAD_BYTES};
 
@@ -64,9 +66,9 @@ pub use read::{
 };
 
 /// Supported control protocol major version.
-const PROTOCOL_MAJOR: u16 = 2;
+const PROTOCOL_MAJOR: u16 = 3;
 /// Supported control protocol minor version.
-const PROTOCOL_MINOR: u16 = 20;
+const PROTOCOL_MINOR: u16 = 0;
 /// Independent presentation-layout document version.
 const LAYOUT_SCHEMA_VERSION: u32 = 1;
 const AUTHENTICATED_CURSOR_SCHEMA_VERSION: u8 = 2;

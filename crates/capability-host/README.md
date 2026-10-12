@@ -23,6 +23,20 @@ consume that selection without workflow services; process and fresh model operat
 workflow control and remote registrations do not. Serving output names the real host invocation;
 the direct path creates no run, workflow account or duplicate local-runtime journal.
 
+Ordinary task dispatch retains its real workflow coordinates and carries its exact frozen inputs
+in `AdapterInputSelection::Task`. It uses the same bounded explicit-input materializer as direct
+work. Result publication uses the task's accepted artifact budget; it does not reconstruct an old
+graph run or consult a graph context manifest.
+
+The daemon installs one durable native-directory claim store before admitting task paths. Host
+preparation resolves each declared directory to its physical path and identity, acquires its full
+read/write set, then rechecks the selection before external entry. Equal or ancestor/descendant
+writers conflict, including paths reached through symlink aliases. A changed symlink or replaced
+directory refuses entry. Claims are retained across host loss and uncertain results; only the
+runtime's post-settlement callback releases them. Current physical-directory identity support is
+Unix-specific; other platforms refuse declared native roots. These claims coordinate declared
+Milkdrift work and do not sandbox trusted native tools or prevent out-of-band file changes.
+
 ## Follow one task
 
 The daemon's [capability construction](../../apps/daemon/src/host/capabilities.rs) loads validated

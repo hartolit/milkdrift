@@ -1,6 +1,6 @@
 use redb::TableDefinition;
 
-pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 17;
+pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 18;
 pub(crate) const SCHEMA_VERSION_KEY: &str = "storage_schema_version";
 pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION: u64 = 20;
 pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION_KEY: &str = "internal_document_format_version";
@@ -50,6 +50,10 @@ macro_rules! physical_tables {
 }
 
 physical_tables! {
+TASK_WORKFLOWS: &'static str, &'static [u8] = "milkdrift.v1.tasks.workflows";
+TASK_RECEIPTS: &'static str, &'static [u8] = "milkdrift.v1.tasks.receipts";
+TASK_ACCOUNTING: &'static str, &'static [u8] = "milkdrift.v1.tasks.accounting";
+NATIVE_PATH_CLAIMS: &'static str, &'static [u8] = "milkdrift.v1.host.native_path_claims";
 PUBLISHED_LOCAL_LINKS: &'static str, u64 = "milkdrift.v1.published.local_links";
 PUBLISHED_LOCAL_PENDING: &'static str, u64 = "milkdrift.v1.published.local_pending";
 PUBLISHED_METHODS: &'static str, &'static [u8] = "milkdrift.v1.published.methods";

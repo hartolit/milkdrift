@@ -1,0 +1,446 @@
+//! Wire requests contain client aliases; acceptance returns daemon identities and exact receipts.
+//!
+//! These DTOs describe transport. Blueprint and control own validation and admission; generated
+//! browser types are projections of these Rust declarations, never another semantic validator.
+
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+/// Text and immutable uploaded content accepted as named inputs.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum InputValue {
+    /// Supplied UTF-8 text.
+    Text {
+        /// Exact UTF-8 content to freeze when the task starts.
+        text: String,
+    },
+    /// An actor-owned upload captured by the daemon.
+    Uploaded {
+        /// Identity returned by this actor's successful upload.
+        input_id: String,
+    },
+    /// An explicitly absent optional value.
+    Absent,
+}
+
+/// A declared source; task references name batch aliases when creating new tasks.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum InputBinding {
+    /// Inline input.
+    Inline {
+        /// Value captured with this definition.
+        value: InputValue,
+    },
+    /// Named workflow input; missing required values keep the task queued.
+    Supplied {
+        /// Key in the workflow's supplied inputs.
+        name: String,
+        /// Whether absence is an accepted value.
+        optional: bool,
+    },
+    /// Named immutable producer output.
+    TaskOutput {
+        /// Producer task identity or an alias in this batch.
+        task: String,
+        /// Named output declared by the producer.
+        output: String,
+        /// Whether settled absence is an accepted value.
+        optional: bool,
+    },
+    /// Settled producer state and available output, including failure.
+    SettledOutcome {
+        /// Producer whose retained outcome becomes the input.
+        task: String,
+    },
+}
+
+/// An exact configured capability choice, obtained from this daemon's catalog.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+pub struct TaskCapability {
+    /// Stable capability identity.
+    pub id: String,
+    /// Supported operation.
+    pub operation: String,
+}
+
+/// A declared filesystem access coordinated by the host before entry.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+pub struct PathAccess {
+    /// Absolute path within granted roots.
+    pub path: String,
+    /// Whether the task may write under this root.
+    pub write: bool,
+}
+
+/// Editable content until the owning runtime freezes the task's start.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+pub struct TaskDefinitionDto {
+    /// Human-readable task title.
+    pub title: String,
+    /// Short explanation shown in list and timeline.
+    pub description: String,
+    /// Instructions delivered to the capability.
+    pub instructions: String,
+    /// Configured external work implementation.
+    pub capability: TaskCapability,
+    /// Named inputs with declared provenance.
+    pub inputs: BTreeMap<String, InputBinding>,
+    /// Explicit producer IDs or batch aliases.
+    pub dependencies: Vec<String>,
+    /// Whether completion requires success or adopted correction.
+    #[serde(default = "required_by_default")]
+    pub required: bool,
+    /// Prior task this future work addresses.
+    pub corrective_of: Option<String>,
+    /// Declared native filesystem roots.
+    pub paths: Vec<PathAccess>,
+}
+
+/// A client-local name paired with proposed task content.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+pub struct NewTaskDto {
+    /// Alias valid only within this atomic request.
+    pub alias: String,
+    /// Proposed task.
+    pub definition: TaskDefinitionDto,
+}
+
+fn required_by_default() -> bool {
+    true
+}
+
+/// Effective cumulative workflow limits, displayed before submission.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowLimitsDto {
+    /// Total admitted tasks.
+    pub tasks: u32,
+    /// Simultaneously active tasks.
+    pub concurrent_tasks: u32,
+    /// Admitted model batches.
+    pub model_batches: u32,
+    /// Consecutive rejected responses.
+    pub rejected_responses: u32,
+    /// Failures on one corrective lineage.
+    pub corrective_failures: u32,
+    /// Cumulative active execution milliseconds.
+    #[cfg_attr(feature = "web-codegen", ts(type = "number"))]
+    pub active_execution_ms: u64,
+    /// Tool invocations per task.
+    pub tool_calls_per_task: u32,
+}
+
+/// Creates one finite or open-ended workflow through the daemon's ordinary command queue.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+pub struct CreateWorkflowRequest {
+    /// Exact request identity; changed reuse conflicts.
+    pub request_id: String,
+    /// Discoverable workflow title.
+    pub title: String,
+    /// Workflow brief.
+    pub description: String,
+    /// Initial tasks with client-local aliases.
+    pub tasks: Vec<NewTaskDto>,
+    /// Named values supplied at creation.
+    pub inputs: BTreeMap<String, InputValue>,
+    /// Explicit completion request for finite work.
+    pub finish_when_settled: bool,
+    /// Optional tighter policy; omitted uses daemon defaults.
+    pub limits: Option<WorkflowLimitsDto>,
+}
+
+/// Prospective task editing and settlement controls.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum TaskChangeDto {
+    /// Add future work.
+    Add {
+        /// Name used by other new tasks in this batch.
+        alias: String,
+        /// Proposed future task content.
+        definition: TaskDefinitionDto,
+    },
+    /// Replace an unstarted definition.
+    Revise {
+        /// Unstarted task to change.
+        task: String,
+        /// Last observed definition version.
+        #[cfg_attr(feature = "web-codegen", ts(type = "number"))]
+        expected_version: u64,
+        /// Replacement future definition.
+        definition: TaskDefinitionDto,
+    },
+    /// Remove an unstarted task.
+    Remove {
+        /// Unstarted task to withdraw.
+        task: String,
+        /// Last observed definition version.
+        #[cfg_attr(feature = "web-codegen", ts(type = "number"))]
+        expected_version: u64,
+    },
+    /// Supply or replace future input.
+    BindInput {
+        /// Workflow input name.
+        name: String,
+        /// Value used only by future starts.
+        value: InputValue,
+    },
+    /// Request cancellation of the exact task attempt.
+    Stop {
+        /// Task whose exact attempt should receive cancellation.
+        task: String,
+    },
+    /// Adopt a successful correction while retaining original history.
+    AdoptCorrection {
+        /// Original failed or stopped obligation.
+        task: String,
+        /// Successful corrective task accepted for that obligation.
+        correction: String,
+    },
+    /// Continue future execution.
+    Continue,
+    /// Wait for a person.
+    Wait {
+        /// Explanation requiring a person's decision.
+        question: String,
+    },
+    /// Request completion when obligations settle.
+    Finish,
+}
+
+/// Atomic generation-guarded mutation.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+pub struct ChangeWorkflowRequest {
+    /// Exact request identity or reserved action identity returned by the task.
+    pub request_id: String,
+    /// Last observed workflow edit generation.
+    #[cfg_attr(feature = "web-codegen", ts(type = "number"))]
+    pub expected_generation: u64,
+    /// The whole batch succeeds or none of it does.
+    pub changes: Vec<TaskChangeDto>,
+}
+
+/// Durable acceptance returned unchanged after exact replay.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowReceipt {
+    /// Client identity binding exact canonical request content.
+    pub request_id: String,
+    /// Daemon-assigned workflow identity.
+    pub workflow_id: String,
+    /// Accepted edit generation.
+    #[cfg_attr(feature = "web-codegen", ts(type = "number"))]
+    pub generation: u64,
+    /// New task aliases mapped to durable identities.
+    pub aliases: BTreeMap<String, String>,
+}
+
+/// Public lifecycle labels distinguish requests from evidence.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
+pub enum TaskStateDto {
+    /// Inputs or dependencies have not become ready.
+    Queued,
+    /// Durable start accepted; external work may be running.
+    Running,
+    /// Completed with retained results.
+    Completed,
+    /// A failure was durably reported.
+    Failed,
+    /// Proven stopped before or after entry.
+    Stopped,
+    /// Entry may have happened and no terminal evidence exists.
+    Uncertain,
+}
+
+/// Immutable task result and selected input identities.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+pub struct TaskResultDto {
+    /// Displayable result content retained by the daemon.
+    pub text: String,
+    /// Content identity of these exact bytes.
+    pub digest: String,
+    /// Named immutable output artifacts.
+    pub artifacts: Vec<String>,
+    /// Selected named input byte identities.
+    pub input_digests: BTreeMap<String, String>,
+}
+
+/// One task as observed through the selected daemon and actor.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+pub struct TaskReadDto {
+    /// Stable workflow-local task identity.
+    pub id: String,
+    /// Last accepted definition generation.
+    #[cfg_attr(feature = "web-codegen", ts(type = "number"))]
+    pub version: u64,
+    /// Actual accepted content.
+    pub definition: TaskDefinitionDto,
+    /// Durable runtime state.
+    pub state: TaskStateDto,
+    /// Missing input, failure, or uncertainty explanation.
+    pub reason: Option<String>,
+    /// Recorded start; queued tasks have none.
+    #[cfg_attr(feature = "web-codegen", ts(type = "number | null"))]
+    pub started_at: Option<u64>,
+    /// Recorded settlement time; uncertainty has none.
+    #[cfg_attr(feature = "web-codegen", ts(type = "number | null"))]
+    pub ended_at: Option<u64>,
+    /// A stop request does not prove the task stopped.
+    pub stop_requested: bool,
+    /// Server-issued bounded action identity for stopping this task.
+    pub stop_request_id: String,
+    /// Exact selected input bytes, capability generation and authority accepted at start.
+    pub frozen: Option<FrozenTaskDto>,
+    /// Available immutable result.
+    pub result: Option<TaskResultDto>,
+}
+
+/// Actual selected bytes or immutable artifact identity, independent of a later file edit.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+pub struct FrozenInputDto {
+    /// Text, captured file, absent value or immutable artifact.
+    pub kind: String,
+    /// Captured filename, when present.
+    pub name: Option<String>,
+    /// Selected UTF-8 bytes, when text is available.
+    pub text: Option<String>,
+    /// Exact selected byte digest.
+    pub digest: Option<String>,
+    /// Immutable artifact identity, when supplied as a reference.
+    pub artifact_id: Option<String>,
+}
+
+/// Start facts remain unchanged by subsequent edits or capability refreshes.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+pub struct FrozenTaskDto {
+    /// Selected inputs with causal names.
+    pub inputs: BTreeMap<String, FrozenInputDto>,
+    /// Exact selected capability generation.
+    #[cfg_attr(feature = "web-codegen", ts(type = "number"))]
+    pub capability_generation: u64,
+    /// Authenticated actor whose authority governed start.
+    pub actor_id: String,
+    /// Frozen grant identity.
+    pub grant_id: String,
+    /// Frozen grant revision.
+    #[cfg_attr(feature = "web-codegen", ts(type = "number"))]
+    pub grant_revision: u64,
+    /// Durable external-entry intent; false means entry has not yet been recorded.
+    pub entered: bool,
+}
+
+/// Authorized workflow projection used by both discovery and the inspector.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowReadDto {
+    /// Stable daemon-assigned workflow identity.
+    pub id: String,
+    /// Discoverable title.
+    pub title: String,
+    /// Brief and description.
+    pub description: String,
+    /// Optimistic edit generation.
+    #[cfg_attr(feature = "web-codegen", ts(type = "number"))]
+    pub generation: u64,
+    /// Workflow lifecycle with waiting distinct from completion.
+    pub state: String,
+    /// Recorded creation time.
+    #[cfg_attr(feature = "web-codegen", ts(type = "number"))]
+    pub created_at: u64,
+    /// Latest recorded update time.
+    #[cfg_attr(feature = "web-codegen", ts(type = "number"))]
+    pub updated_at: u64,
+    /// Effective cumulative ceilings.
+    pub limits: WorkflowLimitsDto,
+    /// Tasks ordered for stable presentation; order does not schedule work.
+    pub tasks: Vec<TaskReadDto>,
+}
+
+/// One bounded search/list page; cursors bind daemon, actor and exact query.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowPageDto {
+    /// Accessible workflows in this page.
+    pub items: Vec<WorkflowReadDto>,
+    /// Opaque continuation, if more accessible results remain.
+    pub next_cursor: Option<String>,
+    /// True when the bounded search window is exhausted.
+    pub truncated: bool,
+}
+
+/// Connection handshake after authenticated authorization.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+pub struct TaskSessionDto {
+    /// Installation identity required on subsequent task operations.
+    pub daemon_id: String,
+    /// Server-owned authenticated actor identity.
+    pub actor_id: String,
+    /// Effective default policy offered before start.
+    pub limits: WorkflowLimitsDto,
+    /// Available and permitted configured choices.
+    pub capabilities: Vec<TaskCapability>,
+}
+
+/// Bounded UTF-8 upload. Binary files are refused until a supported mapping exists.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+pub struct TaskUploadRequest {
+    /// Exact upload request identity.
+    pub request_id: String,
+    /// Basename shown as provenance.
+    pub name: String,
+    /// Text media type.
+    pub media_type: String,
+    /// Actual UTF-8 bytes captured by the daemon.
+    pub text: String,
+}
+
+/// Exact uploaded content reference.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+pub struct TaskUploadReceipt {
+    /// Actor-owned immutable input identity.
+    pub input_id: String,
+    /// Uploaded basename.
+    pub name: String,
+    /// Checked captured byte identity.
+    pub digest: String,
+    /// UTF-8 byte count.
+    #[cfg_attr(feature = "web-codegen", ts(type = "number"))]
+    pub bytes: u64,
+}

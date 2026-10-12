@@ -259,6 +259,9 @@ pub enum PeerHostConfig {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServingHostConfig {
+    /// Exact standalone browser origins. Empty disables browser access; HTTP is loopback-only.
+    #[serde(default)]
+    pub browser_origins: Vec<String>,
     /// Independent client admission policy; authentication supplies the grants separately.
     #[serde(default)]
     pub clients: ClientServingConfig,
@@ -283,6 +286,7 @@ pub struct ServingHostConfig {
 impl Default for ServingHostConfig {
     fn default() -> Self {
         Self {
+            browser_origins: Vec::new(),
             clients: ClientServingConfig::default(),
             worker_threads: 4,
             maximum_global_active: 256,

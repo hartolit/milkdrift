@@ -734,6 +734,22 @@ pub(super) fn public_control(error: ControlError) -> PublicFailure {
 
 pub(super) fn public_persistence(error: PersistenceError) -> PublicFailure {
     match error {
+        PersistenceError::WorkflowGenerationConflict {
+            expected, actual, ..
+        } => {
+            let mut failure = conflict("workflow generation guard is stale");
+            if let Some(expected) = expected {
+                failure
+                    .details
+                    .insert("expected_generation".into(), expected.to_string());
+            }
+            if let Some(actual) = actual {
+                failure
+                    .details
+                    .insert("actual_generation".into(), actual.to_string());
+            }
+            failure
+        }
         PersistenceError::SequenceConflict {
             expected, actual, ..
         } => {
@@ -747,6 +763,7 @@ pub(super) fn public_persistence(error: PersistenceError) -> PublicFailure {
             failure
         }
         PersistenceError::IdempotencyConflict { .. }
+        | PersistenceError::WorkflowIdempotencyConflict { .. }
         | PersistenceError::ExternalCommandIdempotencyConflict { .. }
         | PersistenceError::ApplicationReceiptArchiveGenerationConflict { .. }
         | PersistenceError::ImmutableConflict { .. }

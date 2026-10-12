@@ -329,8 +329,14 @@ fn maximum_budget(left: Option<u64>, right: Option<u64>) -> Option<u64> {
 }
 
 /// Dispatch value delivered to an executor after schedule and lease facts are durable.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ExecutionDispatch {
+    #[serde(default)]
+    task_inputs: bool,
+    #[serde(default)]
+    task_artifact_budget: Option<milkdrift_workspace::WorkspaceBudget>,
+    #[serde(default)]
+    native_path_claims: Vec<milkdrift_blueprint::TaskPathAccess>,
     publication_ancestry: Vec<milkdrift_capability::PublicationAncestor>,
     run: RunId,
     revision: RevisionId,
@@ -370,6 +376,9 @@ impl ExecutionDispatch {
             .validate_request(&request)
             .map_err(|error| ExecutorError::InvalidDispatch(error.to_string()))?;
         Ok(Self {
+            task_inputs: false,
+            task_artifact_budget: None,
+            native_path_claims: Vec::new(),
             publication_ancestry: Vec::new(),
             run,
             revision,
@@ -424,7 +433,41 @@ impl ExecutionDispatch {
             entry_authorization,
             self.request.clone(),
         )
-        .map(|dispatch| dispatch.with_publication_ancestry(self.publication_ancestry.clone()))
+        .map(|mut dispatch| {
+            dispatch.task_inputs = self.task_inputs;
+            dispatch.task_artifact_budget = self.task_artifact_budget.clone();
+            dispatch.native_path_claims = self.native_path_claims.clone();
+            dispatch.with_publication_ancestry(self.publication_ancestry.clone())
+        })
+    }
+
+    pub(crate) fn for_task(
+        mut self,
+        budget: milkdrift_workspace::WorkspaceBudget,
+        paths: Vec<milkdrift_blueprint::TaskPathAccess>,
+    ) -> Self {
+        self.task_inputs = true;
+        self.task_artifact_budget = Some(budget);
+        self.native_path_claims = paths;
+        self
+    }
+
+    /// Ordinary tasks carry their exact explicit inputs directly in the frozen request.
+    #[must_use]
+    pub const fn is_task(&self) -> bool {
+        self.task_inputs
+    }
+
+    /// Frozen artifact ceiling reserved before the task was admitted.
+    #[must_use]
+    pub const fn task_artifact_budget(&self) -> Option<&milkdrift_workspace::WorkspaceBudget> {
+        self.task_artifact_budget.as_ref()
+    }
+
+    /// Native filesystem access claims requested by this exact task definition.
+    #[must_use]
+    pub fn native_path_claims(&self) -> &[milkdrift_blueprint::TaskPathAccess] {
+        &self.native_path_claims
     }
 
     pub(crate) fn with_publication_ancestry(
@@ -755,6 +798,14 @@ impl<'a> PreparedExecution<'a> {
 /// and distinguish failure before entry from loss of an outcome after entry. They must
 /// not append run events, retry effects independently, or substitute a newer generation.
 pub trait TaskExecutor: Send + Sync {
+    /// Releases durable native path claims only after runtime has committed settlement evidence.
+    ///
+    /// # Errors
+    /// Returns a failure to release the exact settled attempt's retained resources.
+    fn settle(&self, _dispatch: &ExecutionDispatch) -> Result<(), ExecutorError> {
+        Ok(())
+    }
+
     /// Recheck an incoming published call with its serving owner before internal work enters.
     /// Runtime checks local callers itself; an unavailable serving owner must fail closed.
     ///

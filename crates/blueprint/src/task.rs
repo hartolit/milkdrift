@@ -1,0 +1,483 @@
+//! Ordinary task definitions. Input availability is decided at execution, not authoring.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use milkdrift_capability::CapabilityRequirement;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+use crate::TaskId;
+
+/// The default maximum number of ordinary tasks admitted to one workflow.
+pub const DEFAULT_WORKFLOW_TASKS: u32 = 256;
+/// A single atomic human or agent edit is deliberately smaller than a workflow.
+pub const MAX_TASK_BATCH_ACTIONS: usize = 32;
+/// Combined instruction and inline-input ceiling for a task definition.
+pub const MAX_TASK_DEFINITION_BYTES: usize = 1_048_576;
+
+/// A captured value carries its bytes, rather than a mutable filesystem path.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum TaskInputValue {
+    /// Human text or an explicitly supplied text input.
+    Text {
+        /// Exact supplied UTF-8 content.
+        text: String,
+    },
+    /// Uploaded or host-captured UTF-8 file bytes and their checked content identity.
+    TextFile {
+        /// Display basename, never an executable filesystem path.
+        name: String,
+        /// Captured UTF-8 bytes used by execution.
+        text: String,
+        /// Canonical BLAKE3 identity checked against the captured bytes.
+        digest: String,
+        /// Original uploaded artifact identity; exact request replay distinguishes equal bytes from different uploads.
+        #[serde(default)]
+        source_artifact: Option<String>,
+    },
+    /// A provider-neutral structured capability input.
+    Json {
+        /// Explicit structured value; the capability validates its own request schema.
+        value: serde_json::Value,
+    },
+    /// Exact immutable result bytes already retained by the owning daemon.
+    Artifact {
+        /// Immutable content identity selected from an accepted task result.
+        reference: milkdrift_capability::ArtifactReference,
+    },
+    /// An explicitly optional supplied value was omitted.
+    Absent,
+}
+
+impl TaskInputValue {
+    /// Checks bounded content and captured-file integrity.
+    ///
+    /// # Errors
+    /// Refuses oversized values, invalid basenames and source identities, or mismatched digests.
+    pub fn validate(&self) -> Result<(), TaskDefinitionError> {
+        let bytes = serde_json::to_vec(self).map_err(|e| TaskDefinitionError(e.to_string()))?;
+        if bytes.len() > MAX_TASK_DEFINITION_BYTES {
+            return Err(TaskDefinitionError("input exceeds 1 MiB".into()));
+        }
+        if let Self::TextFile {
+            name,
+            text,
+            digest,
+            source_artifact,
+        } = self
+        {
+            if name.is_empty() || name.len() > 255 || name.contains(['/', '\\', '\0']) {
+                return Err(TaskDefinitionError(
+                    "captured file name must be a bounded basename".into(),
+                ));
+            }
+            if digest != &format!("b3_{}", blake3::hash(text.as_bytes())) {
+                return Err(TaskDefinitionError(
+                    "captured text-file digest differs from its bytes".into(),
+                ));
+            }
+            if source_artifact
+                .as_ref()
+                .is_some_and(|identity| identity.is_empty() || identity.len() > 1024)
+            {
+                return Err(TaskDefinitionError(
+                    "captured file source identity is invalid".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Makes a byte-identified UTF-8 file input from accepted upload bytes.
+    ///
+    /// # Errors
+    /// Refuses an oversized input or a name that is not a bounded basename.
+    pub fn text_file(name: String, text: String) -> Result<Self, TaskDefinitionError> {
+        let value = Self::TextFile {
+            name,
+            digest: format!("b3_{}", blake3::hash(text.as_bytes())),
+            text,
+            source_artifact: None,
+        };
+        value.validate()?;
+        Ok(value)
+    }
+}
+
+/// A named task input. Output and outcome bindings imply an explicit dependency.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum TaskInputBinding {
+    /// Content supplied directly with the accepted definition.
+    Inline {
+        /// The value frozen if this definition starts.
+        value: TaskInputValue,
+    },
+    /// A named workflow input that may arrive after the task is authored.
+    Supplied {
+        /// Workflow input name.
+        name: String,
+        /// Missing optional values become typed absence; required values keep work queued.
+        #[serde(default)]
+        optional: bool,
+    },
+    /// An immutable named result from a declared producer dependency.
+    TaskOutput {
+        /// Producer identity or an alias in the same atomic request.
+        task: TaskId,
+        /// Output name recorded by the producer's capability.
+        output: String,
+        /// A settled producer without this output may supply typed absence.
+        #[serde(default)]
+        optional: bool,
+    },
+    /// Completion, failure, or proven stop of a declared dependency, including available results.
+    SettledOutcome {
+        /// Producer identity; uncertain work is never treated as settled.
+        task: TaskId,
+    },
+}
+
+/// Declared native root access, acquired by capability-host before file capture or entry.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskPathAccess {
+    /// Absolute native path resolved and rechecked by the execution host.
+    pub path: String,
+    /// A write claim excludes overlapping readers and writers until durable settlement.
+    pub write: bool,
+}
+
+/// Future task content. Runtime freezes the accepted version together with resolved inputs.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskDefinition {
+    /// Human-readable purpose displayed in task discovery and the timeline.
+    pub title: String,
+    /// Optional bounded explanation shown before a task starts.
+    #[serde(default)]
+    pub description: String,
+    /// Instructions frozen at accepted task start.
+    pub instructions: String,
+    /// Required external operation and explicit selection constraints.
+    pub capability: CapabilityRequirement,
+    /// Named values selected independently of display order or instruction text.
+    #[serde(default)]
+    pub inputs: BTreeMap<String, TaskInputBinding>,
+    /// Producers that must satisfy their declared outcome condition before entry.
+    #[serde(default)]
+    pub dependencies: BTreeSet<TaskId>,
+    /// Whether successful completion or explicit successful correction is a workflow obligation.
+    #[serde(default = "required_by_default")]
+    pub required: bool,
+    /// Earlier task addressed by this new work; does not relabel that task's history.
+    #[serde(default)]
+    pub corrective_of: Option<TaskId>,
+    /// Explicit native access coordinated through durable host claims.
+    #[serde(default)]
+    pub paths: Vec<TaskPathAccess>,
+}
+
+const fn required_by_default() -> bool {
+    true
+}
+
+impl TaskDefinition {
+    /// Validates definition bounds and explicit dependency consistency without requiring values.
+    ///
+    /// # Errors
+    /// Refuses invalid names, paths, bounds, or bindings missing their dependency declaration.
+    pub fn validate(&self) -> Result<(), TaskDefinitionError> {
+        if self.title.trim().is_empty() || self.title.len() > 256 || self.description.len() > 4096 {
+            return Err(TaskDefinitionError(
+                "task title or description is empty or oversized".into(),
+            ));
+        }
+        if self.instructions.trim().is_empty()
+            || self.inputs.len() > 64
+            || self.dependencies.len() > 256
+            || self.paths.len() > 32
+        {
+            return Err(TaskDefinitionError(
+                "task instructions or collection bounds are invalid".into(),
+            ));
+        }
+        for (name, binding) in &self.inputs {
+            validate_name(name)?;
+            match binding {
+                TaskInputBinding::Inline { value } => value.validate()?,
+                TaskInputBinding::Supplied { name, .. } => validate_name(name)?,
+                TaskInputBinding::TaskOutput { task, output, .. } => {
+                    validate_name(output)?;
+                    if !self.dependencies.contains(task) {
+                        return Err(TaskDefinitionError(format!(
+                            "output binding requires dependency {task}"
+                        )));
+                    }
+                }
+                TaskInputBinding::SettledOutcome { task } => {
+                    if !self.dependencies.contains(task) {
+                        return Err(TaskDefinitionError(format!(
+                            "outcome binding requires dependency {task}"
+                        )));
+                    }
+                }
+            }
+        }
+        for access in &self.paths {
+            if !std::path::Path::new(&access.path).is_absolute()
+                || access.path.len() > 4096
+                || access.path.contains('\0')
+            {
+                return Err(TaskDefinitionError(
+                    "native task paths must be bounded absolute paths".into(),
+                ));
+            }
+        }
+        if serde_json::to_vec(self)
+            .map_err(|e| TaskDefinitionError(e.to_string()))?
+            .len()
+            > MAX_TASK_DEFINITION_BYTES
+        {
+            return Err(TaskDefinitionError("task definition exceeds 1 MiB".into()));
+        }
+        Ok(())
+    }
+}
+
+fn validate_name(name: &str) -> Result<(), TaskDefinitionError> {
+    if name.is_empty()
+        || name.len() > 128
+        || !name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+    {
+        return Err(TaskDefinitionError(
+            "input/output name must contain 1..=128 safe ASCII bytes".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Cumulative workflow limits. Restart and future edits do not reset spent allowances.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowLimits {
+    /// Cumulative admitted tasks, including later removed or failed tasks.
+    pub tasks: u32,
+    /// Maximum simultaneous tasks; unresolved entered work still consumes a slot.
+    pub concurrent_tasks: u32,
+    /// Cumulative model-produced change batches permitted by the workflow policy.
+    pub model_batches: u32,
+    /// Consecutive rejected or nonprogressing responses permitted before waiting for a person.
+    pub rejected_responses: u32,
+    /// Failed attempts permitted on one corrective lineage.
+    pub corrective_failures: u32,
+    /// Inclusive cumulative active-execution allowance.
+    pub active_execution_ms: u64,
+    /// Tool invocations permitted within one task's model/tool loop.
+    pub tool_calls_per_task: u32,
+}
+
+impl Default for WorkflowLimits {
+    fn default() -> Self {
+        Self {
+            tasks: DEFAULT_WORKFLOW_TASKS,
+            concurrent_tasks: 4,
+            model_batches: 32,
+            rejected_responses: 3,
+            corrective_failures: 3,
+            active_execution_ms: 3_600_000,
+            tool_calls_per_task: 16,
+        }
+    }
+}
+
+impl WorkflowLimits {
+    /// Checks finite policy bounds before any workflow work is admitted.
+    ///
+    /// # Errors
+    /// Refuses zero, unsupported, or inconsistent collection and duration limits.
+    pub fn validate(&self) -> Result<(), TaskDefinitionError> {
+        if self.tasks == 0
+            || self.tasks > 4096
+            || self.concurrent_tasks == 0
+            || self.concurrent_tasks > self.tasks
+            || self.concurrent_tasks > 64
+            || self.model_batches == 0
+            || self.model_batches > 4096
+            || self.rejected_responses == 0
+            || self.corrective_failures == 0
+            || self.active_execution_ms == 0
+            || self.active_execution_ms > 604_800_000
+            || self.tool_calls_per_task == 0
+            || self.tool_calls_per_task > 1024
+        {
+            return Err(TaskDefinitionError(
+                "workflow limits are outside bounded supported values".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// One atomic future-work change. New identities are allocated only by the owning daemon.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum TaskChange {
+    /// Add future work and return its daemon identity in the receipt's alias map.
+    Add {
+        /// Request-local identity available to other changes in this batch.
+        alias: TaskId,
+        /// Complete new task content.
+        definition: TaskDefinition,
+    },
+    /// Replace only an unstarted task's next definition.
+    Revise {
+        /// Exact existing task.
+        task: TaskId,
+        /// Version observed by the caller; stale versions refuse the whole batch.
+        expected_version: u64,
+        /// Complete next definition, retained as a new immutable version.
+        definition: TaskDefinition,
+    },
+    /// Remove an unstarted obligation while retaining its history.
+    Remove {
+        /// Exact existing task.
+        task: TaskId,
+        /// Version observed by the caller.
+        expected_version: u64,
+    },
+    /// Supply or replace a future workflow input without changing any frozen start.
+    BindInput {
+        /// Workflow input binding name.
+        name: String,
+        /// New immutable value for future starts.
+        value: TaskInputValue,
+    },
+    /// Request cancellation without claiming a process or remote operation has stopped.
+    Stop {
+        /// Exact task whose current attempt receives the request.
+        task: TaskId,
+    },
+    /// Satisfy a settled failed obligation through explicitly linked successful work.
+    AdoptCorrection {
+        /// Original failed or stopped task.
+        task: TaskId,
+        /// Successful task that explicitly names the original correction target.
+        correction: TaskId,
+    },
+    /// Release an explicit wait so ordinary readiness can be reconsidered.
+    Continue,
+    /// Record a bounded question and pause new entry until an authorized continuation.
+    Wait {
+        /// Actionable human-facing question.
+        question: String,
+    },
+    /// Request completion once required obligations and every entered operation settle.
+    Finish,
+}
+
+/// Generation-guarded changes shared by humans and model action admission.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskBatch {
+    /// Exact workflow generation the author inspected.
+    pub expected_generation: u64,
+    /// Changes admitted together or refused together.
+    pub changes: Vec<TaskChange>,
+}
+
+/// A task alias is local to this request and never selects a preexisting daemon task.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NewTask {
+    /// Request-local name replaced by a daemon-assigned identity on admission.
+    pub alias: TaskId,
+    /// Complete initial future definition.
+    pub definition: TaskDefinition,
+}
+
+/// Complete initial future work admitted through the same batch rules as later edits.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowCreate {
+    /// Searchable workflow title.
+    pub title: String,
+    /// Bounded description displayed independently of task instructions.
+    #[serde(default)]
+    pub description: String,
+    /// Initial tasks sharing one alias namespace.
+    pub tasks: Vec<NewTask>,
+    /// Explicit supplied values; missing required values are valid while authoring.
+    #[serde(default)]
+    pub inputs: BTreeMap<String, TaskInputValue>,
+    /// Finite cumulative policy, with the ordinary ADR defaults when omitted.
+    #[serde(default)]
+    pub limits: WorkflowLimits,
+    /// Initial explicit finish request for finite human-authored work.
+    #[serde(default = "required_by_default")]
+    pub finish_when_settled: bool,
+}
+
+/// Invalid bounded task definition or dependency structure.
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+#[error("invalid task definition: {0}")]
+pub struct TaskDefinitionError(pub String);
+
+/// Checks the whole prospective task set before any part of a batch can be accepted.
+///
+/// # Errors
+/// Refuses invalid definitions, excess tasks, missing references, self-dependencies and cycles.
+pub fn validate_task_set(
+    tasks: &BTreeMap<TaskId, TaskDefinition>,
+    limits: &WorkflowLimits,
+) -> Result<(), TaskDefinitionError> {
+    limits.validate()?;
+    if tasks.len()
+        > usize::try_from(limits.tasks).map_err(|e| TaskDefinitionError(e.to_string()))?
+    {
+        return Err(TaskDefinitionError(
+            "workflow task capacity exhausted".into(),
+        ));
+    }
+    let mut remaining = BTreeMap::new();
+    for (id, definition) in tasks {
+        definition.validate()?;
+        if definition
+            .dependencies
+            .iter()
+            .any(|dependency| dependency == id || !tasks.contains_key(dependency))
+        {
+            return Err(TaskDefinitionError(format!(
+                "task {id} has a missing or self dependency"
+            )));
+        }
+        if let Some(corrected) = &definition.corrective_of {
+            if corrected == id || !tasks.contains_key(corrected) {
+                return Err(TaskDefinitionError(format!(
+                    "task {id} has an invalid correction origin"
+                )));
+            }
+        }
+        remaining.insert(id.clone(), definition.dependencies.clone());
+    }
+    while !remaining.is_empty() {
+        let ready: BTreeSet<_> = remaining
+            .iter()
+            .filter(|(_, dependencies)| dependencies.is_empty())
+            .map(|(id, _)| id.clone())
+            .collect();
+        if ready.is_empty() {
+            return Err(TaskDefinitionError(
+                "task dependencies contain a cycle".into(),
+            ));
+        }
+        remaining.retain(|id, _| !ready.contains(id));
+        for dependencies in remaining.values_mut() {
+            dependencies.retain(|id| !ready.contains(id));
+        }
+    }
+    Ok(())
+}

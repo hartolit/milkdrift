@@ -484,7 +484,10 @@ impl StoreInvocationDataAccess {
             .store
             .artifact_usage(&owner)
             .map_err(|error| InvocationDataError::Publication(error.to_string()))?;
-        let workspace_budget = if let Some(budget) = context.peer_artifact_budget() {
+        let workspace_budget = if let Some(budget) = context
+            .peer_artifact_budget()
+            .or_else(|| context.task_artifact_budget())
+        {
             budget.clone()
         } else {
             // Local run creation owns its budget. An entered peer execution supplies
@@ -626,6 +629,22 @@ impl InvocationDataAccess for StoreInvocationDataAccess {
     ) -> Result<Vec<u8>, InvocationDataError> {
         if let Some(selection) = context.direct_selection() {
             selection.require_input(input)?;
+        }
+        if matches!(
+            context.selection(),
+            crate::AdapterInputSelection::Task { .. }
+        ) {
+            if let InvocationValueReference::Inline { value } = input.value() {
+                if let Some(text) = value.value().as_str() {
+                    let limits = limits.validate()?;
+                    if u64::try_from(text.len()).map_or(true, |size| size > limits.max_file_bytes) {
+                        return Err(InvocationDataError::Rejected(
+                            "captured task text exceeds its materialization bound".to_owned(),
+                        ));
+                    }
+                    return Ok(text.as_bytes().to_vec());
+                }
+            }
         }
         self.input_bytes(input, limits.validate()?)
             .map(|(bytes, _cause)| bytes)
@@ -867,7 +886,8 @@ fn publication_hash(
     hasher.update(b"milkdrift.process-output-publication.v1\0");
     let mut components = vec![context.publication_namespace()?.as_bytes()];
     match context.selection() {
-        crate::AdapterInputSelection::Workflow(workflow) => components.extend([
+        crate::AdapterInputSelection::Workflow(workflow)
+        | crate::AdapterInputSelection::Task { workflow, .. } => components.extend([
             workflow.revision().as_str().as_bytes(),
             workflow.node().as_str().as_bytes(),
             workflow.execution().as_str().as_bytes(),
@@ -895,7 +915,8 @@ fn publication_causes(
     request: &InvocationRequest,
 ) -> Result<Vec<CausalReference>, InvocationDataError> {
     let mut causes = match context.selection() {
-        crate::AdapterInputSelection::Workflow(workflow) => vec![
+        crate::AdapterInputSelection::Workflow(workflow)
+        | crate::AdapterInputSelection::Task { workflow, .. } => vec![
             external_cause("revision", workflow.revision().as_str())?,
             external_cause("node", workflow.node().as_str())?,
             external_cause("execution", workflow.execution().as_str())?,

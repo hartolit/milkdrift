@@ -22,6 +22,11 @@ mod projection;
 mod query;
 mod reconciliation;
 mod scheduler;
+mod tasks;
+
+pub use tasks::{
+    FrozenTaskStart, TaskRecord, TaskResult, TaskRuntime, TaskState, WorkflowRecord, WorkflowState,
+};
 
 #[cfg(any(test, feature = "test-support"))]
 pub use boundary::ManualClock;

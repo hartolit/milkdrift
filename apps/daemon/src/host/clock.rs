@@ -75,23 +75,21 @@ impl DurableClock {
 
     pub(super) fn now(&self) -> Result<TimestampMillis, DaemonClockError> {
         let store = self.inner.store.clone();
-        let result = self.inner.queue.call(
-            move || {
-                let store = store.upgrade().ok_or(DaemonClockError::Unavailable)?;
-                let (observed, outcome) = store
-                    .sample_clock()
-                    .map_err(|_| DaemonClockError::Unavailable)?;
-                match outcome {
-                    ClockWatermarkObservation::Advanced | ClockWatermarkObservation::Unchanged => {
-                        Ok(observed)
-                    }
-                    ClockWatermarkObservation::RejectedRollback { .. } => {
-                        Err(DaemonClockError::MovedBackwards)
-                    }
-                }
-            },
-            owner_failure,
-        );
+        let result = self.inner.queue.call(move || sample(&store), owner_failure);
+        self.observe(result)
+    }
+
+    // Task workers may hold the runtime transition lock while asking for time. The owner
+    // also takes that lock during scheduling, so queuing this observation back to it would
+    // invert those locks. Redb still samples and advances the same watermark atomically.
+    fn task_now(&self) -> Result<TimestampMillis, DaemonClockError> {
+        self.observe(sample(&self.inner.store))
+    }
+
+    fn observe(
+        &self,
+        result: Result<TimestampMillis, DaemonClockError>,
+    ) -> Result<TimestampMillis, DaemonClockError> {
         match result {
             Ok(observed) => {
                 if self.inner.failed.swap(false, Ordering::SeqCst) {
@@ -129,6 +127,17 @@ impl DurableClock {
     }
 }
 
+fn sample(store: &Weak<RedbStore>) -> Result<TimestampMillis, DaemonClockError> {
+    let store = store.upgrade().ok_or(DaemonClockError::Unavailable)?;
+    let (observed, outcome) = store
+        .sample_clock()
+        .map_err(|_| DaemonClockError::Unavailable)?;
+    match outcome {
+        ClockWatermarkObservation::Advanced | ClockWatermarkObservation::Unchanged => Ok(observed),
+        ClockWatermarkObservation::RejectedRollback { .. } => Err(DaemonClockError::MovedBackwards),
+    }
+}
+
 fn owner_failure(_failure: OwnerCallFailure) -> DaemonClockError {
     DaemonClockError::Unavailable
 }
@@ -162,7 +171,7 @@ struct RuntimeClockAdapter(DurableClock);
 
 impl BoundaryClock for RuntimeClockAdapter {
     fn now(&self) -> Result<TimestampMillis, RuntimeError> {
-        self.0.now().map_err(|_| {
+        self.0.task_now().map_err(|_| {
             RuntimeError::Persistence(PersistenceError::Storage {
                 class: StorageFailureClass::Unavailable,
                 message: "daemon clock boundary is unavailable or untrustworthy".to_owned(),
@@ -257,6 +266,19 @@ mod tests {
         );
         let clock = DurableClock::new(queue, Arc::downgrade(&store), health.clone());
         let peer = clock.peer_adapter();
+
+        // A worker must not require the application owner to service a clock request while
+        // that owner is waiting on the task transition lock. No receiver runs in this test.
+        let runtime_clock = clock.runtime_adapter();
+        let (ready, observed) = std::sync::mpsc::sync_channel(1);
+        let worker = std::thread::spawn(move || {
+            drop(ready.send(runtime_clock.now()));
+        });
+        assert_eq!(
+            observed.recv_timeout(std::time::Duration::from_secs(2))??,
+            TimestampMillis::new(100)
+        );
+        worker.join().map_err(|_| "task clock worker panicked")?;
 
         assert_eq!(peer.now_unix_ms()?, 100);
         source.set(120);

@@ -58,8 +58,14 @@ impl Cli {
             TopCommand::Workflow(args) => match args.command {
                 crate::workflow_args::WorkflowCommand::List { .. } => "workflow.list",
                 crate::workflow_args::WorkflowCommand::Show { .. } => "workflow.show",
-                crate::workflow_args::WorkflowCommand::Copy { .. } => "workflow.copy",
-                _ => "workflow.author",
+                crate::workflow_args::WorkflowCommand::Create { .. } => "workflow.create",
+                crate::workflow_args::WorkflowCommand::Edit { .. } => "workflow.edit",
+                crate::workflow_args::WorkflowCommand::Receipt { .. } => "workflow.receipt",
+                crate::workflow_args::WorkflowCommand::Task { .. } => "workflow.task",
+                crate::workflow_args::WorkflowCommand::Result { .. } => "workflow.result",
+                crate::workflow_args::WorkflowCommand::Stop { .. } => "workflow.stop",
+                crate::workflow_args::WorkflowCommand::Upload { .. } => "workflow.upload",
+                crate::workflow_args::WorkflowCommand::Capabilities => "workflow.capabilities",
             },
             TopCommand::Learning(..) => "learning",
             TopCommand::Method { command } => match command {

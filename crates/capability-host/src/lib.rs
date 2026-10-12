@@ -16,6 +16,7 @@ mod adapter;
 #[cfg(any(test, feature = "test-support"))]
 pub mod conformance;
 mod materialization;
+mod native_paths;
 mod registry;
 mod secret;
 mod serving;

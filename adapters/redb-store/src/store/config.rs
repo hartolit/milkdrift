@@ -46,6 +46,7 @@ impl StoreClock for SystemStoreClock {
 /// happens at [`RedbStore::open_with_config`]. Artifact limits apply in addition to each
 /// run's workspace budget; receipt archival and audit eviction have separate lifecycles.
 pub struct RedbStoreConfig {
+    pub(crate) workflow_limits: milkdrift_persistence::WorkflowStorageLimits,
     pub(crate) root: PathBuf,
     pub(crate) max_artifact_bytes: u64,
     pub(crate) max_total_artifact_bytes: u64,
@@ -89,6 +90,7 @@ impl RedbStoreConfig {
     #[must_use]
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self {
+            workflow_limits: milkdrift_persistence::WorkflowStorageLimits::default(),
             root: root.into(),
             max_artifact_bytes: DEFAULT_MAX_ARTIFACT_BYTES,
             max_total_artifact_bytes: DEFAULT_MAX_TOTAL_ARTIFACT_BYTES,
@@ -102,6 +104,16 @@ impl RedbStoreConfig {
             faults: no_faults(),
             clock: Arc::new(SystemStoreClock),
         }
+    }
+
+    /// Bounds task history and exact command recovery, including reserved settlement capacity.
+    #[must_use]
+    pub fn with_workflow_limits(
+        mut self,
+        limits: milkdrift_persistence::WorkflowStorageLimits,
+    ) -> Self {
+        self.workflow_limits = limits;
+        self
     }
 
     /// Applies the bounded hot receipt lifecycle; cold exact replay remains lifetime durable.
@@ -189,6 +201,7 @@ impl RedbStoreConfig {
 /// final owner releases storage; the application must first drain workers that may still
 /// publish observations or artifacts.
 pub struct RedbStore {
+    pub(crate) workflow_limits: milkdrift_persistence::WorkflowStorageLimits,
     pub(crate) database: Database,
     pub(crate) root: PathBuf,
     pub(crate) artifact_root: PathBuf,

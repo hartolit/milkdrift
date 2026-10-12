@@ -72,17 +72,6 @@ impl Owner {
                 }
             }
         }
-        if let Some(workflow) = &self.workflow
-            && let Err(error) = workflow.runtime.scheduler_tick()
-        {
-            warn!(
-                outcome = "error",
-                code = "runtime_tick",
-                "{}",
-                bounded(&error.to_string())
-            );
-            health.failure("bounded runtime scheduler maintenance failed");
-        }
         if let Some(workers) = &self.effect_workers {
             if let Err(error) = workers.poll() {
                 warn!(

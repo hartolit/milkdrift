@@ -8,7 +8,7 @@ use crate::{error, fault::FaultInjector, fault::no_faults};
 pub(crate) mod capacity;
 mod config;
 pub(crate) mod filesystem;
-mod open;
+pub(crate) mod open;
 pub(crate) mod schema;
 
 pub(crate) use config::{ARTIFACT_DIRECTORY, DATABASE_FILENAME, TEMP_DIRECTORY};

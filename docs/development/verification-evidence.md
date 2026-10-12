@@ -1,5 +1,28 @@
 # Verification and operational evidence
 
+## Connected task checkpoint
+
+Prompt 01 of the daemon task workflow implementation has reached its first production browser
+checkpoint on Linux x86-64 with Chromium. The standalone Svelte build uploaded the repository's
+real Cargo manifest, submitted ordinary work to the daemon's task runtime, observed Running,
+closed the complete browser context, and discovered the completed task and retained report in a
+fresh context. The trusted Rust process parsed the captured file into workspace, dependency and
+target information; supplying `crates/runtime/Cargo.toml` changed that report. This is useful
+input-dependent process evidence, not live model inference or physical phone/HTTPS evidence.
+
+The initial browser suite passed 3 cases, including distinct daemons, memory-only credentials,
+disconnect clearing, keyboard access, installation mismatch and an unconfigured origin. Desktop
+and 390-pixel layouts were visually inspected. The CLI independently uploaded, submitted, read
+the resulting report and recovered the identical task identities through exact replay. Private
+fixture configuration stays under ignored `target/daemon-workflows/01-connected-20261012-d/`;
+redacted browser logs and screenshots are under `target/daemon-workflows/frontend/first-checkpoint/`.
+
+Focused checks passed for task storage (5), task runtime (9), wire fixtures/refusals (3), CORS (1)
+and the durable clock boundary (1). Production daemon/CLI/evidence binaries built. Browser testing
+exposed and drove fixes for obsolete artifact-provenance lookup and a worker-clock/owner-queue lock
+inversion; their failed fixture roots remain preserved. The rest of prompt 01's retirement and
+owner checks remain in progress. No full-system gate or actual user review is claimed here.
+
 Use this guide to choose a reproducible check and understand what its observations support.
 The ordinary [full gate](workflow.md#full-local-gate) checks executable changes, at the point
 required by the [verification policy](workflow.md#choose-verification-for-the-change); the additional

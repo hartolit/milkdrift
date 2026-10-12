@@ -522,7 +522,11 @@ fn validate_artifact_provenance(
                         "local invocation provenance requires a workflow owner".to_owned(),
                     )
                 })?;
-                crate::journal::validate_invocation_fact_in_transaction(write, run, invocation)?;
+                if !crate::task::validate_task_invocation_in_transaction(write, run, invocation)? {
+                    crate::journal::validate_invocation_fact_in_transaction(
+                        write, run, invocation,
+                    )?;
+                }
             }
             CausalReference::HostInvocation { host, invocation } => {
                 if record.metadata.provenance().producer() == causal
