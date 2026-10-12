@@ -4,6 +4,7 @@ mod account;
 mod admission;
 mod capacity;
 mod effects;
+mod inputs;
 mod scheduling;
 
 use crate::{BoundaryClock, ExecutionDispatch, IdGenerator, RuntimeError, TaskExecutor};

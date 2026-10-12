@@ -68,6 +68,10 @@ This task remains queued because `file` is missing. Capture file bytes with:
 {"request_id":"manifest-upload-1","name":"Cargo.toml","media_type":"text/plain","text":"[package]\nname = \"sample\"\nversion = \"0.1.0\"\n"}
 ```
 
+A supplied `{"kind":"absent"}` value also keeps a required binding queued until an authorized
+input edit supplies a value. Optional consumers may start with that same explicit absence;
+each consumer's binding decides readiness. Empty supplied text remains a value, not absence.
+
 Bind the returned `input_id` under the current workflow generation:
 
 ```json

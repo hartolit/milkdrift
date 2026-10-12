@@ -132,7 +132,8 @@ pub enum TaskInputBinding {
     Supplied {
         /// Workflow input name.
         name: String,
-        /// Missing optional values become typed absence; required values keep work queued.
+        /// Missing or explicitly absent optional values become typed absence.
+        /// Required values keep work queued in either case; empty text and JSON null remain values.
         #[serde(default)]
         optional: bool,
     },

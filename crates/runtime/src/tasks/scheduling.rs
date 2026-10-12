@@ -12,6 +12,7 @@ use milkdrift_model::{
 use milkdrift_persistence::{AttemptId, LeaseId, NodeExecutionId, TimestampMillis};
 use milkdrift_workspace::{RunId, WorkspaceBudget};
 
+use super::inputs::resolve_inputs;
 use super::{FrozenTaskStart, TaskRecord, TaskRuntime, TaskState, WorkflowRecord};
 use crate::{CapabilityResolutionContext, ExecutionDispatch, RuntimeError};
 
@@ -391,51 +392,6 @@ fn inline(name: &str, value: serde_json::Value) -> Result<InputReference, Runtim
         },
     )
     .map_err(invalid)
-}
-
-fn resolve_inputs(
-    workflow: &WorkflowRecord,
-    task: &TaskRecord,
-) -> Result<BTreeMap<String, TaskInputValue>, String> {
-    if let Some(original) = &task.definition.corrective_of {
-        if workflow
-            .tasks
-            .get(original)
-            .is_none_or(|value| !value.state.is_settled())
-        {
-            return Err(format!(
-                "corrected task {original} has not settled; replacement effects cannot enter"
-            ));
-        }
-    }
-    for dependency in &task.definition.dependencies {
-        let producer = workflow
-            .tasks
-            .get(dependency)
-            .ok_or_else(|| format!("dependency {dependency} is absent"))?;
-        let accepts_settled = task.definition.inputs.values().any(|binding| matches!(binding, TaskInputBinding::SettledOutcome { task } if task == dependency) || matches!(binding, TaskInputBinding::TaskOutput { task, optional: true, .. } if task == dependency));
-        if producer.state != TaskState::Completed
-            && !(accepts_settled && producer.state.is_settled())
-        {
-            return Err(format!("dependency {dependency} is {:?}", producer.state));
-        }
-    }
-    task.definition.inputs.iter().map(|(name, binding)| {
-        let value = match binding {
-            TaskInputBinding::Inline { value } => value.clone(),
-            TaskInputBinding::Supplied { name, optional } => match workflow.inputs.get(name) { Some(value) => value.clone(), None if *optional => TaskInputValue::Absent, None => return Err(format!("missing supplied input {name}")) },
-            TaskInputBinding::TaskOutput { task, output, optional } => {
-                let producer = workflow.tasks.get(task).ok_or_else(|| format!("producer {task} is absent"))?;
-                match producer.result.as_ref().and_then(|result| result.outputs.get(output)) { Some(reference) => TaskInputValue::Artifact { reference: reference.clone() }, None if *optional && producer.state.is_settled() => TaskInputValue::Absent, None => return Err(format!("missing output {task}/{output}")) }
-            }
-            TaskInputBinding::SettledOutcome { task } => {
-                let producer = workflow.tasks.get(task).ok_or_else(|| format!("producer {task} is absent"))?;
-                if !producer.state.is_settled() { return Err(format!("producer {task} is not settled")); }
-                TaskInputValue::Json { value: serde_json::json!({"task":task,"state":producer.state,"result":producer.result}) }
-            }
-        };
-        Ok((name.clone(), value))
-    }).collect()
 }
 
 fn invalid(error: impl std::fmt::Display) -> RuntimeError {
