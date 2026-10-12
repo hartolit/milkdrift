@@ -2,7 +2,7 @@
 
 ## Prompt 01 focused task acceptance
 
-The task cutover was exercised on Linux x86-64 with Rust 1.95.0, Node 24 and Chromium.
+The task cutover at `95a4dc5` was exercised on Linux x86-64 with Rust 1.95.0, Node 25.2.1 and Chromium.
 The first connected slice was committed as `37aa8c4` before broad retirement. The final
 production browser run passed all eight cases: input-dependent Cargo analysis, complete client
 disposal and fresh-session discovery, distinct daemon connections, missing-input repair, queued
@@ -28,7 +28,7 @@ earlier failed runs are preserved beside the successful reruns.
 | Models | 30 controlled endpoint/fault tests plus model contract tests and doctest | `model-owner-suites-1.log`, `model-contract-final.log` |
 | Rust browser fixture | Two fixture tests and rebuilt production daemon, CLI and Rust helpers | fixture section of `evidence-consumers-final.log`, `production-build-final-5.log` |
 | Retained external-evidence consumer | Five fixture/refusal tests pass through ordinary tasks, with explicit correction, restart and model-finish validation; fixture mode remains non-qualifying | `external-final-3.log` |
-| Repository contracts | All 30 contracts, including current versions, examples, links, dependency direction and compile-fail consumer probes | `contracts-7.log` |
+| Repository contracts | All 30 contracts, including current versions, examples, links, dependency direction and compile-fail consumer probes | `contracts-final.log` |
 
 Default/all-feature public API inventories succeeded for all 18 changed library packages under
 `target/public-api/daemon-workflows-01/`. Review traced task definitions, frozen records, exact
@@ -36,6 +36,9 @@ storage receipts, native-path ports and transport projections through their cons
 graph/publication/controller owners have no compatibility facade. Feature differences remain
 explicit test/evidence helpers; normal/build dependency trees for production daemon and CLI contain
 no `test-support`, `test-admin` or `operational-evidence`. `cargo machete` found no unused dependency.
+The handoff-only follow-up passed all eight documentation contracts and 13 configuration-reader
+tests after removing a fixture's extra final blank line. Formatting and diff whitespace checks
+passed; logs are `handoff-docs.log` and `handoff-config.log`.
 
 These are prompt-01 focused checks. The workspace full gate remains assigned to prompt 07.
 Manual peer longevity and real Podman qualification lanes were not run. Controlled model/process

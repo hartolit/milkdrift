@@ -1,9 +1,9 @@
 # Daemon workflows — implementation sprint
 
-**Prompt 01 assigned and in progress; 02–07 unassigned.** The user's 2026-10-12 instruction authorizes
-the connected production daemon, CLI and Svelte assignment and tested local commits. Stop at the
-01 handoff for the actual user review in 02. This is the replacement implementation sprint,
-not another investigation.
+**Prompt 01 complete at its focused handoff; 02–07 unassigned.** Tested local checkpoints `37aa8c4`
+and `95a4dc5` deliver the connected production daemon, CLI and Svelte assignment. The
+[handoff](handoff.md) gives exact local review instructions. Stop here for the actual user review
+in 02; completing 01 does not authorize its successor.
 The former remedial P00–P09 is superseded and must not be resumed.
 
 ## Outcome and design

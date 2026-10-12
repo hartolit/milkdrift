@@ -1,96 +1,117 @@
-# Implementation handoff
+# Prompt 01 handoff
 
-Prompt 01 is assigned and in progress from clean checkpoint `9134430`. The user authorized its
-production daemon, CLI and Svelte paths and coherent tested local commits, with the first real
-browser-to-task checkpoint reported before broad retirement cleanup. The completion boundary is
-the prompt 01 handoff; actual user review in 02 and all later prompts remain unassigned. The named
-full-system gate stays in 07; this assignment follows its focused-check schedule.
+Prompt 01 is complete through its focused acceptance. The production daemon, CLI, independent JSON
+consumer and standalone Svelte client use the same durable task owner. Stop here: prompt 02 is the
+user's actual review and remains unperformed; no later sprint prompt has been executed or assigned.
+The named full-system gate remains in 07.
 
-The current team separates semantic runtime/control, persistence and host claims, and Svelte work;
-the coordinator owns daemon/public clients, shared files, Cargo jobs, integration and commits.
-Development uses fresh named roots under `target/daemon-workflows/01-connected-20261012*`. Read-only preservation
-inspection found no daemon process but did find existing managed Podman services. Those services,
-their roots and retained stores remain untouched. Preservation refs still point to the recorded
-pre-reset commit.
+## Tested local checkpoints
 
-The first working browser checkpoint was reported before broad retirement cleanup. The production
-Svelte client submitted the actual repository Cargo manifest to a configured trusted Rust process,
-observed Running, disposed the entire browser context, and discovered the completed workflow and
-retained report in a fresh context with only connection credentials. A second task supplied the
-runtime crate's manifest and produced a different dependency/target report. Two daemon connections,
-credential disposal, keyboard access, installation mismatch and actual rejected browser origin
-passed in the initial 3-case Chromium suite. Desktop and 390-pixel phone screenshots were inspected.
-Raw evidence is under `target/daemon-workflows/frontend/first-checkpoint/`; the successful fixture
-uses `target/daemon-workflows/01-connected-20261012-d/`. Earlier attempted roots are preserved.
+- `37aa8c4` — useful public task and first standalone Svelte round trip, reported before broad
+  retirement. A trusted Rust process analyzed the uploaded real Cargo manifest; after the browser
+  closed, a fresh client discovered the retained result. A different manifest changed the report.
+- `95a4dc5` — complete ordinary task cutover, obsolete graph/controller/publication retirement,
+  durable authority/refusal behavior, bounded storage and input/result projections, and adoption
+  by maintained consumers and current documentation.
+- The following handoff commit records completion and these review instructions. All commits are
+  local; no push, amend, rebase or preservation-ref rewrite occurred.
 
-The production CLI separately uploaded the real manifest, created a task, read its computed result,
-and replayed the exact acceptance with the same workflow/task identities against daemon A. Focused
-storage, task-runtime, protocol, CORS and clock checks pass. These observations establish the first
-connected slice, not prompt 01 completion or the final gate. Remaining work includes controlled-model
-evidence, complete old-path retirement, all assigned owner suites, current documentation adoption and
-the final prompt 01 handoff. Actual user review in 02 remains unperformed and unassigned.
+The first and final useful-work evidence are separate from controlled model plumbing. Final browser
+checks pass all eight cases; frontend check/lint, 26 unit tests and production build pass. Focused
+Rust owner checks, 30 repository contracts, public API review and the five external-evidence fixture
+checks pass. [Verification evidence](../../verification-evidence.md#prompt-01-focused-task-acceptance)
+records the commands' logs and exact coverage. Earlier failed runs remain preserved. Actual desktop
+and 390-pixel phone-sized screenshots were inspected by agents; this does not replace user review.
 
-The prior planning evidence below remains scoped to its own checkpoint.
+## Open the current review build
 
-## Preserved planning handoff
+The static production preview is running at **http://127.0.0.1:4173/**. It is a thin standalone
+client; closing it does not stop accepted daemon work. The two review daemons run immutable copies
+of the tested executable from this fresh root:
 
-The implementation sprint is complete as a planning packet and remains unassigned/unexecuted.
-[README](README.md) owns order and the exact start instruction; [ADR 0051](../../../decisions/0051-daemon-task-workflows.md)
-owns selected technical choices. The [supplied planning request](planning-request.txt) is preserved
-verbatim as source evidence, not a standing instruction to repeat planning. The user's live request
-explicitly authorized executing it, updating documents and local commits, and excluded production work.
+`/home/hartolit/Projects/dev/milkdrift/target/daemon-workflows/01-connected-20261012-g/`
 
-The checkout started clean on `main` at `750ebb26607c910ae96c6f6b0f0b3ea12228180c`. The existing
-pre-reset branch/tag both preserve `f821ce093742246390f17edc77252ceb75672f97`. No reset, push,
-production edit, dependency install, store mutation, live-service change or paid model call occurred.
-Bounded read-only source/Git/local-state inspection reused v3 findings; no whole-codebase audit ran.
-The retained test stores and running unrelated Podman/Ollama services were left alone.
+| Connection | Daemon URL | Expected installation | Account | Private credential file under the root |
+| --- | --- | --- | --- | --- |
+| Studio A | `http://127.0.0.1:41977` | `host:browser-a` | `human:browser-a` | `daemon-a/operator.token` |
+| Studio B | `http://127.0.0.1:41997` | `host:browser-b` | `human:browser-b` | `daemon-b/operator.token` |
 
-## Review and verification
+Use **Add daemon connection**, enter the name, URL and installation identity, and paste the matching
+credential from its local file. Both files have mode 0600. No credential value belongs in this handoff,
+a URL, a screenshot or a committed file. The browser keeps credentials only in memory. The Rust
+fixture already provisioned independent actor grants, exact process/model capabilities and finite
+budgets. It did not configure or call a paid service.
 
-Cedar-20261012 (`/root`, agent pseudonym) integrated product/design, execution prompts and current
-entry points. Actual subagents `/root/source_map`, `/root/adoption_hosts` and `/root/journey_review`
-provided bounded source, adoption/host and acceptance checks. They authored respectively the code
-map, prompt 05 and journey. Source-map and journey reviewers then read all seven prompts, README,
-ADR and connected journey against the supplied request. Both had prior design exposure; the former
-authored only the map and the latter the journey. This was a nonauthor review of execution prompts,
-not blind validation of product value or an actual user review.
+The fixture owner has a four-hour lifetime starting around 18:31 UTC on October 12. Its `ready.json`
+contains nonsecret endpoints and process paths; `browser.json` is private. The static preview has
+its own lifetime. If only the preview has stopped, run from the repository root:
 
-Both reviewers reread the concrete corrections and reported their findings closed:
+```sh
+npm --prefix apps/web run preview -- --port 4173 --strictPort
+```
 
-| Finding | Selected correction and assigned evidence |
-| --- | --- |
-| Accepted expansion could race removal/stop | Queued-to-expanding freeze, refused rebind/remove, stopped/paused materialization and restart tests in 04. |
-| Managed editing claims do not cover native project paths | A narrow durable capability-host path-claim owner, parent/child/alias checks and uncertain-writer tests in 01/03. |
-| Failed history versus completion lacked an adoption operation | Required-by-default tasks and typed compatible correction adoption, with authority/cycle/frozen-consumer checks in 03. |
-| Secret import replay lacked stable secret identity | Stable staged identity and private keyed fingerprint, same/changed-secret replay and cleanup tests in 05. |
-| A full store could prevent stopping or settling accepted work | Pre-reserved settlement/control capacity, bounded target action identities and full-capacity stop/revoke/restart cases in 01/05/07. |
-| Early review could pass with only canned content | A useful input-dependent real model/agent or trusted Rust tool operation is mandatory in 01/02; fixtures remain separate test evidence. |
-| Remote catalog did not specify task selection | Connection-plus-capability selectors, frozen generations, collision/refusal/artifact tests in 05. |
-| Empty nested methods could bypass task-count bounds | Incremental 256-reference and 1 MiB snapshot/bundle ceilings with overflow tests in 04. |
+If the fixture owner has exited, retain root `g` and choose an unused new root to restart the two
+configured development daemons and controlled model together. This example refuses an existing
+root and must not be used to overwrite prior evidence:
 
-No remaining concrete defect was reported in those bounded rereads. Actual user checkpoints are
-still future implementation evidence in 02 and 06. No new broad investigation or indefinite review
-round was started.
+```sh
+cargo build -p milkdrift-daemon --bin milkdrift-daemon \
+  -p milkdrift-cli --bin milkdrift -p milkdrift-evidence --bin connected-tasks
+target/debug/connected-tasks serve \
+  --root target/daemon-workflows/02-user-review-new \
+  --daemon target/debug/milkdrift-daemon --lifetime-secs 14400
+```
 
-The documentation command
-`cargo test -p milkdrift-evidence --test repository_contracts --all-features documentation::`
-passed 8/8, including links, structure and unchanged source-derived contract facts. Diff whitespace,
-preservation refs and the verbatim request copy were checked. The integrated suite passed again after
-the final journey additions. The current changes are documentation only; no Rust/runtime/browser
-implementation test or full gate is claimed. No executable sources, manifests, lockfiles, CI or
-runtime configuration changed.
+Read that new root's `ready.json` for its allocated URLs and use its matching local credential files.
+This launches the same reviewed development fixture; it does not execute prompt 02 or erase the old
+review results. Retained roots can be inspected with their matching saved binary and configuration;
+do not point a newer incompatible executable at an earlier store.
 
-Local checkpoint `cf6aecd` contains the selected design, seven prompts and corrected entry points.
-The subsequent handoff commit records this review closure and verification. Both are local; no push,
-amend, squash or rebase occurred. Raw final documentation output is retained under ignored
-`target/daemon-workflows/planning-docs.log`.
+## Useful task to review
 
-## Next action and genuine approval boundaries
+Connect to A and select **New task**. Use a title such as **Review Cargo project**, a brief describing
+what you want to inspect, and instructions to report package/workspace structure, targets and
+dependencies. Choose **cargo-report · process.execute** and upload the repository's `Cargo.toml`
+through **Text file input**. Submit, observe actual Running/Completed state and inspect the result.
+The configured trusted Rust tool parses those supplied bytes; it does not infer unprovided files,
+resolve the lockfile or claim to perform an animation implementation.
 
-There are no unresolved foundational design questions to send back. Implementation is ready for the
-user's next explicit instruction from [the README](README.md#boundaries-and-start-instruction).
-Start 01 and stop at its handoff for 02; later prompts require their own assignment unless the user
-explicitly assigns the whole sequence. Actual user participation in 02/06, any unconfigured paid/live
-capability use, and a newly discovered real-data transition retain their stated authority boundaries.
-They are concrete execution prerequisites, not another planning sprint. Production work has not begun.
+Repeat using `crates/runtime/Cargo.toml` to see the input change the report. Close the complete browser
+while a task runs, reopen with only the connection information above, and find the work through
+search/list. Switch to B to inspect its separate account and results. The same form can leave
+**Supply brief now** unchecked, allowing a queued missing input to be repaired in the task inspector.
+**controlled-model · model.generate** exercises the supplied brief/file through the configured
+Rust-controlled endpoint and is explicitly plumbing evidence.
+
+The CLI reads the same retained work without a browser cache or recovery file:
+
+```sh
+target/debug/milkdrift --url http://127.0.0.1:41977 \
+  --token-file target/daemon-workflows/01-connected-20261012-g/daemon-a/operator.token \
+  --json workflow list --search Cargo
+```
+
+Prompt 02 owns the actual user observations and any resulting repairs. No agent has claimed that
+review passed. This handoff intentionally leaves later automatic task authoring, saved methods,
+connection administration and retention expansion unexecuted.
+
+## Bounds, evidence and preservation
+
+Captured text files and individual text inputs currently have a 16 KiB limit; combined escaped
+instruction/input content has a 24 KiB bound. Selected task previews are labelled at 16 KiB, while
+complete text downloads allow 2 MiB of output content plus bounded separators. Discovery and search
+have explicit finite pages. SSE messages request snapshot resynchronization; they are not a lossless
+public event journal. Restricted content and non-UTF-8 output remain explicit inspector states.
+
+Final screenshots and logs are under `target/daemon-workflows/frontend/final-g/`; first-checkpoint
+artifacts are under `frontend/first-checkpoint/`. Final backend logs and API inventories are indexed
+by verification evidence. Manual peer longevity, real Podman qualification, real models/coding agents,
+physical phones, deployed HTTPS and other operating systems remain unqualified by this assignment.
+
+Initial known stores, unrelated Podman/Ollama services and their roots were not changed. Earlier
+owned development daemons `b`, `c`, `d` and `f` were stopped through their fixture owners after evidence
+collection; their stores and logs remain. Root `e` remains as failed-startup evidence. Root `g` and the
+static preview remain available for review. The preservation branch
+`codex/milkdrift-pre-product-reset-2026-10-12` and tag `milkdrift-pre-product-reset-2026-10-12`
+still resolve to `f821ce093742246390f17edc77252ceb75672f97`. Old stores are refused before writes;
+no migration, reset or cleanup of those stores was performed.

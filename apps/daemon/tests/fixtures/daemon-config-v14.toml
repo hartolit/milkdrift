@@ -113,4 +113,3 @@ mode = "disabled"
 [shutdown]
 deadline_ms = 10000
 effect_policy = "drain"
-

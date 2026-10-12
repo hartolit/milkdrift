@@ -2,13 +2,13 @@
 
 The product account and technical choices are finished for the
 [daemon-workflows implementation sprint](../development/virtual-office/daemon-workflows-implementation/README.md).
-**Prompt 01 is assigned and in progress** under the user's October 12 implementation instruction,
-including production daemon, CLI and Svelte integration and tested local commits. Its handoff stops
-before the actual user review in 02. Prompts 02–07 remain unassigned; 07 owns the named final full-system
+**Prompt 01 is complete at its focused handoff**, with production daemon, CLI and Svelte integration
+and tested local checkpoints `37aa8c4` and `95a4dc5`. The next step is the user's actual review in 02.
+Prompts 02–07 remain unassigned; 07 owns the named final full-system
 test-and-repair gate. The superseded remedial P00–P09 is historical evidence only.
 
 [Vision](vision.md) owns the intended experience, [ADR 0051](../decisions/0051-daemon-task-workflows.md)
-the selected design, and [status](status.md) the earlier implementation and its qualified evidence.
+the selected design, and [status](status.md) the current implementation and its qualified evidence.
 The new program delivers these outcomes in order:
 
 1. A real standalone Svelte client submits a useful task to its daemon, inspects results and

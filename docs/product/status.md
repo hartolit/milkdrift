@@ -3,8 +3,8 @@
 Milkdrift's current ordinary workflow path is a durable daemon-owned task collection exposed through
 the CLI, independent JSON requests and a standalone Svelte client. Prompt 01 of the
 [implementation sprint](../development/virtual-office/daemon-workflows-implementation/README.md)
-is the active assignment. Its handoff requires actual user review in prompt 02; completing this
-slice does not authorize the remaining sprint.
+is complete through its focused handoff at `95a4dc5`. Actual user review in prompt 02 is pending;
+completing this slice does not authorize the remaining sprint.
 
 ## Implemented now
 
@@ -60,16 +60,19 @@ Changing from the root manifest to the runtime manifest changed the reported pac
 dependencies. CLI submission and exact replay used the same daemon owner. This establishes useful
 input-dependent work, separately from the controlled model fixture.
 
-That checkpoint's three browser cases passed; an expanded seven-case run also covered missing-input
-repair, queued editing/stopping and a deliberately dropped accepted POST response. Desktop and
-phone-sized rendered layouts were inspected. The checkpoint had focused runtime, protocol,
-persistence, native-path, clock, CORS and frontend checks. It was the requested early vertical
-milestone, not the final retirement or full-system acceptance.
+After retirement, the final eight-case Chromium run also passed missing-input repair, queued
+editing/stopping, deliberately dropped acceptance responses, controlled-model input handling,
+two-daemon isolation and origin/identity refusals. Desktop and phone-sized rendered layouts were
+inspected. Frontend check/lint, 26 unit tests and the static production build passed. Focused owner
+suites include 18 durable runtime tests, 40 daemon library tests, 28 control-plane tests, two real
+peer-daemon tests, independent host/managed protections and all 30 repository contracts. The ported
+external-evidence consumer passed five fixture/refusal tests without claiming live qualification.
+Default/all-feature public API inventories and production feature boundaries were reviewed.
 
 [Current contract versions](../reference/versions.md) are checked against their owning constants.
 
 Executed checks and their environment limits belong in
 [verification evidence](../development/verification-evidence.md). The sprint
-[handoff](../development/virtual-office/daemon-workflows-implementation/handoff.md) records the final
-prompt-01 commit and exact local review instructions when focused acceptance completes. The full
+[handoff](../development/virtual-office/daemon-workflows-implementation/handoff.md) records the tested
+prompt-01 commits and exact local review instructions. The full
 Rust/frontend gate remains the named prompt-07 assignment.
