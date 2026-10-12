@@ -259,7 +259,12 @@ impl EndpointProfile {
             output,
             AdmissionBound::Bounded(self.limits().max_response_bytes * 4),
             cost,
-        ))
+        )
+        .with_execution_duration_ms(AdmissionBound::Bounded(
+            self.limits()
+                .request_timeout_ms
+                .min(self.limits().idle_timeout_ms),
+        )))
     }
 
     fn monetary_bound(

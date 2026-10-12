@@ -16,6 +16,8 @@ enum Interruption {
     Drain,
     UnknownAllowance,
     ExhaustedAllowance,
+    UnknownDuration,
+    ExhaustedDuration,
 }
 
 struct PreparingAdapter {
@@ -58,7 +60,12 @@ impl CapabilityAdapter for PreparingAdapter {
                 milkdrift_capability::AdmissionBound::NotApplicable,
                 milkdrift_capability::AdmissionBound::Bounded(u64::MAX),
                 milkdrift_capability::AdmissionBound::NotApplicable,
-            ),
+            )
+            .with_execution_duration_ms(milkdrift_capability::AdmissionBound::NotApplicable),
+            Interruption::UnknownDuration => InvocationAdmissionEnvelope::not_applicable()
+                .with_execution_duration_ms(milkdrift_capability::AdmissionBound::Unknown),
+            Interruption::ExhaustedDuration => InvocationAdmissionEnvelope::not_applicable()
+                .with_execution_duration_ms(milkdrift_capability::AdmissionBound::Bounded(30_001)),
             _ => InvocationAdmissionEnvelope::not_applicable(),
         };
         Ok(PreparedAdapterExecution::new(
@@ -342,6 +349,14 @@ fn different_callers_cannot_collide_in_the_adapter_invocation_namespace() -> Tes
 #[test]
 fn serving_enters_the_prepared_handle_once() -> TestResult {
     exercise(Interruption::None)
+}
+#[test]
+fn unknown_prepared_duration_has_no_external_entry() -> TestResult {
+    exercise(Interruption::UnknownDuration)
+}
+#[test]
+fn excessive_prepared_duration_has_no_external_entry() -> TestResult {
+    exercise(Interruption::ExhaustedDuration)
 }
 #[test]
 fn preparation_refusal_has_no_external_entry() -> TestResult {

@@ -491,6 +491,23 @@ impl PeerHttpClient {
         self.config.observation_poll_interval
     }
 
+    // Remote work shares one deadline with staging and observation. A request already in
+    // flight can finish after it, followed by transfer cleanup; reserve those finite waits.
+    pub(crate) fn execution_duration_ms(&self, remote_ms: u64) -> Option<u64> {
+        let request_ms =
+            u64::try_from(self.config.request_timeout.as_nanos().div_ceil(1_000_000)).ok()?;
+        let poll_ms = u64::try_from(
+            self.config
+                .observation_poll_interval
+                .as_nanos()
+                .div_ceil(1_000_000),
+        )
+        .ok()?;
+        remote_ms
+            .checked_add(request_ms.checked_mul(3)?)?
+            .checked_add(poll_ms)
+    }
+
     fn ensure_handshake(&self) -> Result<(), PeerHttpError> {
         let present = self
             .negotiated

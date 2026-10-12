@@ -70,6 +70,10 @@ such as [local process](../../adapters/local-process/README.md). One instance re
 generation. Declare its filesystem, network, secret, and budget requirements before registration.
 `admission_envelope` describes enforceable bounds for the exact request; an unavailable bound stays
 unknown. It runs before durable entry, so it must not start the external operation.
+Its duration must cover the enforced local attempt and bounded cleanup waits; it is not a promise
+of physical remote termination. The generic managed-lifecycle platform port has no overall
+deadline, so that adapter leaves duration unknown and finite workflow admission refuses it.
+Independent administrative resource commands remain available through their existing owner.
 Override `prepare` when local task checks and request construction can happen before that boundary.
 Return an owned `PreparedAdapterExecution`; its closure receives the final execution context. The default freezes the envelope and defers execution to `execute`.
 Preparation may use bounded authorized local reads, but must never contact a provider, create a

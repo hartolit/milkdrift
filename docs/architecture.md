@@ -64,7 +64,11 @@ and explicit, version-guarded future bindings; it never rewrites the original fa
 
 Workflow limits are cumulative. Removing a task does not refund task admission; accepted external
 entry consumes its reserved allowance. Time, model, corrective and tool ceilings have explicit
-owners. Automatic model-produced task additions and saved method expansion remain later work in
+owners. Runtime advances one cumulative elapsed-time account across simultaneous open attempts and
+reserves each adapter's enforced duration before entry. Unknown outcomes retain their reservation
+and clock; a limit stop is not terminal proof. Task document schema 2 retains those watermarks;
+redb internal format 21 refuses older documents rather than inventing timing evidence. Automatic
+model-produced task additions and saved method expansion remain later work in
 the [roadmap](product/roadmap.md).
 
 ## One command and external-effect path

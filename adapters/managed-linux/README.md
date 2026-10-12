@@ -19,6 +19,11 @@ the caller. Worker execution attempts container removal after both ordinary erro
 panics. A failed removal retains the durable resource use for recovery; releasing the creator's
 registration only permits the recovery fence to inspect the container, and does not prove it absent.
 
+A worker's prepared duration includes its task timeout and the finite helper deadlines for
+creation, verification, removal and absence inspection, including each helper's force/reap wait.
+Managed model calls preserve the model adapter's local HTTP deadline. Neither deadline proves
+physical quiescence; failed cleanup retains the managed hold and the workflow reservation.
+
 Start with [managed operations](../../docs/operations/managed-linux.md) and the
 [maintained inputs](../../examples/managed-linux/README.md). Unit/contract tests exercise strict
 readers and the semantic/persistence boundary; `linux_mechanism` is an explicitly gated real-host
@@ -28,3 +33,9 @@ Independent resource evaluation and publication remain available through the CLI
 HTTP evaluation is distinct from publication intent, verified service state, task success and
 general application correctness. The retired workflow-backed method engine is not required for
 these managed-resource guards.
+
+The generic lifecycle adapter cannot declare one overall platform-operation deadline. Finite
+workflow and serving admission therefore refuse it before adapter entry. Lifecycle conformance
+tests still exercise its reporting and cancellation mechanics with an authorized test context;
+a separate production serving test verifies this refusal and zero platform effects. Administrative
+resource commands continue through `ManagedResources`, with their own authority and durable receipts.

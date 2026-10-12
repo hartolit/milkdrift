@@ -114,6 +114,14 @@ expansions, retries and restarts share the workflow account. Human limit increas
 recorded commands and never erase spent allowance. Exhaustion pauses entry and requests bounded
 cancellation, retaining uncertainty until an honest outcome is possible.
 
+The prompt-01 review correction enforces this time allowance with the existing runtime account.
+Final entry reserves an adapter-enforced maximum against prior elapsed time and simultaneous live
+reservations; a descriptor estimate cannot establish that maximum. Each open attempt contributes
+elapsed time at serialized runtime boundaries. Terminal proof releases unused reserved time;
+uncertainty and cancellation acknowledgement do not. Refusing a bound larger than the remainder is
+conservative: the daemon cannot promise that an adapter will finish sooner than its enforced bound.
+An HTTP timeout bounds the client's attempt, not remote physical work; unresolved work remains held.
+
 Running instructions/inputs cannot be revised. Stop requests target the exact attempt and display
 separately from stopped. Replacement is new linked work; it cannot repeat unsafe effects until the
 original settles or authorized reconciliation records evidence and permits that continuation.
@@ -269,6 +277,11 @@ evidence stores remain there. This is not a remote-machine or all-disks inventor
 for mutation or reset. Prompt 01 rechecks only adoption facts. Unexpected real active state requires
 a narrow preservation decision, not a speculative migration engine. New binaries refuse old workflow
 stores before writes. No automatic upgrade/removal of old hosts or external resources is authorized.
+
+The review correction uses task document schema 2 and redb internal document format 21, retaining
+physical schema 19. Earlier task documents lack enforceable duration reservations and accounting
+watermarks. Their readers refuse them without mutation rather than infer missing historical facts.
+Use a fresh development root for this revision and retain the old binary with its existing stores.
 
 The first cut costs more than a GUI wrapper: ordinary workflow representation and obsolete consumers
 must change together. Connect Svelte to a useful real task before completing that cleanup, retain the

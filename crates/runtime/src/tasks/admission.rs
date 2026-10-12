@@ -159,7 +159,7 @@ impl TaskRuntime {
                 .map_err(invalid)?;
         }
         let record = WorkflowRecord {
-            schema_version: 1,
+            schema_version: super::duration::SCHEMA_VERSION,
             id: id.clone(),
             title: request.title,
             description: request.description,
@@ -275,19 +275,18 @@ impl TaskRuntime {
         };
         let mut aliases = BTreeMap::new();
         for change in &batch.changes {
-            if let TaskChange::Add { alias, .. } = change {
-                if aliases
+            if let TaskChange::Add { alias, .. } = change
+                && (aliases
                     .insert(
                         alias.clone(),
                         TaskId::new(self.ids.next("task")?).map_err(invalid)?,
                     )
                     .is_some()
-                    || record.tasks.contains_key(alias)
-                {
-                    return Err(invalid(
-                        "new aliases must be unique and cannot name existing tasks",
-                    ));
-                }
+                    || record.tasks.contains_key(alias))
+            {
+                return Err(invalid(
+                    "new aliases must be unique and cannot name existing tasks",
+                ));
             }
         }
         let now = self.clock.now()?;

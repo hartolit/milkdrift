@@ -654,6 +654,8 @@ fn recovery_authorizes_pending_replacement_instead_of_old_approved_resources() -
     Ok(())
 }
 
+#[path = "lifecycle/admission.rs"]
+mod admission;
 #[path = "support/serving.rs"]
 mod support;
 #[test]
@@ -712,7 +714,7 @@ fn preparation_reports_failure_without_effects_and_uses_the_saved_generation() -
 }
 
 #[test]
-fn lifecycle_adapter_passes_shared_conformance_through_entered_serving_context() -> Result {
+fn lifecycle_adapter_conforms_without_claiming_bounded_serving_admission() -> Result {
     use milkdrift_capability_host::{StoreInvocationDataAccess, conformance::*, managed::*};
     use milkdrift_persistence::ArtifactReadAuthority;
     run_adapter_conformance(|_| -> Result<AdapterConformanceCase> {
@@ -721,7 +723,7 @@ fn lifecycle_adapter_passes_shared_conformance_through_entered_serving_context()
         let platform = Arc::new(Platform::default());
         let manager = Arc::new(owner(store.clone(), platform));
         let descriptor = managed_lifecycle_descriptor()?;
-        let (invocation, context, accepted) = support::entered(
+        let (invocation, context, _accepted) = support::entered(
             &store,
             &descriptor,
             "lifecycle-conformance",
@@ -751,7 +753,8 @@ fn lifecycle_adapter_passes_shared_conformance_through_entered_serving_context()
                 unknown_cancellation: UnknownCancellationExpectation::NegativeAcknowledgement,
             },
         )?
-        .with_serving_allowance(accepted.request.limits)
+        // This fixture supplies an already authorized context to test lifecycle/reporting
+        // mechanics. The admission module separately proves finite serving entry refuses.
         .with_keepalive(directory))
     })?;
     Ok(())

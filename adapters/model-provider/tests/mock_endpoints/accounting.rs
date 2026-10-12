@@ -89,6 +89,8 @@ fn prepared_mapping_and_reported_usage_fit_the_supported_tariff_without_relabell
             .ok_or("accounting reservation_envelope absent")?
             .clone(),
     )?;
+    // The HTTP client enforces the smaller whole-request deadline, not remote compute time.
+    assert_eq!(envelope.execution_duration_ms().bounded(), Some(&2_000));
     assert!(
         matches!(envelope.input_units(), AdmissionBound::Bounded(maximum) if usage.input_units().is_some_and(|actual|actual<=*maximum))
     );

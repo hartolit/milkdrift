@@ -15,3 +15,6 @@ fn claim() -> TestResult<CommandAuthorityClaim> {
 
 #[path = "durable_runtime/tasks.rs"]
 mod tasks;
+
+#[path = "durable_runtime/duration.rs"]
+mod duration;

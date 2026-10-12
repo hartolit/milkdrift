@@ -165,6 +165,16 @@ pub(crate) fn output_artifact_limit(raw: u64) -> Result<u64, ManagedError> {
         .ok_or_else(|| rejected("output_bytes cannot fit its encoded result allocation"))
 }
 
+fn execution_duration_ms(task_timeout_ms: u64) -> Option<u64> {
+    // run_task performs three inspections (two helpers each), creation and image
+    // verification. cleanup_task adds three inspections and removal. Every branch
+    // runs at most these fifteen administrative helpers, including failure cleanup.
+    let helper_timeout = u64::try_from(command::HELPER_TIMEOUT.as_millis()).ok()?;
+    command::attempt_duration_ms(helper_timeout)?
+        .checked_mul(15)?
+        .checked_add(command::attempt_duration_ms(task_timeout_ms)?)
+}
+
 impl CapabilityAdapter for ManagedWorkerAdapter {
     fn accepts_direct_inputs(&self) -> bool {
         true
@@ -175,6 +185,8 @@ impl CapabilityAdapter for ManagedWorkerAdapter {
     ) -> Result<InvocationAdmissionEnvelope, AdapterError> {
         let request = parse(invocation)?;
         let d = units::deployment(&self.setup).map_err(adapter_failure)?;
+        let duration = execution_duration_ms(d.recipe.task_timeout_ms)
+            .ok_or_else(|| AdapterError::rejected("worker attempt duration bound overflow"))?;
         Ok(InvocationAdmissionEnvelope::new(
             AdmissionUnit::Unknown,
             AdmissionBound::NotApplicable,
@@ -192,7 +204,8 @@ impl CapabilityAdapter for ManagedWorkerAdapter {
                     })?,
             ),
             AdmissionBound::NotApplicable,
-        ))
+        )
+        .with_execution_duration_ms(AdmissionBound::Bounded(duration)))
     }
     fn authority_requirements(&self) -> CapabilityExecutionRequirements {
         let mut requirements = CapabilityExecutionRequirements::default();

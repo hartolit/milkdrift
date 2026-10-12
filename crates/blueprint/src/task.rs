@@ -396,7 +396,8 @@ pub struct WorkflowLimits {
     pub rejected_responses: u32,
     /// Failed attempts permitted on one corrective lineage.
     pub corrective_failures: u32,
-    /// Inclusive cumulative active-execution allowance.
+    /// Inclusive cumulative active-execution allowance, shared by simultaneous attempts.
+    /// Entry reserves each adapter's enforced duration; unresolved work retains its reservation.
     pub active_execution_ms: u64,
     /// Tool invocations permitted within one task's model/tool loop.
     pub tool_calls_per_task: u32,

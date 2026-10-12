@@ -20,7 +20,7 @@ use milkdrift_peer_protocol::{
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 #[test]
-fn serving_allowance_requires_enforced_units_currency_and_input_plus_output_bytes() -> TestResult {
+fn serving_allowance_requires_enforced_duration_units_currency_and_artifact_bytes() -> TestResult {
     use milkdrift_capability::{
         AdmissionBound, AdmissionMonetaryBound, AdmissionUnit, InvocationAdmissionEnvelope,
     };
@@ -40,10 +40,24 @@ fn serving_allowance_requires_enforced_units_currency_and_input_plus_output_byte
         AdmissionBound::Bounded(2),
         AdmissionBound::Bounded(10),
         AdmissionBound::Bounded(AdmissionMonetaryBound::new(3, "USD")?),
-    );
+    )
+    .with_execution_duration_ms(AdmissionBound::Bounded(100));
     assert!(limits.permits_prepared(&prepared, 3));
     assert!(!limits.permits_prepared(&prepared, 4));
     assert!(!limits.permits_prepared(&InvocationAdmissionEnvelope::unknown(), 0));
+    for duration in [
+        AdmissionBound::Unknown,
+        AdmissionBound::Bounded(0),
+        AdmissionBound::Bounded(101),
+    ] {
+        assert!(
+            !limits.permits_prepared(&prepared.clone().with_execution_duration_ms(duration), 3,)
+        );
+    }
+    assert_eq!(
+        limits.admission_envelope()?.execution_duration_ms(),
+        prepared.execution_duration_ms()
+    );
     for changed in [
         ExecutionLimits {
             nested_invocations: None,

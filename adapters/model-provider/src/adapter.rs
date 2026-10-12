@@ -720,7 +720,13 @@ impl CapabilityAdapter for ModelEndpointAdapter {
                 self.materialization_limits().max_total_bytes,
             ),
             milkdrift_capability::AdmissionBound::Unknown,
-        ))
+        )
+        .with_execution_duration_ms(milkdrift_capability::AdmissionBound::Bounded(
+            self.profile
+                .limits()
+                .request_timeout_ms
+                .min(self.profile.limits().idle_timeout_ms),
+        )))
     }
 
     fn start(&self) -> Result<(), AdapterError> {

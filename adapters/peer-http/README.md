@@ -66,6 +66,11 @@ committed by the serving worker outranks a later worker or persistence error. Sh
 idempotency prevents another acceptance for the same request; it does not make arbitrary external
 side effects globally exactly once.
 
+Serving preparation checks that the adapter's enforced attempt duration fits the accepted
+`duration_ms`. The origin reserves that delegated duration plus bounded transport cleanup and
+polling waits. Staging, submission retries and output transfer share the existing deadline;
+progress does not extend it. Expiry preserves uncertainty and does not prove remote termination.
+
 ## Artifacts, cancellation, and retained history
 
 Artifact exchange is explicit: `PeerService` verifies an accepted output execution or an exact

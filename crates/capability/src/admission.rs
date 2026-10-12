@@ -182,10 +182,12 @@ pub struct InvocationAdmissionEnvelope {
     output_units: AdmissionBound<u64>,
     artifact_bytes: AdmissionBound<u64>,
     monetary_cost: AdmissionBound<AdmissionMonetaryBound>,
+    execution_duration_ms: AdmissionBound<u64>,
 }
 
 impl InvocationAdmissionEnvelope {
-    /// Constructs the complete four-dimensional admission contract.
+    /// Constructs the resource contract with an unknown execution duration.
+    /// Use [`Self::with_execution_duration_ms`] only for an enforced attempt deadline.
     #[must_use]
     pub const fn new(
         unit: AdmissionUnit,
@@ -201,7 +203,22 @@ impl InvocationAdmissionEnvelope {
             output_units,
             artifact_bytes,
             monetary_cost,
+            execution_duration_ms: AdmissionBound::Unknown,
         }
+    }
+
+    /// Declares the enforced local attempt duration, including bounded cleanup waits.
+    /// This does not prove that a remote effect or an unconfirmed process has stopped.
+    #[must_use]
+    pub const fn with_execution_duration_ms(mut self, bound: AdmissionBound<u64>) -> Self {
+        self.execution_duration_ms = bound;
+        self
+    }
+
+    /// Maximum authorized attempt duration; uncertainty retains its reservation.
+    #[must_use]
+    pub const fn execution_duration_ms(&self) -> &AdmissionBound<u64> {
+        &self.execution_duration_ms
     }
 
     /// Declare an enforceable bound for nested process/model work in this invocation.
@@ -227,6 +244,7 @@ impl InvocationAdmissionEnvelope {
             AdmissionBound::NotApplicable,
             AdmissionBound::NotApplicable,
         )
+        .with_execution_duration_ms(AdmissionBound::NotApplicable)
     }
 
     /// An envelope that deliberately fails closed for every metered dimension.
@@ -313,7 +331,8 @@ mod tests {
             AdmissionBound::NotApplicable,
             AdmissionBound::Unknown,
             AdmissionBound::Bounded(AdmissionMonetaryBound::new(11, "EUR")?),
-        );
+        )
+        .with_execution_duration_ms(AdmissionBound::Bounded(17));
         let bytes = serde_json::to_vec(&envelope)?;
         let decoded: InvocationAdmissionEnvelope = serde_json::from_slice(&bytes)?;
         assert_eq!(decoded, envelope);
@@ -321,6 +340,7 @@ mod tests {
         assert!(decoded.output_units().bounded().is_none());
         assert!(!decoded.output_units().is_unknown());
         assert!(decoded.artifact_bytes().is_unknown());
+        assert_eq!(decoded.execution_duration_ms().bounded(), Some(&17));
         assert_eq!(
             decoded
                 .monetary_cost()
@@ -332,6 +352,12 @@ mod tests {
             InvocationAdmissionEnvelope::not_applicable(),
             InvocationAdmissionEnvelope::unknown()
         );
+        let mut historical = serde_json::to_value(envelope)?;
+        historical
+            .as_object_mut()
+            .ok_or("envelope is not an object")?
+            .remove("execution_duration_ms");
+        assert!(serde_json::from_value::<InvocationAdmissionEnvelope>(historical).is_err());
         Ok(())
     }
 }

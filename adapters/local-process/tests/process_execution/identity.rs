@@ -105,6 +105,11 @@ fn registration_binds_bytes_profile_policy_trust_and_attempt_provenance() -> Tes
         AdmissionBound::NotApplicable
     ));
     assert_eq!(first_envelope.artifact_bytes().bounded(), Some(&4_194_304));
+    // Wall timeout, both termination windows, and the monitor/I/O polling margin.
+    assert_eq!(
+        first_envelope.execution_duration_ms().bounded(),
+        Some(&5_230)
+    );
     Ok(())
 }
 

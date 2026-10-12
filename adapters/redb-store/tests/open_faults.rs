@@ -87,7 +87,7 @@ fn a_multimap_only_database_is_not_reinitialized() -> Result<(), Box<dyn std::er
 #[test]
 fn older_and_future_internal_document_formats_are_refused_without_migration()
 -> Result<(), Box<dyn std::error::Error>> {
-    for found in [16, 17, 18, 19, 21] {
+    for found in [16, 17, 18, 19, 20, 22] {
         let directory = TempDir::new()?;
         drop(RedbStore::open(directory.path())?);
 
@@ -100,14 +100,20 @@ fn older_and_future_internal_document_formats_are_refused_without_migration()
         write.commit()?;
         drop(database);
 
+        let path = directory.path().join(DATABASE_FILENAME);
+        let before = std::fs::read(&path)?;
+        let modified = std::fs::metadata(&path)?.modified()?;
+
         assert!(matches!(
             RedbStore::open(directory.path()),
             Err(PersistenceError::UnsupportedVersion {
                 document: "redb internal document envelope",
                 found: observed,
-                supported: 20,
+                supported: 21,
             }) if u64::from(observed) == found
         ));
+        assert_eq!(std::fs::read(&path)?, before);
+        assert_eq!(std::fs::metadata(&path)?.modified()?, modified);
     }
     Ok(())
 }

@@ -10,10 +10,6 @@ use milkdrift_peer_protocol::{
 use super::{Lifecycle, Ordering, RemoteCapabilityAdapter};
 
 impl RemoteCapabilityAdapter {
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "Exact transfer facts and bounded per-execution accounting remain explicit at the output owner"
-    )]
     pub(super) fn import_output(
         &self,
         execution: &PeerExecutionId,
@@ -29,6 +25,7 @@ impl RemoteCapabilityAdapter {
         if imported.contains(reference.identity()) {
             return Ok(());
         }
+        self.require_before_deadline(deadline)?;
         let size = reference
             .size_bytes()
             .ok_or_else(|| AdapterError::external_failure("peer output lacks an exact size"))?;
@@ -67,6 +64,7 @@ impl RemoteCapabilityAdapter {
         let peer = self.client.remote_peer();
         let transfer = download.transfer.clone();
         let result = (|| {
+            self.require_before_deadline(deadline)?;
             reporter.heartbeat()?;
             let remote_limit = match self
                 .client

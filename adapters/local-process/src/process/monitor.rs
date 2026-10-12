@@ -25,6 +25,26 @@ use super::{
 
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
+/// The wall deadline can be observed one poll late, followed by cleanup observation and
+/// two final nonblocking I/O polls. The same cleanup deadline covers termination and drain.
+pub(super) fn admission_duration_ms(profile: &ProcessProfile) -> Option<u64> {
+    profile
+        .limits
+        .wall_timeout_ms
+        .checked_add(profile.limits.graceful_termination_ms)?
+        .checked_add(profile.limits.forced_termination_ms)?
+        .checked_add(
+            u64::try_from(POLL_INTERVAL.as_millis())
+                .ok()?
+                .checked_mul(2)?,
+        )?
+        .checked_add(
+            u64::try_from(super::streams::IO_POLL_INTERVAL.as_millis())
+                .ok()?
+                .checked_mul(2)?,
+        )
+}
+
 pub(super) struct MonitorIo<'a> {
     pub(super) receiver: &'a Receiver<StreamMessage>,
     pub(super) cancellation: &'a IoCancellation,

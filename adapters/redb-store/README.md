@@ -4,7 +4,9 @@ This adapter implements Milkdrift's [persistence contracts](../../crates/persist
 one redb database and owned artifact directories. Runtime decides what task transitions mean; this
 package makes accepted snapshots, receipts, resource holds and artifacts durable.
 
-The fresh task format uses physical schema 19. Existing databases are locked through a read-only
+The current task format uses internal document format 21 and physical schema 19. Earlier task
+documents lack the enforced-duration reservations and elapsed-time watermarks required by runtime.
+Existing databases are locked through a read-only
 handle and copied privately for the format check before redb can open the source for housekeeping
 writes. Older formats are refused without migration. Keep preserved generations with their matching
 binary and use an explicitly new directory for task development. Tested byte and modification-time

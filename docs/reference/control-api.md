@@ -107,6 +107,14 @@ Correction adoption names a successful corrective task and optional version-guar
 redirects. The original failure/result remains inspectable. No automatic correction or model-led
 workflow editing is implemented in this slice. Cumulative limits never replenish on continue.
 
+`active_execution_ms` is a shared cumulative allowance. Before external entry, the daemon reserves
+the adapter's enforced attempt duration alongside all live reservations and previously observed
+elapsed time. A task whose bound cannot fit is refused before entry, even if it might finish early.
+Preparation without an enforceable duration is also refused. Concurrent clocks consume the same
+allowance; restart and uncertain outcomes retain the open account. Reaching the limit requests a
+stop, but only terminal evidence can establish that execution stopped. A client HTTP deadline is
+not proof that remote physical work has terminated.
+
 ## Reads, pages and streams
 
 Discovery searches workflow/task titles, descriptions and authorized retained text results. Each

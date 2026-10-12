@@ -67,6 +67,11 @@ The same deadline covers child/group observation; cleanup does not start another
 As with other local deadlines, OS scheduling and individual system calls are not hard real-time
 promises.
 
+The prepared workflow duration includes the wall timeout, graceful and forced cleanup windows,
+and the monitor/I/O polling margin. This reserves the complete local attempt allowance before
+entry. A deadline without confirmed termination keeps the task uncertain and its reservation
+retained; it does not authorize a replacement process.
+
 The owner signals I/O interruption, requests force where still needed, polls child/group state
 only until that deadline, then joins every worker before releasing the cancellation registration
 and host permit. Workers close their own handles. After monitoring, cleanup collects the remaining

@@ -123,6 +123,12 @@ lost response retains the charged allowance and uncertainty; timeout and byte cu
 do not establish that remote generation stopped. See the
 [local setup guide](../../docs/guides/local-model-endpoint.md#exercise-the-ordinary-path).
 
+The prepared duration bound is the HTTP client's `min(request_timeout_ms, idle_timeout_ms)`
+whole-request deadline. Workflow admission reserves it alongside other active attempts, and
+durable elapsed time consumes the workflow's shared execution-time allowance. This local deadline
+does not cap physical inference time. Lost or uncertain completion keeps its reservation until
+evidence resolves the attempt.
+
 `Fresh` uses current selected inputs without discovering a conversation. A task can explicitly
 bind a prior producer's named output as evidence for a new fresh request. The daemon freezes that
 artifact identity when the consumer starts; subsequent correction does not rewrite it. Neither

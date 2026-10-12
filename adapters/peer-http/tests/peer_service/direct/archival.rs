@@ -91,7 +91,8 @@ impl CapabilityAdapter for OutputAdapter {
             AdmissionBound::NotApplicable,
             AdmissionBound::Bounded(1024),
             AdmissionBound::NotApplicable,
-        ))
+        )
+        .with_execution_duration_ms(AdmissionBound::NotApplicable))
     }
 
     fn authority_requirements(&self) -> CapabilityExecutionRequirements {

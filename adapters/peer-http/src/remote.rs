@@ -415,8 +415,18 @@ impl CapabilityAdapter for RemoteCapabilityAdapter {
         &self,
         _invocation: &AdapterInvocation<'_>,
     ) -> Result<InvocationAdmissionEnvelope, AdapterError> {
-        self.request_limits()?
+        let limits = self.request_limits()?;
+        let duration = self
+            .client
+            .execution_duration_ms(limits.duration_ms)
+            .ok_or_else(|| AdapterError::rejected("peer attempt duration bound overflow"))?;
+        limits
             .admission_envelope()
+            .map(|envelope| {
+                envelope.with_execution_duration_ms(milkdrift_capability::AdmissionBound::Bounded(
+                    duration,
+                ))
+            })
             .map_err(|error| AdapterError::rejected(error.to_string()))
     }
 
@@ -772,6 +782,20 @@ mod limits;
 mod tests;
 
 impl RemoteCapabilityAdapter {
+    fn require_before_deadline(&self, deadline: u64) -> Result<(), AdapterError> {
+        if self
+            .clock
+            .now_unix_ms()
+            .map_err(|error| AdapterError::external_failure(error.to_string()))?
+            >= deadline
+        {
+            return Err(AdapterError::external_failure(
+                "peer attempt deadline elapsed; external outcome remains uncertain",
+            ));
+        }
+        Ok(())
+    }
+
     fn execute_prepared(
         &self,
         invocation: &AdapterInvocation<'_>,
@@ -860,6 +884,8 @@ impl RemoteCapabilityAdapter {
             .input_artifact_bytes()
             .map_err(|error| AdapterError::rejected(error.to_string()))?;
         let execution = match self.client.submit_with_renewal(&request, || {
+            self.require_before_deadline(deadline)
+                .map_err(|error| PeerHttpError::Unavailable(error.to_string()))?;
             reporter
                 .heartbeat()
                 .map_err(|error| PeerHttpError::Unavailable(error.to_string()))

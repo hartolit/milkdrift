@@ -86,6 +86,7 @@ impl TaskRuntime {
                 .map_err(|_| invalid("task entry lock unavailable"))?;
             let mut workflow = self.require_workflow(&workflow_id)?;
             let now = self.clock.now()?;
+            self.observe_duration(&mut workflow, now)?;
             if workflow
                 .tasks
                 .get(&task_id)
@@ -108,9 +109,17 @@ impl TaskRuntime {
                     &reason,
                 );
             }
-            let reservation =
-                super::account::reserve(&workflow, &dispatch, prepared.admission_envelope());
-            let (allowance, spending_currency) = match reservation {
+            let reservation = super::duration::reserve(&workflow, prepared.admission_envelope())
+                .and_then(|maximum| {
+                    super::account::reserve(
+                        &workflow,
+                        &dispatch,
+                        prepared.admission_envelope(),
+                        maximum,
+                    )
+                    .map(|(allowance, currency)| (allowance, currency, maximum))
+                });
+            let (allowance, spending_currency, maximum_ms) = match reservation {
                 Ok(value) => value,
                 Err(error) => {
                     drop(_guard);
@@ -172,6 +181,11 @@ impl TaskRuntime {
             let exact = dispatch.with_entry_authorization(decision)?;
             frozen.dispatch = exact.clone();
             frozen.entered = true;
+            frozen.execution_duration = Some(super::TaskExecutionDuration {
+                started_at: now,
+                accounted_at: now,
+                maximum_ms,
+            });
             workflow.committed_allowance = allowance;
             workflow.spending_currency = spending_currency;
             let expected = self.advance(&mut workflow)?;
@@ -238,6 +252,7 @@ impl TaskRuntime {
             .lock()
             .map_err(|_| invalid("task capacity lock unavailable"))?;
         let mut workflow = self.require_workflow(workflow_id)?;
+        super::duration::accrue(&mut workflow, self.clock.now()?)?;
         let task = workflow
             .tasks
             .get_mut(task_id)
@@ -320,9 +335,13 @@ impl TaskRuntime {
             }
             return Ok(());
         }
-        if task.frozen.as_ref().is_some_and(|start| start.entered) {
+        if task
+            .frozen
+            .as_ref()
+            .is_some_and(|start| start.entered || start.execution_duration.is_some())
+        {
             return Err(invalid(
-                "entered task cannot be settled using non-entry evidence",
+                "entered or unresolved task cannot be settled using non-entry evidence",
             ));
         }
         task.state = state;
@@ -356,7 +375,23 @@ impl TaskRuntime {
             return Ok(());
         }
         task.state = TaskState::Uncertain;
+        let frozen = task
+            .frozen
+            .as_mut()
+            .ok_or_else(|| invalid("uncertain task lost its accepted start"))?;
+        if frozen.execution_duration.is_none() {
+            let started_at = task
+                .started_at
+                .ok_or_else(|| invalid("uncertain task lost its accepted start time"))?;
+            frozen.execution_duration = Some(super::TaskExecutionDuration {
+                started_at,
+                accounted_at: started_at,
+                maximum_ms: workflow.limits.active_execution_ms,
+            });
+        }
         task.reason = Some(milkdrift_contracts::truncate_utf8(reason, 4096).to_owned());
+        super::duration::accrue(&mut workflow, self.clock.now()?)?;
+        super::duration::request_limit_stop(&mut workflow);
         let expected = self.advance(&mut workflow)?;
         self.save(&workflow, Some(expected), None)?;
         Ok(())
@@ -373,7 +408,15 @@ impl TaskRuntime {
         loop {
             let page = self.store.workflows(cursor.as_deref(), 200)?;
             for snapshot in page.items {
-                let workflow = self.require_workflow(&snapshot.workflow)?;
+                let workflow = {
+                    let _guard = self
+                        .gate
+                        .lock()
+                        .map_err(|_| invalid("task recovery lock unavailable"))?;
+                    let mut workflow = self.require_workflow(&snapshot.workflow)?;
+                    self.observe_duration(&mut workflow, self.clock.now()?)?;
+                    workflow
+                };
                 for (id, task) in &workflow.tasks {
                     if task.state.is_settled() {
                         if let Some(frozen) = &task.frozen {
@@ -408,7 +451,9 @@ impl TaskRuntime {
                             self.save(&current, Some(expected), None)?;
                             continue;
                         }
-                        ready.push(frozen.dispatch.clone());
+                        if !task.stop_requested && workflow.wait_question.is_none() {
+                            ready.push(frozen.dispatch.clone());
+                        }
                     }
                 }
             }
@@ -442,7 +487,7 @@ impl TaskRuntime {
             {
                 continue;
             }
-            if !frozen.entered {
+            if !frozen.entered && frozen.execution_duration.is_none() {
                 self.finish_without_entry(
                     &workflow.id,
                     id,
@@ -582,22 +627,46 @@ impl ExecutionReporter for TaskReporter<'_> {
             .map_err(|error| ExecutorError::BoundaryAfterEntry(error.to_string()))
     }
     fn heartbeat(&self) -> Result<ObservationDisposition, ExecutorError> {
-        if self
-            .runtime
-            .clock
-            .now()
-            .map_err(|e| ExecutorError::BoundaryAfterEntry(e.to_string()))?
-            >= self.dispatch.lease_expires_at()
-        {
-            return Err(ExecutorError::BoundaryAfterEntry(
-                "workflow active execution allowance expired".into(),
-            ));
-        }
-        Ok(ObservationDisposition::Applied)
+        self.check_continuation()
+            .map_err(|error| ExecutorError::BoundaryAfterEntry(error.to_string()))
     }
 }
 
 impl TaskReporter<'_> {
+    fn check_continuation(&self) -> Result<ObservationDisposition, RuntimeError> {
+        let _guard = self
+            .runtime
+            .gate
+            .lock()
+            .map_err(|_| invalid("task continuation lock unavailable"))?;
+        let mut workflow = self.runtime.require_workflow(&self.workflow)?;
+        let now = self.runtime.clock.now()?;
+        self.runtime.observe_duration(&mut workflow, now)?;
+        let task = workflow
+            .tasks
+            .get(&self.task)
+            .ok_or_else(|| invalid("heartbeat task disappeared"))?;
+        if task
+            .frozen
+            .as_ref()
+            .is_none_or(|start| !start.entered || start.dispatch != self.dispatch)
+            || task.state.is_settled()
+        {
+            return Err(invalid(
+                "heartbeat differs from an unsettled entered execution",
+            ));
+        }
+        if task.stop_requested
+            || super::duration::remaining(&workflow) == 0
+            || now >= self.dispatch.lease_expires_at()
+        {
+            return Err(invalid(
+                "task continuation refused by its stop or cumulative execution allowance",
+            ));
+        }
+        Ok(ObservationDisposition::Applied)
+    }
+
     fn record(&self, report: InvocationEvent) -> Result<ObservationDisposition, RuntimeError> {
         let _guard = self
             .runtime
@@ -609,6 +678,9 @@ impl TaskReporter<'_> {
         }
         let mut workflow = self.runtime.require_workflow(&self.workflow)?;
         let now = self.runtime.clock.now()?;
+        // Terminal proof must remain writable even after exhaustion. Charge every open
+        // execution before closing this task's clock, without rejecting its final evidence.
+        super::duration::accrue(&mut workflow, now)?;
         let task = workflow
             .tasks
             .get_mut(&self.task)
@@ -646,17 +718,17 @@ impl TaskReporter<'_> {
         if let Some((message, _, _)) = report.kind().progress() {
             task.reason = Some(message.to_owned());
         }
-        if let Some((name, _)) = report.kind().output() {
-            if frozen.reports.iter().any(|prior| {
+        if let Some((name, _)) = report.kind().output()
+            && frozen.reports.iter().any(|prior| {
                 prior
                     .kind()
                     .output()
                     .is_some_and(|(prior_name, _)| prior_name == name)
-            }) {
-                return Err(invalid(
-                    "an immutable named output cannot be published twice",
-                ));
-            }
+            })
+        {
+            return Err(invalid(
+                "an immutable named output cannot be published twice",
+            ));
         }
         frozen.reports.push(report.clone());
         if let Some(terminal) = report.kind().terminal() {
@@ -678,30 +750,31 @@ impl TaskReporter<'_> {
                         .map(|(name, reference)| (name.to_owned(), reference.clone()))
                 })
                 .collect::<std::collections::BTreeMap<_, _>>();
-            if task.state == TaskState::Completed {
-                if let Some(reason) = super::output_contract_failure(&frozen.definition, &outputs) {
-                    task.state = TaskState::Failed;
-                    task.reason = Some(reason);
-                }
+            if task.state == TaskState::Completed
+                && let Some(reason) = super::output_contract_failure(&frozen.definition, &outputs)
+            {
+                task.state = TaskState::Failed;
+                task.reason = Some(reason);
             }
             task.result = Some(TaskResult {
                 terminal: terminal.clone(),
                 outputs,
                 recorded_at: now,
             });
-            if let Some(started) = task.started_at {
-                let elapsed = now
-                    .get()
-                    .checked_sub(started.get())
-                    .ok_or_else(|| invalid("clock moved backward during task"))?;
-                workflow.active_execution_ms = workflow
-                    .active_execution_ms
-                    .checked_add(elapsed)
-                    .ok_or_else(|| invalid("workflow duration overflow"))?;
-            }
         }
+        super::duration::request_limit_stop(&mut workflow);
+        let continuation_refused = report.kind().terminal().is_none()
+            && workflow
+                .tasks
+                .get(&self.task)
+                .is_some_and(|task| task.stop_requested);
         let expected = self.runtime.advance(&mut workflow)?;
         self.runtime.save(&workflow, Some(expected), None)?;
+        if continuation_refused {
+            return Err(invalid(
+                "further execution refused after the retained report exhausted its duration or stop allowance",
+            ));
+        }
         Ok(ObservationDisposition::Applied)
     }
 }

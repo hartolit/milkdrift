@@ -26,6 +26,11 @@ serialized in frozen starts. Runtime's task records expose immutable starts/resu
 and authorized daemon projections. Construction and transition ownership remain in runtime;
 clients never write those records directly.
 
+`InvocationAdmissionEnvelope::execution_duration_ms` is an adapter contract: its bound must come
+from an enforced attempt deadline, never a descriptor estimate. Runtime's `TaskExecutionDuration`
+is durable evidence for an accepted reservation and its elapsed-time watermark. These exports
+support the same cumulative workflow account; they do not create a second scheduling or budget owner.
+
 `WorkflowStore` commits a snapshot and exact receipt atomically with generation and capacity checks.
 Its artifact, entered-invocation and managed-use facts allow the durable owners to enforce holds
 and publication without decoding a second copy of runtime semantics. Native-path claim ports

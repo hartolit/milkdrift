@@ -165,6 +165,8 @@ impl CapabilityAdapter for ManagedLifecycleAdapter {
         invocation: &AdapterInvocation<'_>,
     ) -> Result<InvocationAdmissionEnvelope, AdapterError> {
         parse(invocation, self.data.as_ref())?;
+        // The platform port has no overall lifecycle-operation deadline. Leave duration
+        // unknown so a finite workflow cannot treat arbitrary installation work as free.
         Ok(InvocationAdmissionEnvelope::new(
             AdmissionUnit::Unknown,
             AdmissionBound::NotApplicable,

@@ -11,6 +11,7 @@ pub(super) fn reserve(
     workflow: &WorkflowRecord,
     dispatch: &ExecutionDispatch,
     envelope: &InvocationAdmissionEnvelope,
+    duration_maximum_ms: u64,
 ) -> Result<(AuthorityBudget, Option<String>), RuntimeError> {
     let artifact_limit = dispatch
         .task_output_bytes()
@@ -80,7 +81,7 @@ pub(super) fn reserve(
         )?,
         duration_ms: add(
             prior.duration_ms,
-            required.duration_ms.unwrap_or(0),
+            required.duration_ms.unwrap_or(0).max(duration_maximum_ms),
             ceiling.duration_ms,
             "execution duration",
         )?,

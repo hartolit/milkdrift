@@ -12,7 +12,7 @@ definitions and workflow snapshots are covered by the control protocol and redb 
 | Authority grant / authorization decision | 5 / 3 | Exact owning reader; incompatible input refused. |
 | Administrative integrity cursor | 5 | Exact owning reader; incompatible input refused. |
 | Peer hot record / compact tombstone | 5 / 3 | Exact owning reader; incompatible input refused. |
-| Redb internal document format / physical schema | 20 / 19 | Exact owning reader; incompatible input refused. |
+| Redb internal document format / physical schema | 21 / 19 | Exact owning reader; incompatible input refused. |
 | Local-process profile / host materialization | 2 / 1 | Exact owning reader; incompatible input refused. |
 | Daemon configuration | 14 | Exact owning reader; incompatible input refused. |
 | CLI JSON output | 2 | Exact owning reader; incompatible input refused. |

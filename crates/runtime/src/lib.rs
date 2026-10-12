@@ -26,5 +26,6 @@ pub use executor::{
     ResolvedCapability, TaskExecutor,
 };
 pub use tasks::{
-    FrozenTaskStart, TaskRecord, TaskResult, TaskRuntime, TaskState, WorkflowRecord, WorkflowState,
+    FrozenTaskStart, TaskExecutionDuration, TaskRecord, TaskResult, TaskRuntime, TaskState,
+    WorkflowRecord, WorkflowState,
 };

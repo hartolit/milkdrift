@@ -16,8 +16,16 @@ pub(crate) const HELPER_TIMEOUT: Duration = Duration::from_secs(45);
 pub(crate) const HELPER_OUTPUT_BYTES: usize = 1_048_576;
 // A failed helper gets one short force/reap allowance; it cannot turn a request timeout
 // into an unbounded wait. Failure to observe exit remains an explicit platform error.
-#[cfg(target_os = "linux")]
 const HELPER_REAP_TIMEOUT: Duration = Duration::from_secs(1);
+const HELPER_POLL_INTERVAL: Duration = Duration::from_millis(10);
+const REAP_POLL_INTERVAL: Duration = Duration::from_millis(5);
+
+pub(crate) fn attempt_duration_ms(timeout_ms: u64) -> Option<u64> {
+    timeout_ms
+        .checked_add(u64::try_from(HELPER_REAP_TIMEOUT.as_millis()).ok()?)?
+        .checked_add(u64::try_from(HELPER_POLL_INTERVAL.as_millis()).ok()?)?
+        .checked_add(u64::try_from(REAP_POLL_INTERVAL.as_millis()).ok()?)
+}
 
 pub(crate) struct CommandOutput {
     pub(crate) success: bool,
@@ -185,7 +193,7 @@ pub(crate) fn run(
                         stderr: err,
                     });
                 }
-                std::thread::sleep(Duration::from_millis(10));
+                std::thread::sleep(HELPER_POLL_INTERVAL);
             }
         }))
         .unwrap_or_else(|_| {
@@ -251,7 +259,7 @@ fn wait_for_reap(
             Ok(None) if started.elapsed() >= timeout => {
                 return Err("helper reap deadline exceeded".to_owned());
             }
-            Ok(None) => std::thread::sleep(Duration::from_millis(5)),
+            Ok(None) => std::thread::sleep(REAP_POLL_INTERVAL),
         }
     }
 }

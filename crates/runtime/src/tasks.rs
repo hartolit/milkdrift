@@ -3,6 +3,7 @@
 mod account;
 mod admission;
 mod capacity;
+mod duration;
 mod effects;
 mod inputs;
 mod scheduling;
@@ -77,8 +78,24 @@ pub struct FrozenTaskStart {
     pub dispatch: ExecutionDispatch,
     /// Durable final-entry intent; absence is the only local recovery evidence of non-entry.
     pub entered: bool,
+    /// Time and enforceable duration reserved at final external entry.
+    /// Unresolved work keeps this reservation until terminal evidence proves settlement.
+    pub execution_duration: Option<TaskExecutionDuration>,
     /// Bounded append-only adapter observations, including exact sequence replay evidence.
     pub reports: Vec<InvocationEvent>,
+}
+
+/// Durable duration evidence owned by one frozen execution and the workflow account.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskExecutionDuration {
+    /// Final entry time, excluding local preparation. Uncertain preparation uses the earlier
+    /// accepted start conservatively because absence of external entry could not be established.
+    pub started_at: TimestampMillis,
+    /// Last timestamp charged to the workflow's cumulative elapsed-time ledger.
+    pub accounted_at: TimestampMillis,
+    /// The adapter's enforceable maximum, reserved before entry; zero is explicit non-applicability.
+    pub maximum_ms: u64,
 }
 
 /// Immutable terminal result. Outputs are content-addressed capability artifact references.
@@ -165,7 +182,7 @@ pub struct WorkflowRecord {
     pub execution_authority: ExecutionAuthorityBasis,
     /// Cumulative tasks ever admitted, unaffected by removal or restart.
     pub admitted_tasks: u32,
-    /// Sum of observed elapsed task execution durations.
+    /// Cumulative elapsed execution, including every concurrently live or unresolved start.
     pub active_execution_ms: u64,
     /// Accepted grant ceilings. New entries never reset these cumulative limits.
     pub allowance: AuthorityBudget,
@@ -280,8 +297,8 @@ impl TaskRuntime {
             .workflow(id)?
             .map(|snapshot| {
                 let record: WorkflowRecord = serde_json::from_value(snapshot.document)?;
-                if record.schema_version != 1
-                    || record.id != snapshot.workflow
+                duration::read_version(&record)?;
+                if record.id != snapshot.workflow
                     || record.generation != snapshot.generation
                     || record.owner_actor != snapshot.owner_actor
                     || record.title != snapshot.title

@@ -59,7 +59,7 @@ pub struct ExecutionLimits {
     pub nested_invocations: Option<milkdrift_capability::InvocationCounts>,
     /// Maximum total input plus output artifact bytes.
     pub artifact_bytes: u64,
-    /// Maximum execution duration.
+    /// Maximum authorized adapter attempt duration; expiry is not physical stop evidence.
     pub duration_ms: u64,
     /// Maximum observed cost in millionths, when applicable.
     pub cost_micros: u64,
@@ -145,7 +145,8 @@ impl ExecutionLimits {
                         .map(AdmissionBound::Bounded)
                 })
                 .map_err(|error| PeerProtocolError::InvalidContract(error.to_string()))?,
-        );
+        )
+        .with_execution_duration_ms(AdmissionBound::Bounded(self.duration_ms));
         Ok(self.nested_invocations.map_or_else(
             || envelope.clone(),
             |counts| envelope.clone().with_nested_invocations(counts),
@@ -200,6 +201,11 @@ impl ExecutionLimits {
                 .is_some_and(|maximum| maximum.contains(counts))
         }) && permits_units(prepared.input_units(), self.input_units)
             && permits_units(prepared.output_units(), self.output_units)
+            && match prepared.execution_duration_ms() {
+                AdmissionBound::NotApplicable => true,
+                AdmissionBound::Bounded(value) => *value > 0 && *value <= self.duration_ms,
+                AdmissionBound::Unknown => false,
+            }
             && output_bytes
                 .and_then(|value| value.checked_add(input_artifact_bytes))
                 .is_some_and(|value| value <= self.artifact_bytes)

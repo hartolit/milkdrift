@@ -494,13 +494,16 @@ impl CapabilityAdapter for LocalProcessAdapter {
         &self,
         _invocation: &AdapterInvocation<'_>,
     ) -> Result<InvocationAdmissionEnvelope, AdapterError> {
+        let duration = monitor::admission_duration_ms(&self.profile)
+            .ok_or_else(|| AdapterError::rejected("process attempt duration bound overflow"))?;
         Ok(InvocationAdmissionEnvelope::new(
             milkdrift_capability::AdmissionUnit::Unknown,
             AdmissionBound::NotApplicable,
             AdmissionBound::NotApplicable,
             AdmissionBound::Bounded(self.profile.limits.max_total_output_bytes),
             AdmissionBound::NotApplicable,
-        ))
+        )
+        .with_execution_duration_ms(AdmissionBound::Bounded(duration)))
     }
 
     fn start(&self) -> Result<(), AdapterError> {

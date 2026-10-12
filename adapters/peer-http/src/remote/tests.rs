@@ -361,6 +361,51 @@ fn remote_conformance_case(
 }
 
 #[test]
+fn remote_duration_includes_transport_cleanup_and_refuses_submission_at_deadline()
+-> Result<(), Box<dyn std::error::Error>> {
+    struct Reporter;
+    impl AdapterReporter for Reporter {
+        fn invocation(&self, _event: InvocationEvent) -> Result<(), AdapterError> {
+            Err(AdapterError::external_failure(
+                "unexpected invocation report",
+            ))
+        }
+        fn heartbeat(&self) -> Result<(), AdapterError> {
+            Ok(())
+        }
+    }
+    let mut fixture = remote_case(ConformanceScenario::Lifecycle)?;
+    let clock = Arc::new(ControlledClock::new(1_000));
+    Arc::get_mut(&mut fixture.adapter)
+        .ok_or("adapter shared")?
+        .clock = clock;
+    let selection = ResolvedCapabilitySnapshot::from_descriptor(
+        &fixture.descriptor,
+        fixture.request.operation(),
+    )?;
+    let invocation =
+        AdapterInvocation::with_context(&selection, &fixture.request, &fixture.context);
+    assert_eq!(fixture.adapter.request_limits()?.duration_ms, 1_000);
+    assert_eq!(
+        fixture
+            .adapter
+            .admission_envelope(&invocation)?
+            .execution_duration_ms()
+            .bounded(),
+        Some(&7_001)
+    );
+    assert_eq!(fixture.adapter.client.execution_duration_ms(u64::MAX), None);
+    fixture.adapter.start()?;
+    let error = fixture
+        .adapter
+        .execute(&invocation, &Reporter)
+        .err()
+        .ok_or("expired request entered")?;
+    assert!(error.to_string().contains("deadline elapsed"), "{error}");
+    Ok(())
+}
+
+#[test]
 fn catalog_retirement_keeps_the_exact_active_permit_until_reporting_finishes()
 -> Result<(), Box<dyn std::error::Error>> {
     use std::sync::mpsc;

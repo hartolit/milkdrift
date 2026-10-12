@@ -41,6 +41,7 @@ impl TaskRuntime {
         let mut dispatches = Vec::new();
         for snapshot in page.items {
             let mut workflow = self.require_workflow(&snapshot.workflow)?;
+            self.observe_duration(&mut workflow, self.clock.now()?)?;
             if workflow.wait_question.is_some() {
                 continue;
             }
@@ -111,17 +112,11 @@ impl TaskRuntime {
                         continue;
                     }
                 };
-                if workflow.active_execution_ms >= workflow.limits.active_execution_ms {
-                    workflow
-                        .tasks
-                        .get_mut(&task_id)
-                        .ok_or_else(|| invalid("task disappeared"))?
-                        .reason = Some("workflow active execution allowance exhausted".into());
-                    let expected = self.advance(&mut workflow)?;
-                    self.save(&workflow, Some(expected), None)?;
-                    continue;
-                }
                 let now = self.clock.now()?;
+                self.observe_duration(&mut workflow, now)?;
+                if super::duration::remaining(&workflow) == 0 {
+                    break;
+                }
                 match self.prepare_dispatch(&workflow, &task, &inputs, now) {
                     Ok(dispatch) => {
                         let selected = workflow
@@ -140,6 +135,7 @@ impl TaskRuntime {
                             inputs,
                             dispatch: dispatch.clone(),
                             entered: false,
+                            execution_duration: None,
                             reports: Vec::new(),
                         });
                         let expected = self.advance(&mut workflow)?;
@@ -338,7 +334,7 @@ impl TaskRuntime {
         let lease = LeaseId::new(self.ids.next("lease")?).map_err(invalid)?;
         let expires_at = TimestampMillis::new(
             now.get()
-                .checked_add(workflow.limits.active_execution_ms)
+                .checked_add(super::duration::remaining(workflow))
                 .ok_or_else(|| invalid("task lease deadline overflow"))?,
         );
         let mut entry_request = authorization.request().clone();

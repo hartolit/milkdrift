@@ -1,6 +1,12 @@
 use super::private_id_mappings;
 
 #[test]
+fn worker_duration_reserves_task_and_every_cleanup_helper_without_overflow() {
+    assert_eq!(super::execution_duration_ms(1_000), Some(692_240));
+    assert_eq!(super::execution_duration_ms(u64::MAX), None);
+}
+
+#[test]
 fn failed_creator_registration_leaves_both_ownership_views_unchanged()
 -> Result<(), Box<dyn std::error::Error>> {
     use std::sync::{Arc, Mutex, atomic::AtomicBool};

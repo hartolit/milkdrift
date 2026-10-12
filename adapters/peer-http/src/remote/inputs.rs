@@ -152,6 +152,7 @@ impl RemoteCapabilityAdapter {
             };
             let mut published = false;
             let result = (|| {
+                self.require_before_deadline(request.deadline_unix_ms)?;
                 reporter.heartbeat()?;
                 let (mut offset, maximum) = match self
                     .client
@@ -176,6 +177,7 @@ impl RemoteCapabilityAdapter {
                     }
                 };
                 while offset < input.bytes.len() as u64 {
+                    self.require_before_deadline(request.deadline_unix_ms)?;
                     reporter.heartbeat()?;
                     let start = usize::try_from(offset).map_err(|_| {
                         AdapterError::external_failure("remote input offset overflow")
