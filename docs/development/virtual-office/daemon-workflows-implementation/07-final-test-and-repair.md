@@ -1,6 +1,6 @@
 # 07 — Final full-system test and repair
 
-**Prepared, not assigned.** Prerequisites: 01–06 and corrective prompts 02a/02b complete, both actual
+**Prepared, not assigned.** Prerequisites: 01–06 and corrective prompts 02a/02b/02c complete, both actual
 user checkpoints recorded, focused checks passing, no known deferred in-scope defects. This is the
 named final acceptance owner
 under the [sprint schedule](README.md) and [verification policy](../../workflow.md).

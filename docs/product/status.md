@@ -6,12 +6,13 @@ the CLI, independent JSON requests and a standalone Svelte client. Prompt 03 of 
 extends that path with model-authored future work, parallel research, correction and human batch
 editing. The user authorized proceeding while actual user review in prompt 02 remained pending.
 That review has now begun: the user reports connecting Studio A and rejects the setup friction and
-current visual design. The substantive task journey remains unreviewed. The assigned 02a correction
+current visual design. Completion of the substantive task journey has not been reported. The assigned 02a correction
 implements shared daemon naming and address/credential setup; the user has not rechecked it yet.
 The assigned 02b correction applies the supplied dark visual direction and real logo throughout the
-client, with responsive navigation and a desktop task inspector. Its user review remains open.
-Prompt 04 waits for those corrections and the
-completed early review. Prompt 07 retains the final integrated gate. Hosted quality run 227
+client, with responsive navigation and a desktop task inspector. The user then rejected interaction
+usability: too many forms, disruptive navigation and unclear creation of multiple workflows. A
+prepared 02c correction addresses those paths; it is not implemented or assigned. Prompt 04 waits
+for those corrections and the completed early review. Prompt 07 retains the final integrated gate. Hosted quality run 227
 failed on the earlier `e720bb9`; no later hosted pass is claimed.
 
 ## Implemented now
@@ -69,8 +70,11 @@ stop requests, uncertainty and restart cannot refund unresolved work.
 
 ## Limitations now
 
-The dark workspace, real brand, reorganized forms and responsive inspector are implemented, but
-visual fit, simpler setup and shared naming still need the user's usability recheck.
+The dark workspace and real brand are implemented, but the user rejects the authoring/navigation
+experience. **+ New task** creates another workflow; adding to an existing workflow requires the
+advanced batch editor. These operations work through the daemon, yet the distinction is hard to
+discover and ordinary authoring exposes too many fields. The prepared interaction correction and
+actual user recheck remain open. Naming and visual preference acceptance have not been reported.
 Rename receipts have a fixed capacity of 1,024; new renames refuse at capacity while reads and exact
 replay remain available.
 

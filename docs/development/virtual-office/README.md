@@ -12,9 +12,10 @@ The [whiteboard](whiteboard/README.md) retains broader issues and discussions ac
 [Daemon workflows implementation](daemon-workflows-implementation/README.md) has completed prompt 03
 locally, with the early user review in progress. The user's connection and visual feedback produced
 corrective prompts 02a/02b before further feature work. Assigned 02a implements shared names and
-simpler setup. Assigned 02b applies the supplied visual direction and real logo. Their user rechecks
-and the substantive early journey remain open; 04–07 remain
-unassigned. Its [handoff](daemon-workflows-implementation/handoff.md) records tested checkpoints,
+simpler setup. Assigned 02b applies the supplied visual direction and real logo. Subsequent feedback
+rejects its interaction design; prepared 02c corrects ordinary authoring and workflow navigation.
+It and 04–07 remain unassigned. Naming acceptance and the substantive early journey remain open.
+Its [handoff](daemon-workflows-implementation/handoff.md) records tested checkpoints,
 actual review observations and how to resume; the sprint README owns the next assignment.
 
 [Remedial planning v3](milkdrift-remedial-planning-v3/README.md) is retained as the superseded

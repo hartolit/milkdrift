@@ -1,6 +1,8 @@
 # 02b — Apply the visual direction and real Milkdrift brand
 
-**Assigned October 17; implemented locally, actual user review pending.** Prerequisite:
+**Assigned October 17; implemented locally, subsequent interaction review rejected.** Prepared
+[02c](02c-workspace-and-task-creation.md) addresses forms, navigation and workflow/task creation;
+the supplied visual direction remains in place without a claim of user acceptance. Prerequisite:
 [02a](02a-daemon-connection-identity.md) is implemented and passes focused checks. The
 [handoff](handoff.md) records verification and the remaining user review. The user strongly rejected
 the original visual design during the partial

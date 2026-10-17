@@ -82,6 +82,12 @@ Humans and agents can browse recent workflows and tasks and search retained resu
 selected daemon without already knowing an ID. A fresh authorized client can discover ongoing work.
 Closing a phone changes only observation, not execution.
 
+Creating a workflow and adding a task to an existing workflow are distinct, obvious actions. The
+client keeps the current daemon, workflow and nearby work visible while a person writes instructions
+and optionally supplies context. Ordinary task creation should not require technical identifiers,
+staging a batch or interpreting JSON. Advanced controls remain available when the work needs them;
+simpler presentation never silently changes the destination, executor or permissions.
+
 ## Keep the useful history, protect the necessary state
 
 Completed history and context use configurable rolling retention. The product explains what expired

@@ -10,10 +10,16 @@ planning. This is direct user feedback, not an agent-observed click trace or a c
 The [single sprint handoff](virtual-office/daemon-workflows-implementation/handoff.md#actual-user-review-and-corrections)
 retains the environment, source material, finding owners and resume procedure.
 
+After the 02b delivery at `90ce1ff`/`2840937`, the user reported excessive fields/forms, disruptive
+navigation and an inability to discover creation of multiple workflows. Source inspection confirms
+that **+ New task** creates a workflow, while adding to an existing workflow requires the advanced
+batch editor. The prepared 02c correction addresses this rejected interaction design; it has no
+implementation or usability acceptance evidence yet. The actual browser asset load/click sequence
+was not captured. Earlier automated passes below remain functional evidence, not usability acceptance.
+
 Useful task output, close/reconnect, daemon switching, missing-input repair, failure and stop
-understanding have not yet been reviewed by this user. Browser engine and physical-phone use were
-not established. The assigned 02a and 02b implementations have focused evidence below; their user
-rechecks remain open.
+understanding have not yet been reported as completed by this user. Browser engine and physical-phone
+use were not established. Naming and visual preference acceptance also remain open.
 
 ## Prompt 02b visual design verification
 

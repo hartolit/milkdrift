@@ -9,8 +9,11 @@ The user authorized proceeding with actual prompt-02 review still pending. That 
 begun and produced the corrections below. Agent browser checks do not complete it. Subsequently
 assigned 02a implements address/credential connection, learned identity pins and a shared daemon
 name with authorized rename and exact recovery. Subsequently assigned 02b applies the supplied dark
-visual direction and exact logo across the maintained client. Their user rechecks remain pending;
-prompts 04–07 remain unassigned.
+visual direction and exact logo across the maintained client. The subsequent user recheck rejects
+the interaction design: excessive forms, disruptive navigation and unclear workflow creation.
+[02c](02c-workspace-and-task-creation.md) is prepared to correct those paths; implementation is not
+yet assigned. Naming acceptance and the substantive task journey remain open. Prompts 04–07 remain
+unassigned.
 Prompt 07 owns the integrated full-system gate. No push, history rewrite, external service change or
 paid model use occurred.
 
@@ -34,11 +37,28 @@ field. The authenticated session already returns it. Later phases previously inc
 and repair but no explicit assignment for this visual direction or browser naming change. Phase 05
 owns A-to-B execution-host relationships, a separate boundary.
 
+After the 02b delivery, the user reported that the application is still too complicated: too many
+input boxes and forms, poor navigation that shifts them away to add work, and no apparent way to
+create multiple workflows. They questioned whether the design was thought through. The available
+preview implementation is `90ce1ff`, handed off at `2840937`; this feedback is the user's report,
+not a captured click trace or confirmation of which assets their tab had reloaded. It does not
+establish acceptance of the colors, naming recheck or a completed task/result journey.
+
+Source inspection confirms that **+ New task** on discovery calls workflow creation with one task,
+so multiple workflows already exist as a backend capability. The selected-workflow screen exposes
+ordinary addition only through **Edit future batch**, a full definition, alias, staging and JSON
+preview. Discovery replaces selected work; it is not a persistent workflow switcher. The initial
+composer also always declares a required brief even though the daemon does not universally require
+one. Runtime admission refuses empty workflows. These findings distinguish an undiscoverable,
+burdensome client path from missing multi-workflow support. The selected correction and its tradeoff
+are owned by [ADR 0051](../../../decisions/0051-daemon-task-workflows.md#browser-workspace-interaction).
+
 | Finding | Owner and acceptance |
 | --- | --- |
 | Setup requires users to invent a local name and supply a technical identity. | [02a](02a-daemon-connection-identity.md) implemented address/credential setup, learned identity pin, durable shared name and authorized rename across clients/restart; the user's recheck is pending. |
-| Original appearance is rejected and the supplied brand is absent. | [02b](02b-visual-design-and-brand.md) implements the dark workspace, compact navigation, real logo and desktop inspector using current task semantics; the user's review of the working result is pending. |
-| User review has only reached connection. | Resume [02](02-early-user-review.md) after the corrections: useful input-dependent work, results, client closure/reconnect, daemon switching, missing-input repair, failure and stop understanding remain open. |
+| Original appearance is rejected and the supplied brand is absent. | [02b](02b-visual-design-and-brand.md) implements the supplied visual direction and real logo. The subsequent feedback rejects interaction usability; visual preference acceptance is not reported. |
+| Too many authoring forms, disruptive navigation and unclear creation of multiple workflows. | Prepared [02c](02c-workspace-and-task-creation.md): explicit New workflow/Add task actions, a compact contextual composer and persistent workflow navigation. No production repair has been performed for this finding yet. |
+| No successful substantive journey has been reported. | Resume [02](02-early-user-review.md) after 02c: create two workflows and add to one, useful input-dependent work/results, closure/reconnect, switching, missing-input repair, failure and stop understanding remain open. |
 
 The [retained mockup](assets/milkdrift-ui-sample.png) is byte-identical to the user's
 `/home/hartolit/Desktop/milkdrift-ui-sample.png`; SHA-256 is
@@ -51,11 +71,18 @@ The mockup's old controls do not
 authorize features. The original corrective planning changed no executable code; the subsequently
 assigned 02a changes connection and naming behavior, and 02b changes the client presentation.
 
-Next sequence: finish the actual 02 review including naming and visual rechecks, then separately assign 04.
+Next sequence: assign 02c, finish the actual 02 review including naming and interaction rechecks,
+then separately assign 04. This planning response changes documentation only and preserves the
+running preview, stores and tested code. It does not treat the usability rejection as resolved.
 Preserve the completed 03 work and 04–07 numbering. Prompt 07 remains the sole integrated gate;
 this partial feedback is not user acceptance of the journey or the proposed corrections.
 
 ## Tested checkpoints and evidence
+
+The 02c planning change was checked against current source and independently reread for the
+two-workflow/add-task path. All eight documentation contracts and the diff whitespace check pass;
+the check log is `target/prompt02c-planning-doc-contracts.log`. No executable behavior changed, so
+these checks establish documentation consistency, not a repaired application or user acceptance.
 
 The 02b implementation checkpoint is `90ce1ff`. It replaces the pale theme and literal brand mark,
 groups instructions/context/execution, adds responsive daemon navigation and a desktop side inspector,
@@ -199,6 +226,7 @@ unchecked for a queued task, then use its inspector to supply the missing input.
 uncertain and stop-requested work communicate what actually happened. **Hide inspector** keeps
 selection and edit drafts; on narrow screens **Daemon navigation** opens the daemon rail.
 
-Record the user's own actions and objections here when supplied. Passing agent checks does not
-settle visual preference or complete this substantive review. No additional actual-user acceptance
-has been reported since the original Studio A connection and corrective feedback.
+The latest feedback above rejects the current creation/navigation path. Carry out the prepared 02c
+only when assigned before asking the user to repeat that journey. Record their own actions and
+remaining objections here. Passing agent checks does not settle visual preference or complete this
+substantive review; no actual-user acceptance has been reported.

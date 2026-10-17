@@ -5,8 +5,10 @@ execution of 03 on October 17 and confirmed proceeding with the review left as a
 They have since connected Studio A and requested simpler setup, daemon-owned names, the supplied
 visual direction and the real logo. The subsequently assigned 02a correction implements simpler
 connection and shared daemon naming. Subsequently assigned 02b applies the supplied dark visual
-direction and exact logo throughout the client. Their user rechecks and the remaining substantive
-early review are pending. Prompts 04–07 remain unassigned.
+direction and exact logo throughout the client. The user then rejected the forms/navigation and
+could not discover multiple-workflow creation. Prepared 02c addresses that interaction design; it
+remains unassigned. Naming acceptance and the remaining substantive early review are pending.
+Prompts 04–07 remain unassigned.
 The consumer/CI retirement,
 required-input absence and cumulative-time defects pass focused regressions and the complete strict
 static gate at `c9e9809`. Publication and a corrected hosted run remain pending. Tested local
@@ -62,7 +64,7 @@ service permissions. Missing real-user/external prerequisites remain explicit ev
 
 Prompt 03 has completed its focused acceptance. Assigning one prompt authorizes its whole
 responsibility and local coherent commits; it does not silently assign its successor.
-After the 02b handoff, the next execution order is **finish 02 review → 04 → 05 → 06 → 07**.
+After the latest review, the next execution order is **02c → finish 02 review → 04 → 05 → 06 → 07**.
 The correction labels preserve the original phase numbers; 03 is already done. Existing 04–07
 prompts included review/repair but did not explicitly assign this visual reference, real logo or
 browser onboarding change. Prompt 05's shared connections concern execution hosts, not browser labels.
@@ -73,8 +75,9 @@ browser onboarding change. Prompt 05's shared connections concern execution host
 | 02 | [Early user review and repair](02-early-user-review.md) | 01 focused checks; actual user | A person completes the first journey; functional and usability findings are repaired. |
 | 02a | [Simple connection and shared daemon name](02a-daemon-connection-identity.md) | Partial 02 feedback; current 03 checkpoint; explicit assignment | Address/credential setup, automatic identity pinning and a shared, authorized daemon rename. |
 | 02b | [Visual direction and real brand](02b-visual-design-and-brand.md) | 02a focused checks; explicit assignment | Supplied dark visual direction and logo across the real client; user rechecks the result and resumes 02. |
+| 02c | [Workspace and ordinary task creation](02c-workspace-and-task-creation.md) | Rejected 02b interaction review; explicit assignment | Obvious New workflow/Add task actions, compact contextual authoring and stable navigation; actual user rechecks the journey. |
 | 03 | [Evolving work and parallel research](03-evolving-work.md) | User authorized proceeding with 02 pending | Ordinary model tasks admit parallel research, composition, correction and bounded continuation through the same commands as humans. |
-| 04 | [Reusable methods](04-local-methods.md) | 03; 02a/02b; completed 02 review | Current saved templates expand locally, with input repair, owner rights, import/export and exact interrupted recovery. |
+| 04 | [Reusable methods](04-local-methods.md) | 03; 02a/02b/02c; completed 02 review | Current saved templates expand locally, with input repair, owner rights, import/export and exact interrupted recovery. |
 | 05 | [Remote tools and retention](05-remote-tools-and-retention.md) | 04 | Persistent connection administration, remote uncertainty/recovery and protected rolling retention across clients. |
 | 06 | [Combined user review and repair](06-combined-user-review.md) | 05; actual user | The full animation journey and different-project reuse work in production UI; consequential feedback is fixed. |
 | 07 | [Final full-system test and repair](07-final-test-and-repair.md) | 06 and all focused checks | Full current Rust/frontend gates and combined journey pass on repaired code; accurate limits and handoff. |
@@ -89,7 +92,7 @@ refusal/recovery, all affected daemon/client consumers, removed superseded paths
 evidence. Listed files/cases do not limit in-scope correction. No foundational choice is deferred to
 implementation discovery; inspect source to implement the selected responsibilities and catch drift.
 
-Run focused checks with every changed boundary, including 02a/02b, and fix known failures immediately.
+Run focused checks with every changed boundary, including 02a/02b/02c, and fix known failures immediately.
 Compile affected packages/callers, test intended filters using discovery, run applicable documentation/example checks,
 and inspect the diff. Commit coherent tested changes regularly, with explicit staging and
 `git diff --cached --check`; preserve checkpoints without squashing, rebasing or pushing.
@@ -124,9 +127,9 @@ Do not ask the user to choose routine implementation organization already settle
 
 The next implementation assignment, only when explicitly requested, is:
 
-> Execute `docs/development/virtual-office/daemon-workflows-implementation/02b-visual-design-and-brand.md`.
+> Execute `docs/development/virtual-office/daemon-workflows-implementation/02c-workspace-and-task-creation.md`.
 > You are authorized to implement that prompt end to end and make regular tested local commits.
 > Follow this sprint's focused-check schedule; prompt 07 owns final full-system acceptance.
-> Preserve existing stores, services and Git checkpoints. Stop at the prompt 02b handoff; do not
+> Preserve existing stores, services and Git checkpoints. Stop at the prompt 02c handoff; do not
 > start later feature prompts automatically. Actual prompt-02 review remains open until its remaining
 > journey and user recheck of the corrections are complete.

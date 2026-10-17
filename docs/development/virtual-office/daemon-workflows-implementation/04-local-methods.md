@@ -2,13 +2,16 @@
 
 **Prepared, not assigned.** Prerequisite: 03's automatic work, prospective edits and cumulative
 limits, the [02a connection correction](02a-daemon-connection-identity.md),
-[02b visual correction](02b-visual-design-and-brand.md) and completed early user review.
+[02b visual correction](02b-visual-design-and-brand.md),
+[02c interaction correction](02c-workspace-and-task-creation.md) and completed early user review.
 Deliver the reusable project-setup method in the same production workflow and clients.
 No child workflow runtime, published method service or definition-time pinned copy supplies this use.
 
 Extend the corrected shell, shared daemon names and existing visual components for method browsing,
 editing and origin inspection. Do not reintroduce browser-local daemon names or the former visual
 theme. This phase adds method behavior to the reviewed client rather than replacing its design.
+Extend 02c's ordinary composer and workflow navigation; choosing a method must not force ordinary
+task additions back through the full batch editor or a separate authoring wizard.
 
 Read [AGENTS](../../../../AGENTS.md), canonical docs, [implementation](../../practices/implementation.md),
 [documentation](../../practices/documentation.md), [workflow](../../workflow.md),
