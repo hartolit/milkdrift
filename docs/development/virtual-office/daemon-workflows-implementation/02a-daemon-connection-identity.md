@@ -1,9 +1,9 @@
 # 02a — Connect simply and share the daemon's name
 
-**Prepared, not assigned.** This corrective assignment follows the user's October 17 partial
+**Implemented after explicit assignment; user recheck pending.** This corrective assignment follows the user's October 17 partial
 [early review](handoff.md#actual-user-review-and-corrections). Prompt 03 is already complete; do not
 rerun it or discard its work. Complete this correction before [02b](02b-visual-design-and-brand.md),
-then resume 02's user journey before 04. The current request prepares prompts, not production code.
+then resume 02's user journey before 04. The [handoff](handoff.md) records its checks and review setup.
 
 The user connected Studio A but found naming the connection and supplying an installation identity
 unnecessarily complicated. A daemon's name must belong to that daemon and be consistent across its

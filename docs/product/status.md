@@ -6,9 +6,9 @@ the CLI, independent JSON requests and a standalone Svelte client. Prompt 03 of 
 extends that path with model-authored future work, parallel research, correction and human batch
 editing. The user authorized proceeding while actual user review in prompt 02 remained pending.
 That review has now begun: the user reports connecting Studio A and rejects the setup friction and
-current visual design. The substantive task journey remains unreviewed. Corrective prompts 02a/02b
-are prepared for shared daemon naming, simpler connection setup, the supplied visual direction and
-the real logo; their implementation is unassigned. Prompt 04 waits for those corrections and the
+current visual design. The substantive task journey remains unreviewed. The assigned 02a correction
+implements shared daemon naming and address/credential setup; the user has not rechecked it yet.
+The visual direction and real logo remain the unassigned 02b correction. Prompt 04 waits for those corrections and the
 completed early review. Prompt 07 retains the final integrated gate. Hosted quality run 227
 failed on the earlier `e720bb9`; no later hosted pass is claimed.
 
@@ -40,7 +40,14 @@ time, rejection streak and corrective-lineage limits govern descendants; a human
 limits without refunding spending. Completion requires an explicit finish condition and satisfied
 required work. Empty ready queues do not imply completion.
 
-The Svelte client provides named daemon connections, authentication/disconnection, discovery,
+The Svelte client connects using an address and credential, learns and retains the daemon's stable
+identity, and displays its shared name. A changed endpoint identity refuses ordinary use until the
+person deliberately forgets the old connection. Authorized settings and CLI renames share one
+durable generation guard and exact actor-scoped receipt; restart cannot restore an old configuration
+seed. Other connected clients refresh the name through existing observation, including empty searches.
+Disconnected names are explicitly cached. Earlier browser labels are adopted without losing pins.
+
+The client also provides authentication/disconnection, discovery,
 search, supplied-file submission, task editing/repair, result inspection and an accessible
 left-to-right dependency timeline. Its future-batch editor previews additions, revisions, removals,
 input supply, correction/rebinding, stop, wait, finish and limit changes together. Conflicts retain
@@ -60,9 +67,10 @@ stop requests, uncertainty and restart cannot refund unresolved work.
 
 ## Limitations now
 
-Connection names are currently browser-local labels, and setup requires manual installation identity
-entry. The client still uses its initial pale theme and a placeholder brand mark. Daemon-owned naming
-and the revised visual design are selected corrections, not implemented behavior or accepted usability.
+The client still uses its initial pale theme and a placeholder brand mark. The revised visual design
+is selected but unimplemented. Simpler setup and shared naming still need the user's usability recheck.
+Rename receipts have a fixed capacity of 1,024; new renames refuse at capacity while reads and exact
+replay remain available.
 
 Saved method templates/expansion, persistent connection administration and configurable rolling
 expiry remain later phases. Current SSE
@@ -74,7 +82,11 @@ The current store format is a development cutover. Earlier graph, revision, prop
 structured-child, prompt-sequence, workflow-publication and evaluated-learning product paths are
 retired. There is no migration or compatibility reader for those stores in the new executable.
 Internal document format 22 refuses earlier task records lacking the current duration and model
-admission facts. Existing stores/services and Git preservation checkpoints remain intact. Generic managed
+admission facts. Physical schema 20 adopts only prompt-03 schema 19 with internal format 22, adding
+daemon metadata without rewriting workflow records or receipts. Earlier formats remain refused.
+The expanded Controller preset changes its grant digest: unfinished work bound to an older grant
+can be denied before its next external entry. Follow the [upgrade guidance](../operations/daemon.md)
+and preserve matching binaries/configurations for old work. Existing stores/services and Git preservation checkpoints remain intact. Generic managed
 lifecycle operations lack an enforced total deadline and therefore refuse bounded task/peer entry;
 their independent administrative owner remains available and tested.
 
@@ -87,6 +99,13 @@ Native model file tools currently require Linux; other platforms refuse that cat
 task supports at most 16 tool calls, bounded UTF-8 file content and a finite provider request envelope.
 
 ## Current validation/evidence snapshot
+
+Prompt 02a passes 41 daemon unit and 41 control-plane cases, the affected storage/authority/client/CLI
+suites, all 30 repository contracts, scoped Clippy/rustdoc and default/all-feature API review.
+Frontend check/lint, 59 unit tests and production build pass; all 13 browser cases pass, followed by
+focused reruns for the final phone wrapping and denied-storage corrections. Actual CLI/public-client
+operations verify naming across restart, authorization refusal, exact recovery and preservation of
+current task history. This evidence does not replace the pending user recheck.
 
 The connected browser/CLI path executes a trusted Rust process against uploaded Cargo manifests,
 closes and reconnects the client, and discovers retained input-dependent results. A separate controlled

@@ -3,9 +3,9 @@
 **Prompt 03 completed locally; actual user review in 02 is in progress.** The user explicitly instructed
 execution of 03 on October 17 and confirmed proceeding with the review left as an evidence gap.
 They have since connected Studio A and requested simpler setup, daemon-owned names, the supplied
-visual direction and the real logo. Corrections 02a/02b are prepared from that partial review;
-their implementation and 04–07 remain unassigned. The current request authorizes corrective planning,
-not immediate product changes. Complete the corrections and remaining early review before 04.
+visual direction and the real logo. The subsequently assigned 02a correction implements simpler
+connection and shared daemon naming; its user recheck remains pending. The visual correction 02b
+and 04–07 remain unassigned. Complete the visual correction and remaining early review before 04.
 The consumer/CI retirement,
 required-input absence and cumulative-time defects pass focused regressions and the complete strict
 static gate at `c9e9809`. Publication and a corrected hosted run remain pending. Tested local
@@ -61,7 +61,7 @@ service permissions. Missing real-user/external prerequisites remain explicit ev
 
 Prompt 03 has completed its focused acceptance. Assigning one prompt authorizes its whole
 responsibility and local coherent commits; it does not silently assign its successor.
-The next execution order is **02a → 02b → finish 02 review → 04 → 05 → 06 → 07**.
+After the 02a handoff, the next execution order is **02b → finish 02 review → 04 → 05 → 06 → 07**.
 The correction labels preserve the original phase numbers; 03 is already done. Existing 04–07
 prompts included review/repair but did not explicitly assign this visual reference, real logo or
 browser onboarding change. Prompt 05's shared connections concern execution hosts, not browser labels.
@@ -123,9 +123,9 @@ Do not ask the user to choose routine implementation organization already settle
 
 The next implementation assignment, only when explicitly requested, is:
 
-> Execute `docs/development/virtual-office/daemon-workflows-implementation/02a-daemon-connection-identity.md`.
+> Execute `docs/development/virtual-office/daemon-workflows-implementation/02b-visual-design-and-brand.md`.
 > You are authorized to implement that prompt end to end and make regular tested local commits.
 > Follow this sprint's focused-check schedule; prompt 07 owns final full-system acceptance.
-> Preserve existing stores, services and Git checkpoints. Stop at the prompt 02a handoff; do not
-> start 02b or later prompts automatically. Actual prompt-02 review remains open until its remaining
+> Preserve existing stores, services and Git checkpoints. Stop at the prompt 02b handoff; do not
+> start later feature prompts automatically. Actual prompt-02 review remains open until its remaining
 > journey and user recheck of the corrections are complete.

@@ -12,7 +12,77 @@ retains the environment, source material, finding owners and resume procedure.
 
 Useful task output, close/reconnect, daemon switching, missing-input repair, failure and stop
 understanding have not yet been reviewed by this user. Browser engine and physical-phone use were
-not established. Prepared 02a/02b corrections have no implementation or acceptance evidence yet.
+not established. The assigned 02a implementation has focused evidence below; its user recheck and
+the unassigned 02b visual correction remain open.
+
+## Prompt 02a shared daemon naming verification
+
+Implementation checkpoint `c4d7f39`, following the behavior-preserving test split `7979c30`, implements
+address/credential setup, learned identity pins and daemon-owned names across CLI and Svelte. These
+October 17 checks ran on local Linux with the pinned Rust 1.95.0 toolchain and the maintained frontend
+dependencies. They are focused sprint evidence; prompt 07 still owns the full integrated gate.
+There is no new hosted CI pass, physical-phone qualification or actual-user acceptance claim.
+
+The owner command was `cargo test -p milkdrift-persistence -p milkdrift-redb-store -p milkdrift-authority
+-p milkdrift-control -p milkdrift-control-protocol -p milkdrift-control-client -p milkdrift-cli --all-features`.
+Its passing output is `target/prompt02a-owner-tests.log`; discovery is in
+`target/prompt02a-owner-discovery.log`. This includes two name-validation cases, seven metadata-store
+cases and three format-adoption cases. They cover Unicode boundaries, actor isolation, concurrent
+generation guards, 1,024 retained receipts, the combined 16 KiB bound, exact replay at capacity,
+before/after-commit recovery, seed immunity and byte-preserving adoption of exact physical 19/internal
+22 stores. Other formats and malformed preflight state refuse. Fault injection establishes software
+transaction boundaries, not physical power-loss durability.
+
+The final daemon runs pass all 41 library tests and all 41 control-plane tests using
+`cargo test -p milkdrift-daemon --lib --all-features` and
+`cargo test -p milkdrift-daemon --test control_plane --all-features`. Logs are
+`target/prompt02a-daemon-unit-pass.log` and `target/prompt02a-control-plane-pass.log`; final control-plane
+discovery is `target/prompt02a-control-plane-discovery.log`. Nine metadata cases exercise real public
+operations and actual CLI commands: two-client naming, independent actors/installations, permission
+refusal in both daemon roles, restart, retained workflow/receipt bytes, exact raw-name conflicts and
+Unicode/request-key boundaries. Accepted 512-byte keys and reserved URL characters remain recoverable;
+standalone dot keys refuse before effect. Final key/client reruns are
+`target/prompt02a-receipt-key-tests.log` and `target/prompt02a-client-final-tests.log`.
+
+The Controller upgrade regression proves an old frozen claim is denied before external entry under
+changed grant content, with both same-revision digest mismatch and a deliberate revision increment.
+Current authorized reads and exact receipt replay survive; accepted claims are never rewritten.
+The [upgrade instructions](../operations/daemon.md#configuration-and-startup) explain the consequence
+for unfinished old work. Two independent-peer tests pass in `target/prompt02a-peers-tests.log`; the
+existing manual release-mode retention longevity case remains ignored and is not claimed as executed.
+
+The final actual-binary command was `target/debug/connected-tasks check --root
+target/daemon-workflows/prompt02a-check-b --daemon target/debug/milkdrift-daemon --cli target/debug/milkdrift`.
+Its `check.json` reports successful captured-input execution, independent-daemon discovery, exact
+restart replay and the preserved eight-task controlled automatic journey. It confirms child shutdown
+before report publication. Controlled model responses establish integration, not real-model quality.
+
+Frontend check, lint, all 59 unit/component tests across 12 files, and production build pass.
+Playwright discovered and passed all 13 cases in `target/prompt02a-web-browser-final.log`. After the
+phone text/badge containment repair, three affected cases passed in
+`target/prompt02a-web-browser-phone.log`. After guarding a denied local-storage getter, the final three
+connection cases passed in `target/prompt02a-web-browser-connection-final.log` against production asset
+`index-CA3UwWF9.js`. The maintained commands were `npm run check`, `npm run lint`,
+`npm run test:unit`, `npm run build` and `npm run test:browser`, with the fixture's private
+`MILKDRIFT_BROWSER_CONFIG` supplied. Desktop and 390-pixel screenshots were inspected under
+`target/prompt02a-browser-connection-final-results/` and `target/prompt02a-browser-phone-results/`.
+Initial failures and subsequent logs remain retained; retries are not counted as new unique cases.
+
+All 30 repository contracts pass in `target/prompt02a-contracts-final.log`, including documentation
+links, production readers, version constants and product dependency isolation. The source-size check
+found an oversized existing runtime test module; moving its unchanged preparation group into a named
+child restored the bound without weakening assertions. All 46 durable-runtime cases pass afterward
+in `target/prompt02a-runtime-tests.log`, with discovery in `target/prompt02a-runtime-discovery.log`.
+Default/all-feature API inventories for authority, control, persistence, redb-store, control-protocol,
+control-client and daemon were reviewed under `target/public-api/prompt02a/`. The new port, DTOs and
+client methods have production consumers; metadata owner modules remain private and fault hooks
+remain feature-gated. Affected-package all-target/all-feature warning-denying Clippy and rustdoc
+pass in `target/prompt02a-clippy-complete.log` and `target/prompt02a-rustdoc.log`. Formatting and diff
+checks pass. The generated TypeScript was refreshed through the maintained Rust export example.
+
+The [single handoff](virtual-office/daemon-workflows-implementation/handoff.md#local-review-fixture)
+records the fresh bounded review fixture, addresses, private credential locations and cross-client
+naming recheck. Earlier stores were preserved. The broader visual redesign was not part of 02a.
 
 ## Prompt 03 evolving task acceptance
 
