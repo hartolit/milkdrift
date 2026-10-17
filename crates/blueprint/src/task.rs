@@ -190,10 +190,37 @@ pub struct TaskBindingRedirect {
     pub input: String,
 }
 
+/// Tools a model task may request; listing a tool never expands its actor's authority.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum TaskTool {
+    /// Reads bounded UTF-8 files beneath declared task paths.
+    ReadFile,
+    /// Writes bounded UTF-8 files beneath declared writable task paths.
+    WriteFile,
+    /// Invokes one configured process capability through its existing adapter.
+    Process {
+        /// Exact selection constraints checked under the task's grant.
+        capability: CapabilityRequirement,
+    },
+}
+
+/// Opt-in policy for structured future-work proposals from one model task.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskActionPolicy {
+    /// Permit an ordinary follow-up task to repair invalid or conflicted model actions.
+    /// The follow-up retains the same capability, tools and cumulative workflow allowance.
+    pub automatic_repair: bool,
+}
+
 /// Future task content. Runtime freezes the accepted version together with resolved inputs.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskDefinition {
+    /// Opt in to structured future-work proposals. Ordinary result text is never executable.
+    #[serde(default)]
+    pub actions: Option<TaskActionPolicy>,
     /// Human-readable purpose displayed in task discovery and the timeline.
     pub title: String,
     /// Optional bounded explanation shown before a task starts.
@@ -221,6 +248,9 @@ pub struct TaskDefinition {
     /// Explicit native access coordinated through durable host claims.
     #[serde(default)]
     pub paths: Vec<TaskPathAccess>,
+    /// Explicit tool catalog available only inside this task's bounded model loop.
+    #[serde(default)]
+    pub tools: Vec<TaskTool>,
 }
 
 const fn required_by_default() -> bool {
@@ -244,12 +274,28 @@ impl TaskDefinition {
             || self.outputs.len() > 64
             || self.dependencies.len() > 256
             || self.paths.len() > 32
+            || self.tools.len() > 32
         {
             return Err(TaskDefinitionError(
                 "task instructions or collection bounds are invalid".into(),
             ));
         }
         let mut output_bytes = 0_u64;
+        let mut tool_keys = BTreeSet::new();
+        for tool in &self.tools {
+            let key = serde_json::to_string(tool)
+                .map_err(|error| TaskDefinitionError(error.to_string()))?;
+            if !tool_keys.insert(key) {
+                return Err(TaskDefinitionError("duplicate model tool selection".into()));
+            }
+            if matches!(tool, TaskTool::ReadFile) && self.paths.is_empty()
+                || matches!(tool, TaskTool::WriteFile) && !self.paths.iter().any(|path| path.write)
+            {
+                return Err(TaskDefinitionError(
+                    "file tools require matching task path claims".into(),
+                ));
+            }
+        }
         for (name, declaration) in &self.outputs {
             validate_name(name)?;
             if declaration.max_bytes == 0
@@ -449,6 +495,11 @@ impl WorkflowLimits {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TaskChange {
+    /// Close a rejected model proposal after inspecting it; edits can accompany this action.
+    DismissAdmission {
+        /// Exact source task whose immutable response remains retained.
+        task: TaskId,
+    },
     /// Add future work and return its daemon identity in the receipt's alias map.
     Add {
         /// Request-local identity available to other changes in this batch.
@@ -493,6 +544,11 @@ pub enum TaskChange {
         /// Only these named pending bindings follow the correction; started consumers refuse.
         #[serde(default)]
         redirects: Vec<TaskBindingRedirect>,
+    },
+    /// Replace future policy ceilings without refunding prior work or changing a grant.
+    SetLimits {
+        /// Complete finite limits; the admitted and elapsed account remains unchanged.
+        limits: WorkflowLimits,
     },
     /// Release an explicit wait so ordinary readiness can be reconsidered.
     Continue,
@@ -597,6 +653,21 @@ pub fn validate_task_set(
                 origin = tasks
                     .get(current)
                     .and_then(|task| task.corrective_of.as_ref());
+            }
+        }
+        for binding in definition.inputs.values() {
+            if let TaskInputBinding::TaskOutput {
+                task: producer,
+                output,
+                ..
+            } = binding
+                && tasks
+                    .get(producer)
+                    .is_none_or(|task| !task.outputs.contains_key(output))
+            {
+                return Err(TaskDefinitionError(format!(
+                    "task {id} references undeclared output {producer}/{output}"
+                )));
             }
         }
         let mut waits_for = definition.dependencies.clone();

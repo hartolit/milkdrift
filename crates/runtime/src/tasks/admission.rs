@@ -159,6 +159,10 @@ impl TaskRuntime {
                 .map_err(invalid)?;
         }
         let record = WorkflowRecord {
+            decision_generation: 1,
+            admissions: BTreeMap::new(),
+            admitted_model_batches: 0,
+            rejected_responses: 0,
             schema_version: super::duration::SCHEMA_VERSION,
             id: id.clone(),
             title: request.title,
@@ -172,6 +176,7 @@ impl TaskRuntime {
             limits: request.limits,
             finish_when_settled: request.finish_when_settled,
             wait_question: None,
+            model_admission_wait: None,
             admitted_tasks: u32::try_from(tasks.len()).map_err(invalid)?,
             tasks,
             execution_authority,
@@ -187,6 +192,9 @@ impl TaskRuntime {
             canonical_request,
             result: serde_json::json!({"workflow_id":id,"generation":1,"aliases":aliases}),
         };
+        for task in record.tasks.values() {
+            self.validate_future_definition(&record, &task.definition)?;
+        }
         receipt(self.save(&record, None, Some(acceptance))?)
     }
 
@@ -201,7 +209,7 @@ impl TaskRuntime {
         workflow: &WorkflowId,
         batch: TaskBatch,
     ) -> Result<WorkflowCommandReceipt, RuntimeError> {
-        self.edit_request(owner_actor, key, workflow, batch, None)
+        self.edit_request(owner_actor, key, workflow, batch, None, None)
     }
 
     /// Binds replay to the original canonical public edit, including explicit defaults.
@@ -216,16 +224,24 @@ impl TaskRuntime {
         batch: TaskBatch,
         canonical_transport: &[u8],
     ) -> Result<WorkflowCommandReceipt, RuntimeError> {
-        self.edit_request(owner_actor, key, workflow, batch, Some(canonical_transport))
+        self.edit_request(
+            owner_actor,
+            key,
+            workflow,
+            batch,
+            Some(canonical_transport),
+            None,
+        )
     }
 
-    fn edit_request(
+    pub(super) fn edit_request(
         &self,
         owner_actor: &str,
         key: &str,
         workflow: &WorkflowId,
         batch: TaskBatch,
         transport: Option<&[u8]>,
+        model_source: Option<(&TaskId, bool)>,
     ) -> Result<WorkflowCommandReceipt, RuntimeError> {
         let _guard = self
             .gate
@@ -252,7 +268,9 @@ impl TaskRuntime {
             ));
         }
         let mut record = self.require_workflow(workflow)?;
-        if batch.expected_generation != record.generation {
+        if let Some((source, repair)) = model_source {
+            super::model_actions::check_admission(&record, source, &batch, repair)?;
+        } else if batch.expected_generation != record.generation {
             return Err(RuntimeError::InvalidTransition(format!(
                 "stale workflow generation: expected {}, actual {}",
                 batch.expected_generation, record.generation
@@ -277,10 +295,7 @@ impl TaskRuntime {
         for change in &batch.changes {
             if let TaskChange::Add { alias, .. } = change
                 && (aliases
-                    .insert(
-                        alias.clone(),
-                        TaskId::new(self.ids.next("task")?).map_err(invalid)?,
-                    )
+                    .insert(alias.clone(), self.unused_task_id(&record, &aliases)?)
                     .is_some()
                     || record.tasks.contains_key(alias))
             {
@@ -292,7 +307,22 @@ impl TaskRuntime {
         let now = self.clock.now()?;
         for change in batch.changes {
             match change {
+                TaskChange::DismissAdmission { task } => {
+                    let admission = record
+                        .admissions
+                        .get_mut(&task)
+                        .ok_or_else(|| invalid("model admission does not exist"))?;
+                    if admission.status != super::ModelAdmissionStatus::Rejected {
+                        return Err(invalid("only a rejected model admission can be dismissed"));
+                    }
+                    admission.status = super::ModelAdmissionStatus::Dismissed;
+                    super::model_actions::clear_owned_wait(&mut record, &task);
+                }
+                TaskChange::SetLimits { limits } => {
+                    super::policy::change_limits(&mut record, limits)?
+                }
                 TaskChange::Add { alias, definition } => {
+                    self.validate_future_definition(&record, &definition)?;
                     let id = aliases
                         .get(&alias)
                         .ok_or_else(|| invalid("missing allocated alias"))?
@@ -330,6 +360,7 @@ impl TaskRuntime {
                     expected_version,
                     definition,
                 } => {
+                    self.validate_future_definition(&record, &definition)?;
                     let value = future_task(&mut record, &task, expected_version)?;
                     if value.previous_definitions.len() >= 128 {
                         return Err(invalid(
@@ -364,6 +395,7 @@ impl TaskRuntime {
                     }
                     record.inputs.insert(name, value);
                     record.wait_question = None;
+                    record.model_admission_wait = None;
                 }
                 TaskChange::Stop { task } => {
                     let task = record
@@ -387,12 +419,13 @@ impl TaskRuntime {
                     let correction = aliases.get(&correction).unwrap_or(&correction);
                     adopt_correction(&mut record, &task, correction, &redirects)?;
                 }
-                TaskChange::Continue => record.wait_question = None,
+                TaskChange::Continue => super::policy::resume(&mut record)?,
                 TaskChange::Wait { question } => {
                     if question.trim().is_empty() || question.len() > 4096 {
                         return Err(invalid("wait question is empty or oversized"));
                     }
                     record.wait_question = Some(question);
+                    record.model_admission_wait = None;
                 }
                 TaskChange::Finish => record.finish_when_settled = true,
             }
@@ -407,7 +440,11 @@ impl TaskRuntime {
                 .validate_supplied_inputs(&record.inputs)
                 .map_err(invalid)?;
         }
+        if let Some((source, repair)) = model_source {
+            super::model_actions::accept_admission(&mut record, source, key, &aliases, repair)?;
+        }
         let expected = self.advance(&mut record)?;
+        record.decision_generation = record.generation;
         let acceptance = WorkflowCommandAcceptance {
             reserved_action,
             actor: owner_actor.to_owned(),
@@ -437,6 +474,22 @@ impl TaskRuntime {
             return Ok(Some(receipt));
         }
         Ok(None)
+    }
+
+    fn unused_task_id(
+        &self,
+        record: &WorkflowRecord,
+        aliases: &BTreeMap<TaskId, TaskId>,
+    ) -> Result<TaskId, RuntimeError> {
+        for _ in 0..=4096 {
+            let id = TaskId::new(self.ids.next("task")?).map_err(invalid)?;
+            if !record.tasks.contains_key(&id) && !aliases.values().any(|value| value == &id) {
+                return Ok(id);
+            }
+        }
+        Err(invalid(
+            "task identity source cannot allocate an unused identity",
+        ))
     }
 }
 

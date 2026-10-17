@@ -28,7 +28,7 @@ pub use upload::{InputUploadRequest, MAX_INPUT_UPLOAD_BYTES};
 /// Supported control protocol major version.
 const PROTOCOL_MAJOR: u16 = 3;
 /// Supported control protocol minor version.
-const PROTOCOL_MINOR: u16 = 0;
+const PROTOCOL_MINOR: u16 = 1;
 const AUTHENTICATED_CURSOR_SCHEMA_VERSION: u8 = 2;
 /// Maximum JSON request or response envelope size.
 pub const MAX_DOCUMENT_BYTES: usize = 1_310_720;

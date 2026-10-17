@@ -489,6 +489,8 @@ impl Owner {
                 data,
                 auth.resolver(),
                 startup_now,
+                authority.clone(),
+                clock.clone(),
             )?;
             let peer_runtime = build_peer_runtime(
                 &host_id,

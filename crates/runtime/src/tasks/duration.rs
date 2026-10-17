@@ -6,7 +6,7 @@ use crate::RuntimeError;
 use milkdrift_capability::{AdmissionBound, InvocationAdmissionEnvelope};
 use milkdrift_persistence::TimestampMillis;
 
-pub(super) const SCHEMA_VERSION: u32 = 2;
+pub(super) const SCHEMA_VERSION: u32 = 3;
 pub(super) const EXHAUSTED: &str = "workflow cumulative active execution allowance exhausted";
 
 /// Earlier documents do not retain enforceable reservations or exact entry-time watermarks.
@@ -147,6 +147,7 @@ pub(super) fn request_limit_stop(workflow: &mut WorkflowRecord) -> bool {
     let mut changed = false;
     if exhausted && workflow.wait_question.is_none() {
         workflow.wait_question = Some(EXHAUSTED.into());
+        workflow.model_admission_wait = None;
         changed = true;
     }
     for task in workflow.tasks.values_mut() {

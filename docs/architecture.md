@@ -7,7 +7,7 @@ Closing a client changes neither the accepted work nor its recorded outcome.
 
 [Vision](product/vision.md) owns product intent. [ADR 0051](decisions/0051-daemon-task-workflows.md)
 owns the task-workflow decision; [status](product/status.md) distinguishes the implemented slice
-from the later automation, methods and retention assignments. The ordinary graph, revision,
+from the later methods and retention assignments. The ordinary graph, revision,
 proposal, controller and published-workflow engines have been retired. Existing stores are not
 converted into task workflows. Their readers remain in the preservation checkpoints.
 
@@ -62,14 +62,28 @@ task's definition immutable. Binding a new supplied value affects future starts 
 unstarted work retains its accepted history. Correction adoption names a successful corrective task
 and explicit, version-guarded future bindings; it never rewrites the original failed result.
 
-Workflow limits are cumulative. Removing a task does not refund task admission; accepted external
-entry consumes its reserved allowance. Time, model, corrective and tool ceilings have explicit
-owners. Runtime advances one cumulative elapsed-time account across simultaneous open attempts and
+Task admission, model-batch admission and execution allowances are cumulative. Removing a task does
+not refund task admission; accepted external entry consumes its reserved allowance. Rejection
+streaks, corrective lineages, concurrency and tool calls have their own bounded policies.
+Runtime advances one cumulative elapsed-time account across simultaneous open attempts and
 reserves each adapter's enforced duration before entry. Unknown outcomes retain their reservation
-and clock; a limit stop is not terminal proof. Task document schema 2 retains those watermarks;
-redb internal format 21 refuses older documents rather than inventing timing evidence. Automatic
-model-produced task additions and saved method expansion remain later work in
-the [roadmap](product/roadmap.md).
+and clock; a limit stop is not terminal proof. Task document schema 3 retains those watermarks and
+model admission linkage; redb internal format 22 refuses earlier documents rather than inventing
+missing evidence. Saved method expansion remains later work in the [roadmap](product/roadmap.md).
+
+An opted-in model task's accepted response output and pending admission are one durable transition.
+Control reads the immutable structured batch after successful settlement and uses the same checked
+future-edit transaction as a person. That transaction also records the source link, alias map and
+receipt. Recovery processes pending records before new scheduler polling. Edits and starts change
+the authoring generation; the source's progress reports do not. Conflicts retain the response and
+require a refreshed proposal. Explicitly permitted feedback is ordinary work under the same account;
+denied authority waits for a person. Required-success and settled-outcome inputs remain separate,
+including when both refer to the same failed producer.
+
+The capability host owns a bounded model/tool conversation inside an entered task. It uses the
+configured provider mapping, exact process generations and declared native path claims, rechecking
+authority on each step. It retains response/tool evidence before continuing and never schedules
+workflow tasks. Prospective limit edits and resumes preserve spent allowance and uncertain effects.
 
 ## One command and external-effect path
 

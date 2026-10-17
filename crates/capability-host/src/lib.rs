@@ -16,6 +16,7 @@ mod adapter;
 #[cfg(any(test, feature = "test-support"))]
 pub mod conformance;
 mod materialization;
+mod model_loop;
 mod native_paths;
 mod registry;
 mod secret;
@@ -32,6 +33,7 @@ pub use materialization::{
     MATERIALIZATION_SCHEMA_VERSION_V1, MaterializationLimits, MaterializedExecution,
     StoreInvocationDataAccess,
 };
+pub use model_loop::ModelToolLoopAdapter;
 pub use registry::{
     CapabilityHost, CapabilitySelectionPolicy, CatalogGenerationView, GenerationHealth,
     GenerationView, HostConfig, HostError, RegistrationOutcome, ShutdownReport,

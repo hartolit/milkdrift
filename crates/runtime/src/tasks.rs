@@ -6,7 +6,11 @@ mod capacity;
 mod duration;
 mod effects;
 mod inputs;
+mod model_actions;
+mod policy;
 mod scheduling;
+
+pub use model_actions::{ModelAdmission, ModelAdmissionStatus};
 
 use crate::{BoundaryClock, ExecutionDispatch, IdGenerator, RuntimeError, TaskExecutor};
 use milkdrift_authority::{AuthorityBudget, AuthorityEvaluator, ExecutionAuthorityBasis};
@@ -150,6 +154,14 @@ pub struct TaskRecord {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowRecord {
+    /// Last accepted edit or task start. Progress reports do not change an author's snapshot.
+    pub decision_generation: u64,
+    /// Durable model response admissions, keyed by their unique source task.
+    pub admissions: BTreeMap<TaskId, ModelAdmission>,
+    /// Accepted model batches, including automatic feedback task batches.
+    pub admitted_model_batches: u32,
+    /// Consecutive rejected or nonprogressing model responses.
+    pub rejected_responses: u32,
     /// Runtime document schema, interpreted independently of physical storage version.
     pub schema_version: u32,
     /// Owning daemon's workflow identity.
@@ -176,6 +188,8 @@ pub struct WorkflowRecord {
     pub finish_when_settled: bool,
     /// Actionable question preventing new starts until authorized continuation.
     pub wait_question: Option<String>,
+    /// Rejected model source that owns this diagnostic wait; explicit and policy waits have none.
+    pub model_admission_wait: Option<TaskId>,
     /// Task facts, including removed obligations and failed attempts.
     pub tasks: BTreeMap<TaskId, TaskRecord>,
     /// Frozen authority lineage rechecked against revocation before each entry.
@@ -411,6 +425,7 @@ impl TaskRuntime {
             RuntimeError::InvalidTransition("workflow generation exhausted".into())
         })?;
         record.updated_at = self.clock.now()?;
+        policy::request_limit_stop(record)?;
         update_workflow_state(record);
         Ok(prior)
     }
@@ -527,7 +542,15 @@ fn update_workflow_state(workflow: &mut WorkflowRecord) {
         });
     workflow.state = if active {
         WorkflowState::Running
-    } else if !unsettled && obligations_met && workflow.finish_when_settled {
+    } else if !unsettled
+        && obligations_met
+        && workflow.finish_when_settled
+        && workflow.wait_question.is_none()
+        && !workflow
+            .admissions
+            .values()
+            .any(|admission| admission.status.blocks_completion())
+    {
         WorkflowState::Completed
     } else if uncertain
         || (!obligations_met

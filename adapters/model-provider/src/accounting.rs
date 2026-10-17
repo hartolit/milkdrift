@@ -191,6 +191,8 @@ impl EndpointProfile {
                             | "stream_options"
                             | "max_tokens"
                             | "max_completion_tokens"
+                            | "tools"
+                            | "response_format"
                     )
                 }) || root.contains_key(if *output_control == OutputTokenControl::MaxTokens {
                     "max_completion_tokens"
@@ -204,28 +206,49 @@ impl EndpointProfile {
                 let messages = wire["messages"]
                     .as_array()
                     .ok_or("text messages are absent")?;
+                if let Some(tools) = root.get("tools")
+                    && !tools.as_array().is_some_and(|tools| {
+                        !tools.is_empty()
+                            && tools.iter().all(|tool| {
+                                tool.get("type").and_then(Value::as_str) == Some("function")
+                                    && tool.get("function").is_some_and(Value::is_object)
+                            })
+                    })
+                {
+                    return Err("bounded text accounting supports explicit function tools only");
+                }
+                if let Some(format) = root.get("response_format")
+                    && (format.get("type").and_then(Value::as_str) != Some("json_schema")
+                        || !format.get("json_schema").is_some_and(Value::is_object))
+                {
+                    return Err("bounded text accounting requires an explicit JSON schema");
+                }
                 for message in messages {
                     let object = message.as_object().ok_or("invalid text message")?;
-                    if object.keys().any(|key| key != "role" && key != "content")
-                        || !matches!(
-                            message["role"].as_str(),
-                            Some("system" | "user" | "developer")
+                    if object.keys().any(|key| {
+                        !matches!(
+                            key.as_str(),
+                            "role" | "content" | "tool_calls" | "tool_call_id"
                         )
-                    {
+                    }) || !matches!(
+                        message["role"].as_str(),
+                        Some("system" | "user" | "developer" | "assistant" | "tool")
+                    ) {
                         return Err(
-                            "bounded text accounting supports system, developer and user text only",
+                            "bounded text accounting refuses unsupported message fields or roles",
                         );
                     }
                     let content = &message["content"];
-                    if !content.is_string()
-                        && !content.as_array().is_some_and(|parts| {
+                    let supported_content = content.is_string()
+                        || content.is_null() && message["tool_calls"].is_array()
+                        || content.as_array().is_some_and(|parts| {
                             parts.iter().all(|part| {
                                 part.as_object().is_some_and(|p| p.len() == 2)
                                     && part["type"] == "text"
                                     && part["text"].is_string()
                             })
-                        })
-                    {
+                        });
+                    if !supported_content {
                         return Err("bounded text accounting refuses non-text input parts");
                     }
                 }
@@ -258,6 +281,38 @@ impl EndpointProfile {
             input,
             output,
             AdmissionBound::Bounded(self.limits().max_response_bytes * 4),
+            cost,
+        )
+        .with_execution_duration_ms(AdmissionBound::Bounded(
+            self.limits()
+                .request_timeout_ms
+                .min(self.limits().idle_timeout_ms),
+        )))
+    }
+
+    pub(crate) fn maximum_envelope(&self) -> Result<InvocationAdmissionEnvelope, &'static str> {
+        let (input, output) = match self.token_limits() {
+            ModelTokenLimits::Unknown => (AdmissionBound::Unknown, AdmissionBound::Unknown),
+            ModelTokenLimits::ByteBpe {
+                maximum_input_tokens,
+                maximum_output_tokens,
+                ..
+            } => (
+                AdmissionBound::Bounded(*maximum_input_tokens),
+                AdmissionBound::Bounded(*maximum_output_tokens),
+            ),
+        };
+        let cost = self.monetary_bound(&input, &output)?;
+        Ok(InvocationAdmissionEnvelope::new(
+            milkdrift_capability::AdmissionUnit::ModelTokens,
+            input,
+            output,
+            AdmissionBound::Bounded(
+                self.limits()
+                    .max_response_bytes
+                    .checked_mul(4)
+                    .ok_or("model artifact bound overflow")?,
+            ),
             cost,
         )
         .with_execution_duration_ms(AdmissionBound::Bounded(

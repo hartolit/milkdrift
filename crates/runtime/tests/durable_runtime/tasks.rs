@@ -25,6 +25,18 @@ use milkdrift_runtime::{
 
 use super::{TestResult, claim};
 
+#[path = "policy.rs"]
+mod policy;
+
+#[path = "correction.rs"]
+mod correction;
+
+#[path = "model_faults.rs"]
+mod model_faults;
+
+#[path = "model_actions.rs"]
+mod model_actions;
+
 fn request() -> TestResult<WorkflowCreate> {
     Ok(WorkflowCreate {
         title: "Inspect the supplied Cargo project".into(),
@@ -49,6 +61,8 @@ fn request() -> TestResult<WorkflowCreate> {
                 required: true,
                 corrective_of: None,
                 paths: Vec::new(),
+                tools: Vec::new(),
+                actions: None,
             },
         }],
         inputs: BTreeMap::new(),
@@ -498,6 +512,20 @@ fn optional_output_waits_for_producer_settlement_then_supplies_typed_absence() -
         Arc::new(ManualClock::new(1_000)),
     )?;
     let mut create = request()?;
+    create
+        .tasks
+        .first_mut()
+        .ok_or("producer absent")?
+        .definition
+        .outputs
+        .insert(
+            "report".into(),
+            milkdrift_blueprint::TaskOutputDeclaration {
+                required: false,
+                media_type: None,
+                max_bytes: 4096,
+            },
+        );
     let mut consumer = create.tasks.first().ok_or("producer absent")?.clone();
     let producer_alias = consumer.alias.clone();
     consumer.alias = TaskId::new("consume-optional")?;
@@ -1082,6 +1110,20 @@ fn correction_adoption_redirects_only_named_future_binding_and_rejects_competiti
         Arc::new(ManualClock::new(1000)),
     )?;
     let mut create = request()?;
+    create
+        .tasks
+        .first_mut()
+        .ok_or("producer absent")?
+        .definition
+        .outputs
+        .insert(
+            "report".into(),
+            milkdrift_blueprint::TaskOutputDeclaration {
+                required: false,
+                media_type: None,
+                max_bytes: 4096,
+            },
+        );
     let mut consumer = create.tasks.first().ok_or("original absent")?.clone();
     consumer.alias = TaskId::new("consumer")?;
     consumer

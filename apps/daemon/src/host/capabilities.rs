@@ -133,6 +133,8 @@ pub(super) fn register_configured(
     data: Arc<dyn InvocationDataAccess>,
     secrets: Arc<LocalSecretResolver>,
     observed_at_unix_ms: u64,
+    authority: Arc<dyn milkdrift_authority::AuthorityEvaluator>,
+    clock: super::clock::DurableClock,
 ) -> Result<(), String> {
     for path in &config.process_profiles {
         let bytes = fs::read(path)
@@ -164,6 +166,23 @@ pub(super) fn register_configured(
             ModelEndpointAdapter::new(capability, profile, secrets.clone(), data.clone())
                 .map_err(|error| error.to_string())?,
         );
+        let maximum = adapter
+            .maximum_admission_envelope()
+            .map_err(|error| error.to_string())?;
+        let model_clock = clock.clone();
+        let adapter = Arc::new(milkdrift_capability_host::ModelToolLoopAdapter::new(
+            descriptor.clone(),
+            adapter,
+            maximum,
+            host.clone(),
+            data.clone(),
+            authority.clone(),
+            Arc::new(move || {
+                model_clock.now().map(|time| time.get()).map_err(|error| {
+                    milkdrift_capability_host::AdapterError::unavailable(error.to_string())
+                })
+            }),
+        ));
         let capability = descriptor.identity().clone();
         let revision = descriptor.descriptor_revision();
         host.register(descriptor, adapter, None)

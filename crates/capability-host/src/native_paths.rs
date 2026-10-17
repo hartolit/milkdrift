@@ -48,12 +48,7 @@ impl NativePathClaims {
     }
 
     pub(crate) fn revalidate(&self, owner: &str) -> Result<(), ExecutorError> {
-        let claim = self
-            .store
-            .native_path_claim(owner)
-            .map_err(storage)?
-            .ok_or_else(|| refused("accepted native directory claim is missing; entry refused"))?;
-        for root in claim.roots {
+        for root in self.roots(owner)? {
             if capture(&root.requested, root.write)? != root {
                 return Err(refused(
                     "native directory or symlink target changed after its claim; entry refused",
@@ -61,6 +56,14 @@ impl NativePathClaims {
             }
         }
         Ok(())
+    }
+
+    pub(crate) fn roots(&self, owner: &str) -> Result<Vec<NativePathRoot>, ExecutorError> {
+        self.store
+            .native_path_claim(owner)
+            .map_err(storage)?
+            .map(|claim| claim.roots)
+            .ok_or_else(|| refused("accepted native directory claim is missing; entry refused"))
     }
 
     pub(crate) fn release_settled(&self, owner: &str) -> Result<(), ExecutorError> {
@@ -219,6 +222,76 @@ mod tests {
         std::fs::remove_file(&link)?;
         std::os::unix::fs::symlink(other.path(), &link)?;
         assert!(host.revalidate("writer").is_err());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn independent_research_folders_admit_together_but_parent_capture_conflicts()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        let left = project.path().join("research-a");
+        let right = project.path().join("research-b");
+        std::fs::create_dir(&left)?;
+        std::fs::create_dir(&right)?;
+        let host = NativePathClaims::new(Arc::new(RedbStore::open(root.path())?));
+        let access = |path: &Path, write| TaskPathAccess {
+            path: path.to_string_lossy().into_owned(),
+            write,
+        };
+        host.acquire("research-a", &[access(&left, true)])?;
+        host.acquire("research-b", &[access(&right, true)])?;
+        assert!(
+            host.acquire("capture-project", &[access(project.path(), false)])
+                .is_err()
+        );
+        assert!(host.acquire("same-folder", &[access(&left, true)]).is_err());
+        host.release_settled("research-a")?;
+        assert!(
+            host.acquire("capture-project", &[access(project.path(), false)])
+                .is_err()
+        );
+        host.release_settled("research-b")?;
+        host.acquire("capture-project", &[access(project.path(), false)])?;
+        assert!(host.acquire("research-a", &[access(&left, true)]).is_err());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn simultaneous_capture_and_writer_claims_have_exactly_one_owner()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        let store = Arc::new(RedbStore::open(root.path())?);
+        let host = NativePathClaims::new(store.clone());
+        let starts = std::sync::Barrier::new(2);
+        let attempted = std::sync::Barrier::new(2);
+        let outcomes = std::thread::scope(|scope| {
+            let contender = |owner, write| {
+                let path = TaskPathAccess {
+                    path: project.path().to_string_lossy().into_owned(),
+                    write,
+                };
+                starts.wait();
+                let result = host.acquire(owner, &[path]);
+                // Neither side releases a successful claim before the other has attempted entry.
+                attempted.wait();
+                result
+            };
+            let reader = scope.spawn(move || contender("capture", false));
+            let writer = scope.spawn(move || contender("writer", true));
+            (reader.join(), writer.join())
+        });
+        let reader = outcomes.0.map_err(|_| "capture claimant panicked")?;
+        let writer = outcomes.1.map_err(|_| "writer claimant panicked")?;
+        assert_ne!(reader.is_ok(), writer.is_ok());
+        assert_eq!(
+            store.native_path_claim("capture")?.is_some(),
+            reader.is_ok()
+        );
+        assert_eq!(store.native_path_claim("writer")?.is_some(), writer.is_ok());
         Ok(())
     }
 }

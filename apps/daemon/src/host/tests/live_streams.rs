@@ -90,6 +90,8 @@ async fn register_replacement(host: &DaemonHost, root: &std::path::Path) -> Test
             Arc::new(data),
             secrets,
             owner.now()?,
+            owner.authority.clone(),
+            owner.clock.clone(),
         )
         .map_err(invalid)
     })

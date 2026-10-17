@@ -21,9 +21,17 @@ workflow generation. Revisions and removal require the observed task version; st
 remain immutable. A correction names the task it addresses, and adoption separately identifies any
 unstarted consumer bindings to redirect. Original results remain evidence.
 
-`WorkflowLimits` bounds cumulative admission, active execution and corrective work. Runtime and
-control enforce those limits against durable facts and current scoped grants. Clients may present
-these types but must send changes through the daemon's shared command path.
+`actions` explicitly enables a model task's structured future-work proposals; its `automatic_repair`
+policy separately permits ordinary feedback tasks. Neither field grants capabilities. `tools` selects
+bounded native text read/write operations or exact configured process capabilities for a model's
+conversation. File tools require declared path claims. Every producer-output binding must name a
+declared output, including optional bindings; optional changes readiness, not reference validity.
+
+`WorkflowLimits` bounds cumulative task/model admission and active execution, consecutive rejected
+responses, failed corrective lineages, simultaneous tasks and calls within one task. Runtime and
+control enforce those limits against durable facts and current scoped grants. Removing work or
+resuming a pause does not refund its account. Clients may present these types but must send changes
+through the daemon's shared command path.
 
 The [task contract tests](tests/tasks.rs) exercise invalid references, cycles, captured-byte integrity
 and output declarations. Runtime tests cover admission races, execution and persistence.

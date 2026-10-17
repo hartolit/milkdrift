@@ -10,7 +10,7 @@ mod task;
 pub use identity::{IdentityError, NodeId, RevisionId, TaskId, WorkflowId};
 pub use task::{
     DEFAULT_WORKFLOW_TASKS, MAX_TASK_BATCH_ACTIONS, MAX_TASK_DEFINITION_BYTES, MAX_TASK_TEXT_BYTES,
-    NewTask, TaskBatch, TaskBindingRedirect, TaskChange, TaskDefinition, TaskDefinitionError,
-    TaskInputBinding, TaskInputValue, TaskOutputDeclaration, TaskPathAccess, WorkflowCreate,
-    WorkflowLimits, validate_task_set,
+    NewTask, TaskActionPolicy, TaskBatch, TaskBindingRedirect, TaskChange, TaskDefinition,
+    TaskDefinitionError, TaskInputBinding, TaskInputValue, TaskOutputDeclaration, TaskPathAccess,
+    TaskTool, WorkflowCreate, WorkflowLimits, validate_task_set,
 };

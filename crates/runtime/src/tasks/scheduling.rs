@@ -42,6 +42,10 @@ impl TaskRuntime {
         for snapshot in page.items {
             let mut workflow = self.require_workflow(&snapshot.workflow)?;
             self.observe_duration(&mut workflow, self.clock.now()?)?;
+            if super::policy::request_limit_stop(&mut workflow)? {
+                let expected = self.advance(&mut workflow)?;
+                self.save(&workflow, Some(expected), None)?;
+            }
             if workflow.wait_question.is_some() {
                 continue;
             }
@@ -86,6 +90,7 @@ impl TaskRuntime {
                         selected.state = TaskState::Running;
                         selected.reason = None;
                         let expected = self.advance(&mut workflow)?;
+                        workflow.decision_generation = workflow.generation;
                         self.save(&workflow, Some(expected), None)?;
                         dispatches.push(dispatch);
                         active = active
@@ -139,6 +144,7 @@ impl TaskRuntime {
                             reports: Vec::new(),
                         });
                         let expected = self.advance(&mut workflow)?;
+                        workflow.decision_generation = workflow.generation;
                         self.save(&workflow, Some(expected), None)?;
                         dispatches.push(dispatch);
                         active = active
@@ -283,10 +289,25 @@ impl TaskRuntime {
                 None,
             )
             .map_err(invalid)?;
+            let mut messages = vec![message];
+            let structured_output = if task.definition.actions.is_some() {
+                let (snapshot, schema) = super::model_actions::authoring_context(workflow, task)?;
+                messages.push(
+                    Message::new(
+                        MessageRole::User,
+                        vec![ContentPart::Text { text: snapshot }],
+                        None,
+                    )
+                    .map_err(invalid)?,
+                );
+                Some(schema)
+            } else {
+                None
+            };
             let model_task = ModelTaskRequest::new(
-                vec![message],
+                messages,
                 Vec::new(),
-                None,
+                structured_output,
                 SessionSelection::Fresh,
                 None,
                 4096,
@@ -370,7 +391,11 @@ impl TaskRuntime {
             entry,
             request,
         )?
-        .for_task(budget, task.definition.paths.clone());
+        .for_task(budget, task.definition.paths.clone())
+        .with_task_tools(
+            task.definition.tools.clone(),
+            workflow.limits.tool_calls_per_task,
+        );
         if serde_json::to_vec(&dispatch)?.len() > super::capacity::MAX_DISPATCH_BYTES {
             return Err(invalid(
                 "frozen external dispatch exceeds its reserved 64 KiB allowance",

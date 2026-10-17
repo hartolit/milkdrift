@@ -285,6 +285,8 @@ pub(super) fn write_secret(path: &std::path::Path, value: &str) -> TestResult {
 
 pub(super) fn task_definition(capability: &str, operation: &str) -> TaskDefinitionDto {
     TaskDefinitionDto {
+        actions: None,
+        tools: Vec::new(),
         title: "Inspect supplied project".into(),
         description: "A task submitted through the ordinary public client".into(),
         instructions: "Use only the supplied brief and captured file to report the project facts."

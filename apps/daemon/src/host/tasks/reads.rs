@@ -250,6 +250,21 @@ impl Owner {
             None
         };
         Ok(WorkflowReadDto {
+            wait_question: record.wait_question.clone(),
+            admitted_tasks: record.admitted_tasks,
+            admitted_model_batches: record.admitted_model_batches,
+            rejected_responses: record.rejected_responses,
+            active_execution_ms: record.active_execution_ms,
+            admissions: page
+                .iter()
+                .filter_map(|task| {
+                    record
+                        .admissions
+                        .iter()
+                        .find(|(id, _)| id.as_str() == task.id)
+                })
+                .map(|(source, admission)| self.model_admission_read(session, source, admission))
+                .collect::<Result<_, _>>()?,
             id: record.id.to_string(),
             title: record.title.clone(),
             description: record.description.clone(),
@@ -349,6 +364,7 @@ impl Owner {
             Err(error) => return Err(error),
         };
         Ok(TaskReadDto {
+            origin: None,
             id: task.id.to_string(),
             version: task.version,
             definition: mapping::definition(&task.definition)?,
@@ -531,7 +547,53 @@ impl Owner {
             .tasks
             .get(&milkdrift_blueprint::TaskId::new(task).map_err(failure)?)
             .ok_or_else(super::super::read_model::not_found)?;
-        self.task_read(session, workflow, task)
+        let mut read = self.task_read(session, workflow, task)?;
+        read.origin = record
+            .admissions
+            .iter()
+            .find(|(_, admission)| admission.aliases.values().any(|id| id == &task.id))
+            .map(|(source, admission)| self.model_admission_read(session, source, admission))
+            .transpose()?;
+        Ok(read)
+    }
+
+    fn model_admission_read(
+        &self,
+        session: &ActorSession,
+        source: &milkdrift_blueprint::TaskId,
+        admission: &milkdrift_runtime::ModelAdmission,
+    ) -> Result<milkdrift_control_protocol::tasks::ModelAdmissionDto, PublicFailure> {
+        let response_digest = match admission.response.as_ref() {
+            Some(reference) => match self.artifact_metadata(session, reference.identity()) {
+                Ok(_) => Some(reference.digest().to_owned()),
+                Err(error)
+                    if matches!(
+                        error.code,
+                        ErrorCode::Unauthorized | ErrorCode::Unauthenticated | ErrorCode::NotFound
+                    ) =>
+                {
+                    None
+                }
+                Err(error) => return Err(error),
+            },
+            None => None,
+        };
+        Ok(milkdrift_control_protocol::tasks::ModelAdmissionDto {
+            task_id: source.to_string(),
+            status: serde_json::to_value(admission.status)
+                .map_err(failure)?
+                .as_str()
+                .ok_or_else(|| failure("admission state encoding failed"))?
+                .to_owned(),
+            response_digest,
+            reason: admission.reason.clone(),
+            receipt_key: admission.receipt_key.clone(),
+            aliases: admission
+                .aliases
+                .iter()
+                .map(|(alias, id)| (alias.to_string(), id.to_string()))
+                .collect(),
+        })
     }
 
     pub(in crate::host) fn read_task_result(

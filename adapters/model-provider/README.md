@@ -26,7 +26,8 @@ request types. `TaskRuntime` builds ordinary fresh, nonstream requests from acce
 and named inputs, then freezes the request and selected capability before adapter preparation.
 
 `EndpointProfile::from_json` reads the non-secret endpoint/model choice, protocol mapping, features,
-transport policy, and limits. The daemon creates `ModelEndpointAdapter` and registers the matching
+transport policy, and limits. The daemon creates `ModelEndpointAdapter`, composes its ordinary task
+tool loop in [`capability-host`](../../crates/capability-host/README.md), and registers the matching
 `descriptor_for_profile` result in its [capability construction](../../apps/daemon/src/host/capabilities.rs).
 Keep the same capability identity and profile in both calls. Profile changes require a new generation;
 health describes local adapter readiness and active load without probing endpoint availability.
@@ -65,14 +66,17 @@ profile declaration but cannot establish the enforceable bounds required by ordi
 turns a loopback URL, missing field, or old profile into free service. An operator's `unbilled`
 declaration makes provider charge non-applicable; tokens, artifacts and call counts still apply.
 
-The `byte_bpe` contract supports fresh system/user/developer text on OpenAI-compatible chat.
+The `byte_bpe` contract supports system/user/developer text, assistant/tool-result history,
+function-tool schemas and structured-output schemas on OpenAI-compatible chat.
 After context injection, preparation counts the entire encoded UTF-8 body plus bounded template
 overhead. Byte BPE can only merge its initial byte tokens. The operator must establish that
 normalization does not expand input, the exact template stays within its declared overhead,
 the server reports logical prompt tokens once, and it caps one complete generation even if disconnected.
 The configured input ceiling is a local refusal threshold, not proof from a context-window size.
-Tools, images, assistant history, extra choices, reasoning controls, structured output and other
-provider extensions are refused for this accounting path. Other ordinary mappings keep their
+Tool arguments and schemas are included in the complete encoded byte count; every tool remains a
+host operation, with no server-side tool execution or additional provider charge category. Images,
+extra choices, reasoning controls and other provider extensions are refused for this accounting
+path. Other ordinary mappings keep their
 existing feature rules.
 
 Prepared envelopes explicitly name `model_tokens`. Task entry charges the prepared input and output
@@ -174,7 +178,8 @@ explicit loopback development, redirects default to denied, and proxy discovery 
 Streaming fragments become bounded progress observations. Provider parsers accumulate text and tool
 arguments and require their completion markers before publishing response artifacts. On success,
 `model_response` contains the canonical response; available final text, structured JSON, tool calls,
-and provider metadata get separate artifacts. Tool calls are data, not automatically executed work.
+and provider metadata get separate artifacts. Tool calls remain response data here; the host's
+explicitly admitted task tool catalog determines which calls can execute within its bounded loop.
 Missing usage stays unknown, and a successful workflow response can still contain no useful final text.
 
 Cancellation signals a local flag and SSE reading checks it between reads. It cannot prove that

@@ -31,6 +31,10 @@ use milkdrift_runtime::{ManualClock, SequentialIdGenerator, TaskExecutor, TaskRu
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
+#[cfg(unix)]
+#[path = "effect_worker/native_capture.rs"]
+mod native_capture;
+
 #[test]
 fn maximum_shutdown_duration_does_not_overflow_the_clock() -> TestResult {
     let directory = tempfile::tempdir()?;
@@ -555,6 +559,8 @@ fn create_and_start(runtime: &TaskRuntime, index: usize) -> TestResult {
                     required: true,
                     corrective_of: None,
                     paths: Vec::new(),
+                    tools: Vec::new(),
+                    actions: None,
                 },
             }],
             inputs: BTreeMap::new(),

@@ -278,9 +278,10 @@ for mutation or reset. Prompt 01 rechecks only adoption facts. Unexpected real a
 a narrow preservation decision, not a speculative migration engine. New binaries refuse old workflow
 stores before writes. No automatic upgrade/removal of old hosts or external resources is authorized.
 
-The review correction uses task document schema 2 and redb internal document format 21, retaining
-physical schema 19. Earlier task documents lack enforceable duration reservations and accounting
-watermarks. Their readers refuse them without mutation rather than infer missing historical facts.
+Prompt 03 uses task document schema 3 and redb internal document format 22, retaining physical
+schema 19. Earlier task documents lack model admission linkage, frozen tool policy and authoring
+generations; the preceding review also added duration reservations and accounting watermarks.
+Readers refuse earlier formats without mutation rather than infer missing historical facts.
 Use a fresh development root for this revision and retain the old binary with its existing stores.
 
 The first cut costs more than a GUI wrapper: ordinary workflow representation and obsolete consumers

@@ -21,6 +21,11 @@ and provider metadata. Tool calls are data until separately admitted through an 
 path. Missing usage remains unknown. Loss of a response after external entry does not permit an
 automatic retry.
 
+The capability host appends exact assistant calls and bounded tool-result messages inside an
+explicitly admitted task tool loop. That conversation never supplies workflow scheduling authority.
+An actions-enabled task can return structured future-work data; the control owner independently
+validates the immutable response and admits any resulting task batch.
+
 The crate introduction contains a pure request construction example. [Contract tests](tests/contracts.rs)
 cover canonical request/response envelopes and invalid content without an endpoint or credentials;
 model-provider tests cover explicit materialization and real local HTTP failure boundaries.

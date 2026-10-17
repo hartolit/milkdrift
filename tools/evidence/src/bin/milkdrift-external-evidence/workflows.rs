@@ -136,6 +136,8 @@ pub(crate) fn definition(
     repository: Option<&Path>,
 ) -> TaskDefinitionDto {
     TaskDefinitionDto {
+        actions: None,
+        tools: Vec::new(),
         title: title.into(),
         description: title.into(),
         instructions: instructions.into(),

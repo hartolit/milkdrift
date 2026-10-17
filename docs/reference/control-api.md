@@ -1,4 +1,4 @@
-# Local control API 3.0
+# Local control API 3.1
 
 Use this API to submit ordinary tasks, discover permitted workflows and inspect retained results.
 All clients use the daemon's owner queue. The standalone [Svelte client](../../apps/web/README.md),
@@ -13,7 +13,7 @@ maps that credential to an immutable actor/grant revision. JSON cannot choose an
 negotiates the exact version before use; older graph clients are refused:
 
 ```json
-{"protocol":{"major":3,"minor":0}}
+{"protocol":{"major":3,"minor":1}}
 ```
 
 Send this to `POST /v1/version`. `GET /v1/session` returns the installation identity, authenticated
@@ -25,13 +25,13 @@ The bounded JSON reader limits bytes, nesting and collection sizes before dispat
 Success bodies use the common envelope:
 
 ```json
-{"protocol":{"major":3,"minor":0},"request_id":"req-1","value":{}}
+{"protocol":{"major":3,"minor":1},"request_id":"req-1","value":{}}
 ```
 
 Errors use a stable code and redacted explanation. They never include credentials or task content:
 
 ```json
-{"protocol":{"major":3,"minor":0},"request_id":"req-1","code":"conflict","message":"workflow generation changed","retryable":false,"details":{}}
+{"protocol":{"major":3,"minor":1},"request_id":"req-1","code":"conflict","message":"workflow generation changed","retryable":false,"details":{}}
 ```
 
 `unauthenticated` means the credential failed, `unauthorized` means the current grant does not
@@ -91,8 +91,8 @@ after losing the client entirely, discovery still finds accepted work.
 
 ## Future changes and completion
 
-Changes include `add`, `revise`, `remove`, `bind_input`, `stop`, `wait`, `continue`, `finish` and
-`adopt_correction`. Revise/remove carry the observed task version as well as the batch's workflow
+Changes include `add`, `revise`, `remove`, `bind_input`, `stop`, `wait`, `continue`, `finish`,
+`adopt_correction`, `set_limits` and `dismiss_admission`. Revise/remove carry the observed task version as well as the batch's workflow
 generation. An already frozen start refuses revision. New definitions never rewrite retained
 history. Required producer output and settled producer outcome are different input bindings;
 missing required output keeps consumers queued. Definitions default to required.
@@ -104,8 +104,44 @@ settles it. An entered process without terminal evidence remains uncertain after
 not silently repeated. Native writer claims remain held while its outcome is uncertain.
 
 Correction adoption names a successful corrective task and optional version-guarded future input
-redirects. The original failure/result remains inspectable. No automatic correction or model-led
-workflow editing is implemented in this slice. Cumulative limits never replenish on continue.
+redirects. The original failure/result remains inspectable. Each referenced output must be declared
+by its producer, including optional outputs. A required-success binding cannot consume a failed
+producer's partial output merely because a sibling binding accepts its settled outcome.
+
+Set a model task's `actions` to `{"automatic_repair":false}` to enable structured future-work
+proposals. The daemon supplies a bounded authoring snapshot and requests a canonical `TaskBatch`;
+plain result text never becomes commands. The immutable response and pending admission are retained
+before control processes it. Accepted changes, source linkage and alias receipt commit together.
+A restart or lost reply recovers that admission without issuing new children.
+
+The canonical response is named `model_response`, with media type
+`application/vnd.milkdrift.model-response.v1+json`. A structured-only response can have no
+`final_text`; an action task that requires a named result should declare `model_response` instead.
+Ordinary text responses may separately publish `final_text` with media type `text/plain`.
+
+Human edits and task starts invalidate stale model snapshots. Progress reports do not invalidate the
+source task's own snapshot. Invalid/conflicted output retains a bounded decision reason. With
+`automatic_repair:true`, control may admit an ordinary feedback task using the same capability,
+tools and account; denied authority waits for a person. Workflow reads expose decisions for source
+tasks on their page, and selected task reads expose their admitting origin independently of paging.
+Use a reviewed future batch with `dismiss_admission` naming the rejected source task to close its
+decision. Dismissal does not execute the rejected output or broaden capability authority.
+
+`set_limits` supplies a complete limits object prospectively. Task, model-batch and elapsed-time
+ceilings cannot fall below their retained consumption; increasing them never changes the underlying
+grant. Continue does not replenish tasks, model batches, the rejected-response count, failed-lineage
+spending or unresolved time. An accepted model batch that adds work resets the rejection streak;
+automatic feedback itself does not. At a model-batch ceiling, already admitted work can run, but
+another proposed batch is refused. Explicit waits and undecided admissions prevent finish, even
+when every external task has settled. Feedback and dismissal may clear their own rejection wait;
+they do not clear a separate pause accepted by a person.
+
+The task's `tools` list may contain `{"kind":"read_file"}`, `{"kind":"write_file"}` or
+`{"kind":"process","capability":{"id":"configured-tool","operation":"process.execute"}}`.
+Only model tasks may use this catalog. Native file tools require declared read/write `paths`; process
+tools select existing configured capabilities. The host rechecks authority at every model/tool call,
+retains bounded feedback and uses one cumulative task reservation. Generic binary model inputs remain
+unsupported; captured text and supported textual artifacts carry exact bounded content.
 
 `active_execution_ms` is a shared cumulative allowance. Before external entry, the daemon reserves
 the adapter's enforced attempt duration alongside all live reservations and previously observed

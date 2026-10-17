@@ -136,6 +136,16 @@ pub struct ModelEndpointAdapter {
 }
 
 impl ModelEndpointAdapter {
+    /// Largest request this profile can enforce, used to reserve a complete host-owned tool loop.
+    ///
+    /// # Errors
+    /// Refuses overflowing tariff or byte bounds. Unknown dimensions remain unknown.
+    pub fn maximum_admission_envelope(&self) -> Result<InvocationAdmissionEnvelope, AdapterError> {
+        self.profile
+            .maximum_envelope()
+            .map_err(AdapterError::rejected)
+    }
+
     /// Creates an adapter after endpoint policy and HTTP client construction succeed.
     ///
     /// # Errors

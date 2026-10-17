@@ -170,14 +170,19 @@ impl ModelEndpointAdapter {
             media_type: RESPONSE_MEDIA,
             bytes: canonical,
         }];
-        if !response.text().is_empty() {
+        let intermediate_tool_response = !response.tool_calls().is_empty()
+            && request.extensions().iter().any(|(key, value)| {
+                key.as_str() == "org.milkdrift/model-tool-loop"
+                    && value.value() == &serde_json::Value::Bool(true)
+            });
+        if !intermediate_tool_response && !response.text().is_empty() {
             outputs.push(PreparedOutput {
                 name: "final_text",
                 media_type: "text/plain",
                 bytes: response.text().as_bytes().to_vec(),
             });
         }
-        if let Some(structured) = response.structured() {
+        if !intermediate_tool_response && let Some(structured) = response.structured() {
             let bytes = serde_json::to_vec(structured.value())
                 .map_err(|_| AdapterError::external_failure("structured output encoding failed"))?;
             outputs.push(PreparedOutput {
@@ -186,7 +191,7 @@ impl ModelEndpointAdapter {
                 bytes,
             });
         }
-        if !response.tool_calls().is_empty() {
+        if !intermediate_tool_response && !response.tool_calls().is_empty() {
             let bytes = serde_json::to_vec(response.tool_calls())
                 .map_err(|_| AdapterError::external_failure("tool call encoding failed"))?;
             outputs.push(PreparedOutput {
@@ -195,7 +200,7 @@ impl ModelEndpointAdapter {
                 bytes,
             });
         }
-        if !response.provider_metadata().is_empty() {
+        if !intermediate_tool_response && !response.provider_metadata().is_empty() {
             let bytes = serde_json::to_vec(response.provider_metadata())
                 .map_err(|_| AdapterError::external_failure("provider metadata encoding failed"))?;
             outputs.push(PreparedOutput {

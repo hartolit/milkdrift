@@ -93,6 +93,16 @@ impl ModelFixture {
         authority: Arc<dyn AuthorityEvaluator>,
         faults: Arc<dyn milkdrift_redb_store::FaultInjector>,
     ) -> TestResult<Self> {
+        Self::with_tools(profile, instructions, authority, faults, vec![], vec![])
+    }
+    pub(super) fn with_tools(
+        profile: EndpointProfile,
+        instructions: &str,
+        authority: Arc<dyn AuthorityEvaluator>,
+        faults: Arc<dyn milkdrift_redb_store::FaultInjector>,
+        tools: Vec<milkdrift_blueprint::TaskTool>,
+        paths: Vec<milkdrift_blueprint::TaskPathAccess>,
+    ) -> TestResult<Self> {
         let directory = tempfile::tempdir()?;
         let clock = Arc::new(ManualClock::new(1000));
         let store = Arc::new(RedbStore::open_with_config(
@@ -100,7 +110,12 @@ impl ModelFixture {
                 .with_fault_injector(faults)
                 .with_clock(Arc::new(TaskStoreClock(clock.clone()))),
         )?);
-        let (host, adapter, read_denial) = model_host(store.clone(), directory.path(), profile)?;
+        let (host, adapter, read_denial) = model_host_with_tools(
+            store.clone(),
+            directory.path(),
+            profile,
+            (!tools.is_empty()).then(|| authority.clone()),
+        )?;
         let runtime = Arc::new(TaskRuntime::new(
             store.clone(),
             host.clone(),
@@ -139,7 +154,9 @@ impl ModelFixture {
                     outputs: BTreeMap::new(),
                     required: true,
                     corrective_of: None,
-                    paths: vec![],
+                    paths,
+                    tools,
+                    actions: None,
                 },
             }],
             inputs: BTreeMap::from([(
@@ -308,11 +325,23 @@ fn model_host(
     Arc<ModelEndpointAdapter>,
     Arc<AtomicBool>,
 )> {
+    model_host_with_tools(store, directory, profile, None)
+}
+fn model_host_with_tools(
+    store: Arc<RedbStore>,
+    directory: &Path,
+    profile: EndpointProfile,
+    authority: Option<Arc<dyn AuthorityEvaluator>>,
+) -> TestResult<(
+    Arc<CapabilityHost>,
+    Arc<ModelEndpointAdapter>,
+    Arc<AtomicBool>,
+)> {
     let read_denial = Arc::new(AtomicBool::new(false));
     let data = Arc::new(ReadGuard {
         denied: read_denial.clone(),
         inner: StoreInvocationDataAccess::new(
-            store,
+            store.clone(),
             directory.join("materialized"),
             ArtifactReadAuthority::Authorized {
                 actor: ActorRef::new("human:session")?,
@@ -326,20 +355,80 @@ fn model_host(
         capability,
         profile,
         Arc::new(InMemorySecretResolver::new()),
-        data,
+        data.clone(),
     )?);
     let host = Arc::new(CapabilityHost::new(
         HostConfig {
-            max_registrations: 1,
+            max_registrations: 2,
             max_generations_per_capability: 1,
             max_concurrent_per_generation: 1,
             observation_stale_after_ms: 10_000,
         },
         CapabilitySelectionPolicy::priorities(BTreeMap::new()),
     )?);
+    host.install_native_path_store(store)?;
+    #[cfg(target_os = "linux")]
+    if authority.is_some() {
+        let executable = std::path::Path::new("/bin/echo").canonicalize()?;
+        let bytes = std::fs::read(&executable)?;
+        let mut document: Value = serde_json::from_str(include_str!(
+            "../../../local-process/tests/fixtures/process-profile-v2.json"
+        ))?;
+        *document
+            .pointer_mut("/profile/capability")
+            .ok_or("profile capability absent")? = json!("loop-process");
+        *document
+            .pointer_mut("/profile/executable")
+            .ok_or("profile executable absent")? = json!(executable);
+        *document
+            .pointer_mut("/profile/implementation/content_digest")
+            .ok_or("profile digest absent")? = json!(format!("b3_{}", blake3::hash(&bytes)));
+        *document
+            .pointer_mut("/profile/implementation/size_bytes")
+            .ok_or("profile size absent")? = json!(bytes.len());
+        *document
+            .pointer_mut("/profile/arguments")
+            .ok_or("profile arguments absent")? = json!(["real process tool result"]);
+        *document
+            .pointer_mut("/profile/stdout")
+            .ok_or("profile stdout absent")? = json!({"max_capture_bytes":1024,"stream_progress":false,"max_progress_events":0,"overflow_action":"terminate","artifact_name":"stdout"});
+        let profile = milkdrift_local_process::ProcessProfileDocument::from_json(
+            &serde_json::to_vec(&document)?,
+        )?
+        .into_profile();
+        let process = Arc::new(milkdrift_local_process::LocalProcessAdapter::new(
+            profile,
+            data.clone(),
+            Arc::new(InMemorySecretResolver::new()),
+        )?);
+        let descriptor = process.descriptor().clone();
+        host.register(
+            descriptor.clone(),
+            process,
+            Some(CapabilityObservation::new(
+                descriptor.identity().clone(),
+                1000,
+                true,
+                0,
+                "ready",
+            )?),
+        )?;
+    }
+    let registered: Arc<dyn CapabilityAdapter> = match authority {
+        Some(authority) => Arc::new(milkdrift_capability_host::ModelToolLoopAdapter::new(
+            descriptor.clone(),
+            adapter.clone(),
+            adapter.maximum_admission_envelope()?,
+            host.as_ref().clone(),
+            data,
+            authority,
+            Arc::new(|| Ok(1000)),
+        )),
+        None => adapter.clone(),
+    };
     host.register(
         descriptor.clone(),
-        adapter.clone(),
+        registered,
         Some(CapabilityObservation::new(
             descriptor.identity().clone(),
             1000,

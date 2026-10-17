@@ -106,7 +106,16 @@ fn billed_profile_declares_rounded_permission_cost_and_refuses_insufficient_auth
             serde_json::from_value(value)?,
             Arc::new(CostCeiling(ceiling)),
             Arc::new(NoFaults),
-        )?;
+        );
+        if ceiling == 7 {
+            assert!(
+                fixture.is_err(),
+                "insufficient authority must refuse future task admission"
+            );
+            no_connections(&listener)?;
+            continue;
+        }
+        let fixture = fixture?;
         // The larger input tariff plus 4,096 output tokens reserves eight hundredths.
         assert_eq!(
             fixture.adapter.authority_requirements().budget.cost_minor,

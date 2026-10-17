@@ -53,6 +53,12 @@ pub(super) fn resolve_inputs(
                         .tasks
                         .get(task)
                         .ok_or_else(|| format!("producer {task} is absent"))?;
+                    if !optional && producer.state != TaskState::Completed {
+                        return Err(format!(
+                            "required output {task}/{output} needs a successful producer; producer is {:?}",
+                            producer.state
+                        ));
+                    }
                     match producer
                         .result
                         .as_ref()

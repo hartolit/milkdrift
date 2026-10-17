@@ -70,6 +70,12 @@ impl Owner {
             .into_iter()
             .map(|change| {
                 Ok(match change {
+                    TaskChangeDto::SetLimits { limits } => TaskChange::SetLimits {
+                        limits: mapping::domain_limits(limits),
+                    },
+                    TaskChangeDto::DismissAdmission { task } => TaskChange::DismissAdmission {
+                        task: TaskId::new(task).map_err(failure)?,
+                    },
                     TaskChangeDto::Add { alias, definition } => TaskChange::Add {
                         alias: TaskId::new(alias).map_err(failure)?,
                         definition: self.task_definition(session, definition)?,

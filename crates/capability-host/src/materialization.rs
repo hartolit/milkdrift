@@ -424,7 +424,11 @@ impl StoreInvocationDataAccess {
             }
         } else {
             CausalReference::Invocation {
-                invocation: request.invocation().clone(),
+                invocation: context
+                    .task_publication_invocation
+                    .as_ref()
+                    .unwrap_or(request.invocation())
+                    .clone(),
             }
         };
         let provenance = ArtifactProvenance::new(producer, publication_causes(context, request)?)
@@ -846,6 +850,16 @@ fn publication_causes(
     if context.peer_artifact_budget().is_some() && context.workflow().is_some() {
         causes.push(external_cause(
             "origin-invocation",
+            request.invocation().as_str(),
+        )?);
+    }
+    if context
+        .task_publication_invocation
+        .as_ref()
+        .is_some_and(|parent| parent != request.invocation())
+    {
+        causes.push(external_cause(
+            "tool-invocation",
             request.invocation().as_str(),
         )?);
     }

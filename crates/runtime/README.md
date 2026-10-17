@@ -40,6 +40,27 @@ requests and settlement. The host separately chooses whether accepted workers dr
 recovery. Public callers use [`TaskControlService`](../control/README.md), which rechecks scoped
 authority for mutations and reads.
 
+Opted-in model tasks publish an immutable `model_response`. Accepting its output report records
+pending action admission in the same transaction, so a restart cannot detach that accepted response
+from its proposal. Control admits actions only after successful task settlement; an interrupted
+entered source remains uncertain with its pending response inspectable.
+Control reads only its structured `TaskBatch`, checks current authority, and calls the ordinary batch
+transaction. Source linkage, allocated IDs and receipt commit together. Exact replay cannot add the
+children again. The authoring generation changes with edits and starts; the source task's own progress
+reports do not invalidate its snapshot. A competing edit/start requires a refreshed proposal.
+
+Rejected responses remain inspectable. Explicit automatic-repair policy may admit one ordinary
+feedback task for that source response; otherwise entry waits for a human decision. Model batches,
+rejection streaks and failed corrective lineages are bounded. `SetLimits` changes future ceilings;
+`Continue` never refunds prior tasks, model batches, elapsed time or unresolved external work.
+An accepted proposal that adds future tasks resets the rejection streak; automatic feedback does
+not. Failed lineage counts remain in history, but only a lineage with an outstanding obligation or
+open work pauses execution. A settled optional failure alone does not prevent finish. Reaching the
+model-batch ceiling still permits already admitted tasks to run; the next proposal is refused.
+An explicit wait or undecided response prevents completion even when all task results have settled.
+The workflow records which model rejection owns a diagnostic wait. Repair or dismissal clears only
+that source's wait; it cannot replace or release an explicit pause accepted during model execution.
+
 The [durable runtime tests](tests/durable_runtime/tasks.rs) use production redb storage and controlled
 external boundaries. They cover exact request recovery, edit/start races, input freezing, cumulative
 allowances, revocation, correction, uncertainty and shutdown. Follow the repository's

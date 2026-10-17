@@ -321,6 +321,10 @@ pub struct ExecutionDispatch {
     task_artifact_budget: Option<milkdrift_workspace::WorkspaceBudget>,
     #[serde(default)]
     native_path_claims: Vec<milkdrift_blueprint::TaskPathAccess>,
+    #[serde(default)]
+    task_tools: Vec<milkdrift_blueprint::TaskTool>,
+    #[serde(default)]
+    maximum_tool_calls: u32,
     run: RunId,
     revision: RevisionId,
     node: NodeId,
@@ -362,6 +366,8 @@ impl ExecutionDispatch {
             task_inputs: false,
             task_artifact_budget: None,
             native_path_claims: Vec::new(),
+            task_tools: Vec::new(),
+            maximum_tool_calls: 0,
             run,
             revision,
             node,
@@ -419,6 +425,8 @@ impl ExecutionDispatch {
             dispatch.task_inputs = self.task_inputs;
             dispatch.task_artifact_budget = self.task_artifact_budget.clone();
             dispatch.native_path_claims = self.native_path_claims.clone();
+            dispatch.task_tools = self.task_tools.clone();
+            dispatch.maximum_tool_calls = self.maximum_tool_calls;
             dispatch
         })
     }
@@ -465,6 +473,30 @@ impl ExecutionDispatch {
     #[must_use]
     pub fn native_path_claims(&self) -> &[milkdrift_blueprint::TaskPathAccess] {
         &self.native_path_claims
+    }
+
+    /// Freezes the admitted tool selection and cumulative per-task call ceiling.
+    #[must_use]
+    pub fn with_task_tools(
+        mut self,
+        tools: Vec<milkdrift_blueprint::TaskTool>,
+        maximum_calls: u32,
+    ) -> Self {
+        self.task_tools = tools;
+        self.maximum_tool_calls = maximum_calls;
+        self
+    }
+
+    /// Exact tools admitted with this definition.
+    #[must_use]
+    pub fn task_tools(&self) -> &[milkdrift_blueprint::TaskTool] {
+        &self.task_tools
+    }
+
+    /// Maximum tool entries across the entire attempt.
+    #[must_use]
+    pub const fn maximum_tool_calls(&self) -> u32 {
+        self.maximum_tool_calls
     }
 
     /// Owning run.

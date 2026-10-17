@@ -260,6 +260,10 @@ fn canonical_version_cells_match_all_owning_constants() -> TestResult {
             ],
         ),
         (
+            "Runtime task workflow document",
+            vec![("crates/runtime/src/tasks/duration.rs", "SCHEMA_VERSION")],
+        ),
+        (
             "Local-process profile / host materialization",
             vec![
                 (

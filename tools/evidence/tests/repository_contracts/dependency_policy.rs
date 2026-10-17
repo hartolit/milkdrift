@@ -18,11 +18,10 @@ fn internal_edges(owner: &str) -> Option<&'static str> {
         "persistence" => "authority blueprint capability contracts peer-protocol workspace",
         "runtime" => "authority blueprint capability contracts model persistence workspace",
         "capability-host" => {
-            "authority blueprint capability contracts peer-protocol persistence runtime workspace"
+            // The bounded task tool loop consumes provider-neutral messages, never an endpoint adapter.
+            "authority blueprint capability contracts model peer-protocol persistence runtime workspace"
         }
-        "control" => {
-            "authority blueprint capability capability-host contracts model persistence runtime workspace"
-        }
+        "control" => "authority blueprint capability contracts model persistence runtime workspace",
         "peer-protocol" => "authority capability contracts workspace",
         "control-client" => "capability control-protocol peer-protocol",
         "cli" => {

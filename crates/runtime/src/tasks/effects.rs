@@ -322,6 +322,7 @@ impl TaskRuntime {
         if pause {
             workflow.wait_question =
                 Some(milkdrift_contracts::truncate_utf8(reason, 4096).to_owned());
+            workflow.model_admission_wait = None;
         }
         let task = workflow
             .tasks
@@ -731,6 +732,22 @@ impl TaskReporter<'_> {
             ));
         }
         frozen.reports.push(report.clone());
+        if let Some(("model_response", reference)) = report.kind().output()
+            && frozen.definition.actions.is_some()
+        {
+            workflow.admissions.insert(
+                self.task.clone(),
+                super::ModelAdmission {
+                    response: Some(reference.clone()),
+                    expected_generation: frozen.accepted_generation,
+                    status: super::ModelAdmissionStatus::Pending,
+                    reason: None,
+                    repair_allowed: false,
+                    receipt_key: None,
+                    aliases: std::collections::BTreeMap::new(),
+                },
+            );
+        }
         if let Some(terminal) = report.kind().terminal() {
             task.state = match terminal.status() {
                 TerminalStatus::Success => TaskState::Completed,
@@ -761,6 +778,24 @@ impl TaskReporter<'_> {
                 outputs,
                 recorded_at: now,
             });
+            if task.state == TaskState::Completed && frozen.definition.actions.is_some() {
+                workflow
+                    .admissions
+                    .entry(self.task.clone())
+                    .or_insert(super::ModelAdmission {
+                        response: task
+                            .result
+                            .as_ref()
+                            .and_then(|result| result.outputs.get("model_response"))
+                            .cloned(),
+                        expected_generation: frozen.accepted_generation,
+                        status: super::ModelAdmissionStatus::Pending,
+                        reason: None,
+                        repair_allowed: false,
+                        receipt_key: None,
+                        aliases: std::collections::BTreeMap::new(),
+                    });
+            }
         }
         super::duration::request_limit_stop(&mut workflow);
         let continuation_refused = report.kind().terminal().is_none()

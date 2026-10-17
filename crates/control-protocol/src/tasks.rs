@@ -114,6 +114,12 @@ pub struct TaskBindingRedirectDto {
 #[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
 #[serde(deny_unknown_fields)]
 pub struct TaskDefinitionDto {
+    /// Opt in to structured action proposals; plain model text remains result data.
+    #[serde(default)]
+    pub actions: Option<TaskActionPolicyDto>,
+    /// Exact tools permitted during this task's bounded model loop.
+    #[serde(default)]
+    pub tools: Vec<TaskToolDto>,
     /// Human-readable task title.
     pub title: String,
     /// Short explanation shown in list and timeline.
@@ -136,6 +142,31 @@ pub struct TaskDefinitionDto {
     pub corrective_of: Option<String>,
     /// Declared native filesystem roots.
     pub paths: Vec<PathAccess>,
+}
+
+/// Explicit grant to construct ordinary automatic feedback tasks after invalid model actions.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+pub struct TaskActionPolicyDto {
+    /// Invalid/conflicted responses may request feedback within the same authority and allowance.
+    pub automatic_repair: bool,
+}
+
+/// Native file tools use declared task paths; process tools select a configured capability.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum TaskToolDto {
+    /// Read bounded UTF-8 content from a declared path.
+    ReadFile,
+    /// Write bounded UTF-8 content under a declared write root.
+    WriteFile,
+    /// Run the selected configured process tool.
+    Process {
+        /// Exact configured selection, subject to current authority.
+        capability: TaskCapability,
+    },
 }
 
 /// A client-local name paired with proposed task content.
@@ -201,6 +232,16 @@ pub struct CreateWorkflowRequest {
 #[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TaskChangeDto {
+    /// Close a rejected response decision, optionally alongside reviewed future edits.
+    DismissAdmission {
+        /// Source task whose response was reviewed.
+        task: String,
+    },
+    /// Prospectively change ceilings without clearing any spending or uncertainty.
+    SetLimits {
+        /// Complete next finite limits.
+        limits: WorkflowLimitsDto,
+    },
     /// Add future work.
     Add {
         /// Name used by other new tasks in this batch.
@@ -333,6 +374,8 @@ pub struct TaskResultDto {
 #[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
 #[serde(deny_unknown_fields)]
 pub struct TaskReadDto {
+    /// Source response that admitted this task, available independently of workflow task paging.
+    pub origin: Option<ModelAdmissionDto>,
     /// Stable workflow-local task identity.
     pub id: String,
     /// Last accepted definition generation.
@@ -469,6 +512,19 @@ pub struct WorkflowSummaryDto {
 #[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowReadDto {
+    /// Current actionable question preventing new entry.
+    pub wait_question: Option<String>,
+    /// Cumulative task admissions, including removed and failed tasks.
+    pub admitted_tasks: u32,
+    /// Cumulative accepted model batches, including feedback tasks.
+    pub admitted_model_batches: u32,
+    /// Consecutive rejected or nonprogressing responses.
+    pub rejected_responses: u32,
+    /// Cumulative elapsed execution across all simultaneous attempts.
+    #[cfg_attr(feature = "web-codegen", ts(type = "number"))]
+    pub active_execution_ms: u64,
+    /// Response decisions for source tasks on this page; complete history follows task paging.
+    pub admissions: Vec<ModelAdmissionDto>,
     /// Stable daemon-assigned workflow identity.
     pub id: String,
     /// Discoverable title.
@@ -494,6 +550,25 @@ pub struct WorkflowReadDto {
     pub task_count: u32,
     /// Continue the live task list without loading full task content.
     pub next_task_cursor: Option<String>,
+}
+
+/// Inspectable link between immutable model output and its accepted or refused future work.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+pub struct ModelAdmissionDto {
+    /// Source task on this workflow page.
+    pub task_id: String,
+    /// Pending, accepted, rejected, repaired or dismissed.
+    pub status: String,
+    /// Canonical immutable response digest, if the model published it.
+    pub response_digest: Option<String>,
+    /// Bounded rejection or decision reason.
+    pub reason: Option<String>,
+    /// Accepted request receipt identity.
+    pub receipt_key: Option<String>,
+    /// Stable identities allocated by the accepted batch.
+    pub aliases: BTreeMap<String, String>,
 }
 
 /// One bounded search/list page; cursors bind daemon, actor and exact query.

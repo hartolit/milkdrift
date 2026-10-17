@@ -21,6 +21,66 @@ use crate::{
 };
 
 impl CapabilityHost {
+    pub(crate) fn model_path_roots(
+        &self,
+        context: &AdapterExecutionContext,
+    ) -> Result<Vec<milkdrift_persistence::NativePathRoot>, AdapterError> {
+        if context.task_paths.is_empty() {
+            return Ok(Vec::new());
+        }
+        let attempt = context
+            .workflow()
+            .ok_or_else(|| AdapterError::rejected("model path claims require task provenance"))?
+            .attempt();
+        self.core
+            .native_paths
+            .get()
+            .ok_or_else(|| AdapterError::rejected("native path owner missing"))?
+            .roots(attempt.as_str())
+            .map_err(|error| AdapterError::rejected(error.to_string()))
+    }
+
+    pub(crate) fn revalidate_model_paths(
+        &self,
+        context: &AdapterExecutionContext,
+    ) -> Result<(), AdapterError> {
+        if !context.task_paths.is_empty() {
+            let attempt = context
+                .workflow()
+                .ok_or_else(|| AdapterError::rejected("model path claims require task provenance"))?
+                .attempt();
+            self.core
+                .native_paths
+                .get()
+                .ok_or_else(|| AdapterError::rejected("native path owner missing"))?
+                .revalidate(attempt.as_str())
+                .map_err(|error| AdapterError::rejected(error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn loop_adapter(
+        &self,
+        snapshot: &ResolvedCapabilitySnapshot,
+    ) -> Result<Arc<dyn CapabilityAdapter>, AdapterError> {
+        let state = self
+            .core
+            .state
+            .lock()
+            .map_err(|_| AdapterError::unavailable("host registry unavailable"))?;
+        let generation = state
+            .generations
+            .get(&GenerationKey {
+                capability: snapshot.capability().clone(),
+                revision: snapshot.descriptor_revision(),
+            })
+            .ok_or_else(|| AdapterError::rejected("selected tool generation is unavailable"))?;
+        snapshot
+            .validate_against(&generation.descriptor)
+            .map_err(|error| AdapterError::rejected(error.to_string()))?;
+        Ok(generation.adapter.clone())
+    }
+
     /// Exercises prepared adapter entry without a durable owner in conformance tests.
     #[cfg(any(test, feature = "test-support"))]
     ///

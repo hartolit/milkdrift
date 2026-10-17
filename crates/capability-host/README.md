@@ -65,6 +65,39 @@ clock; adapters must return that supplied timestamp.
 
 ## Implement an adapter
 
+`ModelToolLoopAdapter` composes the configured provider adapter with the task's explicit `tools`
+selection. It owns conversation turns, tool execution and final reporting inside one entered task;
+runtime alone creates or schedules tasks. A task without tools keeps the ordinary single-request
+path. A task with tools reserves the complete maximum conversation before its first request, using
+the provider's profile-wide token/charge ceilings and the configured process tools' enforceable
+duration/output bounds. The maximum is 16 tool calls; one final model request may follow the last
+call. Larger task policy values refuse preparation because the complete conversation must fit the
+task owner's finite durable observation allowance.
+
+The host exposes `read_file` and `write_file` only when explicitly selected. Their arguments are
+an absolute `path`, plus exact UTF-8 `text` for writes. Files and tool feedback are bounded at 32 KiB;
+oversized content refuses without silent truncation. Writable parents must already exist. Linux
+file operations pin the durable claimed directory by physical identity and open targets beneath it
+with descriptor-relative resolution that refuses symlink traversal. Replacing a root or retargeting
+an alias cannot widen an accepted claim. Reads refuse hard-linked files. Writes replace files
+atomically through a pinned parent descriptor. Other platforms refuse these native tools.
+Each successful write also publishes immutable `file_<call-number>` output and returns its reference.
+These tools coordinate task claims; they do not contain an independently running trusted process.
+
+Each process selection becomes `process_<catalog-index>` with an `inputs` JSON object. The existing
+process profile owns executable, arguments, environment, outputs and containment. The loop resolves
+its exact generation before entry, then prepares and invokes it through the host permit path.
+Every model and tool entry rechecks current authority and native claims. Revocation prevents the next
+effect; uncertainty from an entered provider or process ends the loop without retrying it.
+
+Intermediate adapter observations and exact tool feedback are retained in durable progress reports;
+values exceeding the event bound become immutable artifacts referenced by those reports.
+The final response keeps the provider's ordinary output names, including
+`model_response`, `final_text` and `structured_output`, with combined observed usage and exact nested
+entry counts. Original per-request usage remains in each canonical model response. Cancellation is
+routed to the currently active model or process and closes later turns; its acknowledgement alone
+does not establish that remote work stopped.
+
 Read [`CapabilityAdapter`](src/adapter.rs) for the lifecycle contract, then a concrete implementation
 such as [local process](../../adapters/local-process/README.md). One instance represents one
 generation. Declare its filesystem, network, secret, and budget requirements before registration.

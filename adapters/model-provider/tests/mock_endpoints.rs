@@ -45,6 +45,8 @@ mod direct;
 mod effect_stages;
 #[path = "mock_endpoints/runtime_session.rs"]
 mod runtime_session;
+#[path = "mock_endpoints/tool_loop.rs"]
+mod tool_loop;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 

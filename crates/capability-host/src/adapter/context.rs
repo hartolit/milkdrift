@@ -60,6 +60,10 @@ pub enum AdapterInputSelection {
 pub struct AdapterExecutionContext {
     task_artifact_budget: Option<milkdrift_workspace::WorkspaceBudget>,
     task_output_bytes: Option<u64>,
+    pub(crate) task_paths: Vec<milkdrift_blueprint::TaskPathAccess>,
+    pub(crate) task_tools: Vec<milkdrift_blueprint::TaskTool>,
+    pub(crate) maximum_tool_calls: u32,
+    pub(crate) task_publication_invocation: Option<milkdrift_capability::InvocationId>,
     selection: AdapterInputSelection,
     authority: Option<ExecutionAuthorityBasis>,
     resolution_authorization: Option<AuthorityDecisionSnapshot>,
@@ -101,6 +105,10 @@ impl AdapterExecutionContext {
         Self {
             task_artifact_budget: None,
             task_output_bytes: None,
+            task_paths: Vec::new(),
+            task_tools: Vec::new(),
+            maximum_tool_calls: 0,
+            task_publication_invocation: None,
             selection: AdapterInputSelection::Direct(selection),
             authority: None,
             resolution_authorization: None,
@@ -150,6 +158,10 @@ impl AdapterExecutionContext {
         );
         context.task_artifact_budget = dispatch.task_artifact_budget().cloned();
         context.task_output_bytes = dispatch.task_output_bytes();
+        context.task_paths = dispatch.native_path_claims().to_vec();
+        context.task_tools = dispatch.task_tools().to_vec();
+        context.maximum_tool_calls = dispatch.maximum_tool_calls();
+        context.task_publication_invocation = Some(dispatch.request().invocation().clone());
         context.authority = Some(dispatch.execution_authority().clone());
         context.resolution_authorization = Some(dispatch.resolution_authorization().clone());
         context.entry_authorization = Some(dispatch.entry_authorization().clone());
@@ -290,5 +302,24 @@ impl AdapterExecutionContext {
     #[must_use]
     pub const fn entry_authorization(&self) -> Option<&AuthorityDecisionSnapshot> {
         self.entry_authorization.as_ref()
+    }
+
+    pub(crate) fn for_model_request(
+        &self,
+        request: &milkdrift_capability::InvocationRequest,
+    ) -> Result<Self, crate::InvocationDataError> {
+        let selection = DirectInputSelection::new(
+            request,
+            milkdrift_blueprint::MAX_TASK_DEFINITION_BYTES as u64,
+        )?;
+        let mut context = self.clone();
+        context.selection = match self.workflow() {
+            Some(workflow) => AdapterInputSelection::Task {
+                workflow: workflow.clone(),
+                selection,
+            },
+            None => AdapterInputSelection::Direct(selection),
+        };
+        Ok(context)
     }
 }

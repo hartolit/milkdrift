@@ -1,9 +1,10 @@
 //! Regenerate the standalone client's transport types from their Rust owner.
 use milkdrift_control_protocol::tasks::{
     ChangeWorkflowRequest, CreateWorkflowRequest, FrozenInputDto, FrozenTaskDto, InputBinding,
-    InputValue, NewTaskDto, PathAccess, TaskBindingRedirectDto, TaskCapability, TaskChangeDto,
-    TaskDefinitionDto, TaskOutputDeclarationDto, TaskReadDto, TaskResultDto, TaskSessionDto,
-    TaskStateDto, TaskSummaryDto, TaskUploadReceipt, TaskUploadRequest, WorkflowLimitsDto,
+    InputValue, ModelAdmissionDto, NewTaskDto, PathAccess, TaskActionPolicyDto,
+    TaskBindingRedirectDto, TaskCapability, TaskChangeDto, TaskDefinitionDto,
+    TaskOutputDeclarationDto, TaskReadDto, TaskResultDto, TaskSessionDto, TaskStateDto,
+    TaskSummaryDto, TaskToolDto, TaskUploadReceipt, TaskUploadRequest, WorkflowLimitsDto,
     WorkflowPageDto, WorkflowReadDto, WorkflowReceipt, WorkflowSummaryDto,
 };
 use ts_rs::TS;
@@ -17,6 +18,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         PathAccess::decl(&config),
         TaskOutputDeclarationDto::decl(&config),
         TaskBindingRedirectDto::decl(&config),
+        TaskActionPolicyDto::decl(&config),
+        TaskToolDto::decl(&config),
         TaskDefinitionDto::decl(&config),
         NewTaskDto::decl(&config),
         WorkflowLimitsDto::decl(&config),
@@ -31,6 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         TaskReadDto::decl(&config),
         TaskSummaryDto::decl(&config),
         WorkflowSummaryDto::decl(&config),
+        ModelAdmissionDto::decl(&config),
         WorkflowReadDto::decl(&config),
         WorkflowPageDto::decl(&config),
         TaskSessionDto::decl(&config),

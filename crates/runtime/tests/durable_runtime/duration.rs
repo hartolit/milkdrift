@@ -34,6 +34,9 @@ use milkdrift_runtime::{
 
 use super::{TestResult, claim};
 
+#[path = "duration_policy.rs"]
+mod policy;
+
 const WAIT: Duration = Duration::from_secs(5);
 
 struct PermitAuthority;
@@ -177,6 +180,20 @@ struct Fixture {
 
 impl Fixture {
     fn open(root: &std::path::Path, clock: Arc<ManualClock>, maximum: u64) -> TestResult<Self> {
+        Self::open_with_storage_limits(
+            root,
+            clock,
+            maximum,
+            milkdrift_persistence::WorkflowStorageLimits::default(),
+        )
+    }
+
+    fn open_with_storage_limits(
+        root: &std::path::Path,
+        clock: Arc<ManualClock>,
+        maximum: u64,
+        limits: milkdrift_persistence::WorkflowStorageLimits,
+    ) -> TestResult<Self> {
         let mut value: serde_json::Value = serde_json::from_slice(include_bytes!(
             "../../../capability/tests/fixtures/descriptor-v1.json"
         ))?;
@@ -195,7 +212,9 @@ impl Fixture {
             entered,
         });
         let store = Arc::new(RedbStore::open_with_config(
-            RedbStoreConfig::new(root).with_clock(Arc::new(Clock(clock.clone()))),
+            RedbStoreConfig::new(root)
+                .with_clock(Arc::new(Clock(clock.clone())))
+                .with_workflow_limits(limits),
         )?);
         let authority = Arc::new(PermitAuthority);
         let runtime = Arc::new(TaskRuntime::new(
@@ -320,6 +339,8 @@ fn definition() -> TestResult<TaskDefinition> {
         required: true,
         corrective_of: None,
         paths: Vec::new(),
+        tools: Vec::new(),
+        actions: None,
     })
 }
 

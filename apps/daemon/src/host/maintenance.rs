@@ -37,6 +37,13 @@ impl Owner {
                 }
             }
         }
+        if let Some(workflow) = &self.workflow
+            && let Err(error) = workflow
+                .task_control
+                .process_model_admissions(self.store.as_ref(), self.store.as_ref())
+        {
+            warn!(code = "model_admission", "{}", bounded(&error.to_string()));
+        }
         if let Some(workers) = &self.effect_workers {
             if let Err(error) = workers.poll() {
                 warn!(

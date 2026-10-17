@@ -1,4 +1,5 @@
 //! Shared scoped admission for human, CLI, browser and model-proposed ordinary task changes.
+mod model_actions;
 
 use crate::{ActorAuthorityContext, ControlError};
 use milkdrift_authority::{
@@ -16,6 +17,7 @@ pub struct TaskControlService {
     runtime: Arc<TaskRuntime>,
     authority: Arc<dyn AuthorityEvaluator>,
     clock: Arc<dyn BoundaryClock>,
+    admission_cursor: std::sync::Mutex<Option<String>>,
 }
 
 impl TaskControlService {
@@ -30,6 +32,7 @@ impl TaskControlService {
             runtime,
             authority,
             clock,
+            admission_cursor: std::sync::Mutex::new(None),
         }
     }
 

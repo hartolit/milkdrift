@@ -57,6 +57,22 @@ fn dependency_and_correction_cycles_are_refused_without_hiding_missing_inputs() 
     assert!(consumer.validate().is_err());
     consumer.dependencies.insert(a.clone());
     let mut definitions = BTreeMap::from([(a.clone(), task()?), (b.clone(), consumer)]);
+    assert!(
+        validate_task_set(&definitions, &WorkflowLimits::default()).is_err(),
+        "even an acyclic binding must name a declared output"
+    );
+    definitions
+        .get_mut(&a)
+        .ok_or("task absent")?
+        .outputs
+        .insert(
+            "report".into(),
+            milkdrift_blueprint::TaskOutputDeclaration {
+                required: true,
+                media_type: Some("text/plain".into()),
+                max_bytes: 4096,
+            },
+        );
     validate_task_set(&definitions, &WorkflowLimits::default())?;
     definitions
         .get_mut(&a)

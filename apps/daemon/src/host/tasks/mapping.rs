@@ -88,6 +88,33 @@ impl Owner {
             })
             .collect::<Result<BTreeMap<_, _>, PublicFailure>>()?;
         Ok(TaskDefinition {
+            actions: definition
+                .actions
+                .map(|policy| milkdrift_blueprint::TaskActionPolicy {
+                    automatic_repair: policy.automatic_repair,
+                }),
+            tools: definition
+                .tools
+                .into_iter()
+                .map(|tool| {
+                    Ok(match tool {
+                        milkdrift_control_protocol::tasks::TaskToolDto::ReadFile => {
+                            milkdrift_blueprint::TaskTool::ReadFile
+                        }
+                        milkdrift_control_protocol::tasks::TaskToolDto::WriteFile => {
+                            milkdrift_blueprint::TaskTool::WriteFile
+                        }
+                        milkdrift_control_protocol::tasks::TaskToolDto::Process { capability } => {
+                            milkdrift_blueprint::TaskTool::Process {
+                                capability: CapabilityRequirement::new(
+                                    OperationId::new(capability.operation).map_err(failure)?,
+                                )
+                                .exact(CapabilityId::new(capability.id).map_err(failure)?),
+                            }
+                        }
+                    })
+                })
+                .collect::<Result<_, PublicFailure>>()?,
             title: definition.title,
             description: definition.description,
             instructions: definition.instructions,
@@ -188,6 +215,14 @@ pub(super) fn definition(value: &TaskDefinition) -> Result<TaskDefinitionDto, Pu
         })
         .collect::<Result<_, PublicFailure>>()?;
     Ok(TaskDefinitionDto {
+        actions: value.actions.as_ref().map(|policy| milkdrift_control_protocol::tasks::TaskActionPolicyDto { automatic_repair:policy.automatic_repair }),
+        tools: value.tools.iter().map(|tool| Ok(match tool {
+            milkdrift_blueprint::TaskTool::ReadFile => milkdrift_control_protocol::tasks::TaskToolDto::ReadFile,
+            milkdrift_blueprint::TaskTool::WriteFile => milkdrift_control_protocol::tasks::TaskToolDto::WriteFile,
+            milkdrift_blueprint::TaskTool::Process { capability } => milkdrift_control_protocol::tasks::TaskToolDto::Process {
+                capability: TaskCapability { id:capability.exact_capability().ok_or_else(|| failure("process tool must select an exact configured capability"))?.to_string(),operation:capability.operation().to_string() },
+            },
+        })).collect::<Result<_,PublicFailure>>()?,
         title: value.title.clone(),
         description: value.description.clone(),
         instructions: value.instructions.clone(),

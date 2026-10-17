@@ -31,6 +31,13 @@ from an enforced attempt deadline, never a descriptor estimate. Runtime's `TaskE
 is durable evidence for an accepted reservation and its elapsed-time watermark. These exports
 support the same cumulative workflow account; they do not create a second scheduling or budget owner.
 
+`TaskActionPolicy` and `TaskTool` are task-definition contracts. Runtime's `ModelAdmission` and its
+status retain the source response, decision and exact receipt linkage; control consumes them to
+recover admission, while public DTOs expose a bounded projection. `admit_model_batch` uses the same
+runtime edit transaction as humans. The host's `ModelToolLoopAdapter` consumes provider-neutral model
+messages and the configured adapter's maximum envelope; its loop cannot create workflow tasks.
+Frozen dispatch tool fields carry explicit permissions into that host boundary, never UI state.
+
 `WorkflowStore` commits a snapshot and exact receipt atomically with generation and capacity checks.
 Its artifact, entered-invocation and managed-use facts allow the durable owners to enforce holds
 and publication without decoding a second copy of runtime semantics. Native-path claim ports
