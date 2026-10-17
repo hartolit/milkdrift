@@ -33,6 +33,11 @@ settles** when the model will explicitly request completion after creating its f
 Leave **Supply brief now** unchecked to submit work that waits for its required input. The queued
 task inspector can then supply that input; the daemon decides when the task becomes ready.
 
+The dark workspace keeps daemon navigation in the left rail and the current work in the top bar.
+On narrow screens, **Daemon navigation** opens the rail. Task creation separates **Task instructions**,
+**Supplied context** and **Execution**; filesystem access and limits remain available in labeled
+disclosures. The supplied Milkdrift logo is used unchanged.
+
 The timeline orders dependency columns from left to right. A shared time axis also shows actual
 overlapping starts and settlements, with open bars for tasks without recorded ends. Queued tasks
 show no invented start time. The list offers the same inspector and actions. Future
@@ -40,7 +45,11 @@ edits carry the observed workflow generation and task version. A requested stop 
 from proof that execution stopped. Results retain content and selected-input digests. Failed,
 forbidden, expired and uncertain responses come from the daemon and remain visible.
 Workflow discovery and task lists display bounded pages with explicit navigation. Selecting a
-task fetches its full inspector separately. Large inputs and results show a labelled preview;
+task fetches its full inspector separately. The inspector sits beside the timeline on wide screens
+and stacks below it on narrower screens. **Hide inspector**, or Escape from inside it, preserves
+the selection and unfinished edit; **Show inspector** returns focus to its last focused control.
+Results can be collapsed without losing their content. Technical task facts and dependencies have
+a separate disclosure. Large inputs and results show a labelled preview;
 **Download result** requests the complete retained text from the daemon and displays any refusal.
 If the current grant denies retained content, the inspector labels that restriction while keeping
 the permitted lifecycle visible. Non-UTF-8 output retains its artifact identities and byte digest
@@ -63,7 +72,7 @@ typed public change array as the CLI and supports editing any staged change befo
 keeps replacement work waiting for the original to settle. An uncertain or stop-requested task is
 not evidence of a safe replacement. Once correction succeeds, choose **Adopt a successful correction**
 and select the future consumer bindings to redirect. Historical failures and frozen started inputs
-remain inspectable. Workflow limits and current status are available above the task timeline.
+remain inspectable. Workflow limits are available in a disclosure below the task workspace.
 That panel reports cumulative admissions and elapsed execution beside the ceilings. The response
 decision panel links source tasks, immutable response digests, receipts and allocated child aliases.
 For a refused response, stage **Dismiss a response decision** with the reviewed replacement changes;
@@ -116,6 +125,15 @@ refuses plaintext LAN endpoints and an HTTP daemon from an HTTPS page; certifica
 a supported setup.
 
 ## Maintain and verify
+
+`src/style.css` owns shared colors, typography, spacing, controls, focus, navigation and authoring
+panels. It loads before component styles in `src/main.ts`. `src/workflow.css`, imported by
+`WorkflowView.svelte`, owns the timeline, execution lanes and inspector. Extend these owners when
+adding a surface so forms and status cues remain consistent. Keep labels alongside state colors,
+allow long names to wrap, and preserve mounted editor content when toggling the inspector.
+`public/milkdrift-logo.svg` is the exact supplied brand asset, copied from
+`docs/development/virtual-office/milkdrift-remedial-planning-v3/assets/milkdrift-logo.svg` at the
+repository root; change its display size in CSS without changing its paths or colors.
 
 Rust owns transport DTOs and protocol negotiation. After changing their declarations in
 `crates/control-protocol/src/tasks.rs`, regenerate from the repository root:

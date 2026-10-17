@@ -8,7 +8,9 @@ editing. The user authorized proceeding while actual user review in prompt 02 re
 That review has now begun: the user reports connecting Studio A and rejects the setup friction and
 current visual design. The substantive task journey remains unreviewed. The assigned 02a correction
 implements shared daemon naming and address/credential setup; the user has not rechecked it yet.
-The visual direction and real logo remain the unassigned 02b correction. Prompt 04 waits for those corrections and the
+The assigned 02b correction applies the supplied dark visual direction and real logo throughout the
+client, with responsive navigation and a desktop task inspector. Its user review remains open.
+Prompt 04 waits for those corrections and the
 completed early review. Prompt 07 retains the final integrated gate. Hosted quality run 227
 failed on the earlier `e720bb9`; no later hosted pass is claimed.
 
@@ -67,8 +69,8 @@ stop requests, uncertainty and restart cannot refund unresolved work.
 
 ## Limitations now
 
-The client still uses its initial pale theme and a placeholder brand mark. The revised visual design
-is selected but unimplemented. Simpler setup and shared naming still need the user's usability recheck.
+The dark workspace, real brand, reorganized forms and responsive inspector are implemented, but
+visual fit, simpler setup and shared naming still need the user's usability recheck.
 Rename receipts have a fixed capacity of 1,024; new renames refuse at capacity while reads and exact
 replay remain available.
 
@@ -99,6 +101,13 @@ Native model file tools currently require Linux; other platforms refuse that cat
 task supports at most 16 tool calls, bounded UTF-8 file content and a finite provider request envelope.
 
 ## Current validation/evidence snapshot
+
+Prompt 02b passes frontend check/lint, 67 unit cases, production build and all 16 real-daemon
+Chromium cases, with focused reruns for the final render corrections. Desktop and 390-pixel views
+cover task authoring, long names/titles, inspector focus and draft retention, results, batch editing,
+parallel work and failure. A separate actual-daemon interruption retains uncertainty and a stop
+request without inventing settlement. Enlarged text and reduced-motion rendering were checked. Documentation
+contracts pass. These focused checks do not complete actual-user visual or task review.
 
 Prompt 02a passes 41 daemon unit and 41 control-plane cases, the affected storage/authority/client/CLI
 suites, all 30 repository contracts, scoped Clippy/rustdoc and default/all-feature API review.

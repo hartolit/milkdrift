@@ -1,10 +1,21 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/svelte';
 import { afterEach, expect, it, vi } from 'vitest';
 import TaskComposer from './TaskComposer.svelte';
 import fixture from '../../../../crates/control-protocol/tests/fixtures/task-session.json';
 import { DaemonClient } from '../lib/transport';
 
 afterEach(cleanup);
+
+it('separates task instructions from supplied context and execution choices', () => {
+  const client = new DaemonClient('http://127.0.0.1:10001', 'unit-test-credential');
+  render(TaskComposer, { client, session: fixture.value, oncreated: vi.fn(async () => {}), oncancel: vi.fn(), onerror: vi.fn() });
+  expect(within(screen.getByRole('group', { name: 'Task instructions' })).getByLabelText('Instructions')).toBeTruthy();
+  const context = within(screen.getByRole('group', { name: 'Supplied context' }));
+  expect(context.getByLabelText('Brief input')).toBeTruthy();
+  expect(context.getByLabelText('Text file input')).toBeTruthy();
+  expect(context.queryByLabelText('Instructions')).toBeNull();
+  expect(within(screen.getByRole('group', { name: 'Execution' })).getByLabelText('Capability')).toBeTruthy();
+});
 
 it('retains and replays the exact submission after an unknown reply', async () => {
   const client = new DaemonClient('http://127.0.0.1:10001', 'unit-test-credential');

@@ -40,9 +40,33 @@
   let composing = $state(false);
   let settings = $state(false);
   let globalError = $state('');
+  let navigationOpen = $state(false);
+  let navigationButton: HTMLButtonElement | undefined;
   let bootstrap: DaemonClient | undefined;
   let bootstrapGeneration = 0;
   let active = $derived(connections.find((connection) => connection.profile.id === activeId));
+
+  function closeNavigation() {
+    if (navigationOpen) {
+      navigationOpen = false;
+      navigationButton?.focus();
+    }
+  }
+
+  function showWorkflows() {
+    closeConnectionForm();
+    composing = false;
+    settings = false;
+    if (active) active.selected = null;
+    closeNavigation();
+  }
+
+  function showSettings() {
+    closeConnectionForm();
+    settings = true;
+    composing = false;
+    closeNavigation();
+  }
 
   function fail(connection: Connection, failure: unknown) {
     if (connection.stream.signal.aborted) return;
@@ -241,9 +265,10 @@
     const live = connections.find((item) => item.profile.id === profile.id);
     if (live) { activeId = profile.id; connectionForm = false; }
     else { reconnectProfile = profile; connectionForm = true; }
+    closeNavigation();
   }
 
-  function addConnection() { cancelBootstrap(); reconnectProfile = undefined; connectionForm = true; composing = false; settings = false; globalError = ''; }
+  function addConnection() { cancelBootstrap(); reconnectProfile = undefined; connectionForm = true; composing = false; settings = false; globalError = ''; closeNavigation(); }
 
   function forget(profile: ConnectionProfile) {
     if (reconnectProfile?.id === profile.id) cancelBootstrap();
@@ -286,14 +311,26 @@
 
 <svelte:head><meta name="description" content="Submit work to your Milkdrift daemon, follow its progress, and return to retained results." /></svelte:head>
 <a class="skip-link" href="#main">Skip to workspace</a>
-<header class="app-header"><span class="brand-mark" aria-hidden="true">m</span><span class="brand">milkdrift</span><span class="header-note">Your work keeps moving.</span></header>
 <div class="workspace">
-  <aside class="sidebar" aria-label="Daemon connections">
+  <header class="app-header">
+    <img class="mobile-logo" src="/milkdrift-logo.svg" alt="" width="34" height="32" />
+    <button class="navigation-toggle" bind:this={navigationButton} aria-label="Daemon navigation" aria-expanded={navigationOpen} aria-controls="daemon-navigation" onclick={() => navigationOpen = !navigationOpen}><span aria-hidden="true">☰</span></button>
+    <div class="workspace-context"><span class="eyebrow">{active ? active.session.daemon_name : 'Milkdrift workspace'}</span><span class="context-title">{connectionForm ? 'Connection' : settings && active ? 'Daemon settings' : composing && active ? 'New task' : active?.selected?.title ?? 'Workflows'}</span></div>
+    <div class="header-status"><span class="status-dot" class:connected={!!active} aria-hidden="true"></span>{active ? 'Connected' : 'Not connected'}</div>
+  </header>
+  <aside id="daemon-navigation" class="sidebar" class:navigation-open={navigationOpen} aria-label="Daemon connections">
+    <div class="brand-lockup"><img class="brand-logo" src="/milkdrift-logo.svg" alt="" width="46" height="44" /><span class="brand">Milkdrift</span></div>
     <div class="sidebar-heading"><p class="eyebrow">Daemons</p><button class="quiet" onclick={addConnection} aria-label="Add daemon connection">+</button></div>
     <ul class="connection-list">{#each profiles as profile (profile.id)}{@const connected = connections.some((item) => item.profile.id === profile.id)}<li><button class:active={activeId === profile.id} onclick={() => choose(profile)} aria-pressed={activeId === profile.id}><span class="status-dot" class:connected aria-hidden="true"></span><span>{profile.cachedName}<small>{profile.endpoint}</small><small>{connected ? 'Connected' : 'Cached name · Authenticate to reconnect'}</small></span></button><button class="quiet forget-connection" onclick={() => forget(profile)} aria-label={`Forget ${profile.cachedName} connection`}>Forget</button></li>{/each}</ul>
     {#if !profiles.length}<p class="sidebar-footer">Add your first daemon to start a task.</p>{/if}
-    {#if active}<div class="connection-detail"><div><p aria-live="polite">{active.observation}</p></div><button class="quiet" onclick={() => { closeConnectionForm(); settings = true; composing = false; }}>Daemon settings</button><button class="quiet" onclick={() => disconnect(active!)}>Disconnect</button></div>{/if}
-    <p class="sidebar-footer">Each connection has its own credentials, work and settings. Closing this client leaves your daemon running.</p>
+    {#if active}
+      <nav class="workspace-navigation" aria-label="Workspace">
+        <button class:active={!settings} aria-current={!settings ? 'page' : undefined} onclick={showWorkflows}><span aria-hidden="true">▦</span> Workflows</button>
+        <button class:active={settings} aria-current={settings ? 'page' : undefined} onclick={showSettings}><span aria-hidden="true">⚙</span> Daemon settings</button>
+      </nav>
+      <div class="connection-detail"><p class="eyebrow">Connected daemon</p><strong>{active.session.daemon_name}</strong><p class="connection-address">{active.profile.endpoint}</p><p aria-live="polite"><span class="status-dot connected" aria-hidden="true"></span> {active.observation}</p><button class="quiet" onclick={() => { disconnect(active!); closeNavigation(); }}>Disconnect</button></div>
+    {/if}
+    <p class="sidebar-footer">Closing this client leaves your daemon running.</p>
   </aside>
   <main id="main">
     {#if globalError}<p class="notice error" role="alert">{globalError}</p>{/if}
@@ -309,7 +346,7 @@
         {:else if active.selected}
           <WorkflowView workflow={active.selected} client={active.client} capabilities={active.session.capabilities} onrefresh={refresh.bind(null, active)} onpage={selectWorkflow.bind(null, active, active.selected.id)} onback={() => active!.selected = null} onerror={fail.bind(null, active)} />
         {:else}
-          <div class="page-heading"><div><p class="eyebrow">{active.session.daemon_name}</p><h1>Your workflows</h1><p>Start something useful. Come back when it’s ready.</p></div><button class="primary" onclick={() => composing = true}>+ New task</button></div>
+          <div class="page-heading"><div><p class="eyebrow">Workspace</p><h1>Your workflows</h1><p>Work in progress and retained results on {active.session.daemon_name}.</p></div><button class="primary" onclick={() => composing = true}>+ New task</button></div>
           <form class="toolbar" onsubmit={(event) => { event.preventDefault(); search(active!); }}><label><span class="visually-hidden">Search workflows and retained results</span><input type="search" bind:value={active.search} placeholder="Search workflows and retained results" /></label><button>Search</button><button type="button" onclick={() => refresh(active!)}>Refresh</button></form>
           {#if active.workflows.length}
             <ul class="workflow-list">{#each active.workflows as workflow (workflow.id)}<li><button class="workflow-card" onclick={() => selectWorkflow(active!, workflow.id)} disabled={active.busy}><span><h3>{workflow.title}</h3><p>{workflow.description}</p><small>{workflow.task_count} {workflow.task_count === 1 ? 'task' : 'tasks'} · Updated {timeLabel(workflow.updated_at)}</small></span><span><span class="badge {workflow.state}">{workflow.state}</span></span></button></li>{/each}</ul>
@@ -321,7 +358,7 @@
         {/if}
       {/key}
     {:else}
-      <div class="page-heading"><div><p class="eyebrow">A workspace that stays with you</p><h1>Start here. Keep going anywhere.</h1></div></div>
+      <div class="page-heading"><div><p class="eyebrow">Your workspace</p><h1>Work continues here.</h1></div></div>
       <div class="panel empty"><div class="empty-symbol" aria-hidden="true">↗</div><h2>Connect to your work</h2><p>Choose a saved daemon or add a connection. Sign in with its scoped credential to discover your tasks and retained results.</p><button class="primary" onclick={addConnection}>Connect a daemon</button></div>
     {/if}
   </main>

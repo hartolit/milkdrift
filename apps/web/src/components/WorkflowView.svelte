@@ -1,9 +1,11 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import type { ChangeWorkflowRequest, TaskCapability, TaskDefinitionDto, TaskReadDto, TaskResultDto, TaskSummaryDto, WorkflowReadDto } from '../lib/protocol.generated';
   import { DaemonClient, DaemonError } from '../lib/transport';
   import { executionLanes, inputLabel, saveBlob, stateLabel, taskColumns, timeLabel } from '../lib/presentation';
   import TaskDefinitionEditor from './TaskDefinitionEditor.svelte';
   import FutureBatchEditor from './FutureBatchEditor.svelte';
+  import '../workflow.css';
 
   let { workflow, client, capabilities = [], onrefresh, onpage, onback, onerror }: {
     workflow: WorkflowReadDto;
@@ -29,9 +31,14 @@
   let loadedTask = $state<TaskReadDto | null>(null);
   let loadingTask = $state(false);
   let batchOpen = $state(false);
+  let batchButton = $state<HTMLButtonElement>();
+  let batchTrigger: HTMLButtonElement | null = null;
   let correctionSource = $state<TaskReadDto | null>(null);
   let batchAction = $state<'add' | 'dismiss_admission' | 'set_limits'>('add');
   let batchTarget = $state('');
+  let inspectorOpen = $state(true);
+  let inspectorToggle = $state<HTMLButtonElement>();
+  let inspectorFocus: HTMLElement | null = null;
   let summary = $derived(workflow.tasks.find((task) => task.id === selectedId) ?? workflow.tasks[0]);
   let selected = $derived(loadedTask?.id === summary?.id ? loadedTask : null);
   let columns = $derived(taskColumns(workflow.tasks));
@@ -62,12 +69,34 @@
   }
 
   function select(task: TaskSummaryDto) {
+    inspectorOpen = true;
+    const sameTask = summary?.id === task.id;
     selectedId = task.id;
+    if (sameTask) return;
     result = null;
     editing = false;
     inputName = '';
     inputText = '';
     error = '';
+    inspectorFocus = null;
+  }
+
+  async function toggleInspector() {
+    inspectorOpen = !inspectorOpen;
+    await tick();
+    if (inspectorOpen && inspectorFocus?.isConnected) inspectorFocus.focus();
+    else inspectorToggle?.focus();
+  }
+
+  function rememberInspectorFocus(event: FocusEvent) {
+    if (event.target instanceof HTMLElement) inspectorFocus = event.target;
+  }
+
+  function inspectorKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      void toggleInspector();
+    }
   }
 
   function edit(task: TaskReadDto) {
@@ -77,8 +106,19 @@
     editing = true;
   }
 
-  function openBatch(action: 'add' | 'dismiss_admission' | 'set_limits' = 'add', task = '') {
+  function openBatch(trigger: HTMLButtonElement, action: 'add' | 'dismiss_admission' | 'set_limits' = 'add', task = '') {
+    batchTrigger = trigger;
     correctionSource = null; batchAction = action; batchTarget = task; batchOpen = true;
+  }
+
+  async function closeBatch() {
+    const trigger = batchTrigger;
+    batchTrigger = null;
+    batchOpen = false;
+    await tick();
+    const disclosure = trigger?.closest('details');
+    if (trigger?.isConnected && !trigger.disabled && !trigger.closest('[hidden]') && (!disclosure || disclosure.open)) trigger.focus();
+    else batchButton?.focus();
   }
 
   async function change(request: ChangeWorkflowRequest) {
@@ -152,53 +192,21 @@
   }
 </script>
 
-<button class="quiet back-button" onclick={onback}>← All workflows</button>
-<div class="page-heading"><div><p class="eyebrow">Workflow</p><h1>{workflow.title}</h1><p>{workflow.description}</p></div><button onclick={onrefresh} disabled={busy}>Refresh</button></div>
-<div class="detail-meta"><span class="badge {workflow.state}">{workflow.state}</span><span>Created {timeLabel(workflow.created_at)}</span><span>Updated {timeLabel(workflow.updated_at)}</span></div>
+<header class="workflow-header">
+  <div class="workflow-context"><button class="quiet back-button" onclick={onback}>← All workflows</button><span class="context-divider" aria-hidden="true">/</span><span class="badge {workflow.state}">{workflow.state}</span></div>
+  <div class="workflow-heading"><div><h1>{workflow.title}</h1>{#if workflow.description}<p>{workflow.description}</p>{/if}</div><div class="form-actions"><button onclick={onrefresh} disabled={busy}>Refresh</button><button class="primary" bind:this={batchButton} disabled={busy || pending !== null || batchOpen} onclick={(event) => openBatch(event.currentTarget)}>Edit future batch</button></div></div>
+  <div class="detail-meta"><span>Created {timeLabel(workflow.created_at)}</span><span>Updated {timeLabel(workflow.updated_at)}</span></div>
+</header>
 {#if workflow.wait_question}<p class="notice warning" role="status">Waiting decision: {workflow.wait_question}</p>{/if}
-<div class="form-actions"><button disabled={busy || pending !== null || batchOpen} onclick={() => openBatch()}>Edit future batch</button></div>
-<details class="panel">
-  <summary>Workflow limits and current status</summary>
-  <p class="field-hint">These ceilings apply across descendants and restarts. Resuming never clears spending or unresolved effects.</p>
-  <dl class="facts">
-    <dt>Tasks admitted</dt><dd>{workflow.admitted_tasks} / {workflow.limits.tasks}</dd>
-    <dt>Model batches admitted</dt><dd>{workflow.admitted_model_batches} / {workflow.limits.model_batches}</dd>
-    <dt>Consecutive rejected responses</dt><dd>{workflow.rejected_responses} / {workflow.limits.rejected_responses}</dd>
-    <dt>Elapsed execution milliseconds</dt><dd>{workflow.active_execution_ms.toLocaleString()} / {workflow.limits.active_execution_ms.toLocaleString()}</dd>
-    <dt>Concurrent task ceiling</dt><dd>{workflow.limits.concurrent_tasks}</dd>
-    <dt>Corrective lineage failure ceiling</dt><dd>{workflow.limits.corrective_failures}</dd>
-    <dt>Tool calls per task</dt><dd>{workflow.limits.tool_calls_per_task}</dd>
-    <dt>Observed generation</dt><dd>{workflow.generation}</dd>
-  </dl>
-  <button disabled={busy || pending !== null || batchOpen} onclick={() => openBatch('set_limits')}>Review limit changes</button>
-</details>
-{#if workflow.admissions.length}
-  <details class="panel">
-    <summary>Model responses and future-work decisions</summary>
-    <p class="field-hint">These are the daemon's decisions for source tasks on this page. Inspect the source result to read the immutable response. Accepted aliases identify the resulting follow-up tasks.</p>
-    {#each workflow.admissions as admission (admission.task_id)}
-      {@const source = workflow.tasks.find((task) => task.id === admission.task_id)}
-      <section class="admission-record">
-        <h3>{source?.title ?? admission.task_id} · {admission.status}</h3>
-        {#if admission.reason}<p class="notice">{admission.reason}</p>{/if}
-        <dl class="facts"><dt>Source task</dt><dd>{admission.task_id}</dd><dt>Response digest</dt><dd>{admission.response_digest ?? 'Unavailable in this authorized view'}</dd><dt>Accepted receipt</dt><dd>{admission.receipt_key ?? 'No accepted receipt'}</dd>{#each Object.entries(admission.aliases) as [alias, taskId] (alias)}<dt>{alias}</dt><dd>{taskId}</dd>{/each}</dl>
-        <div class="form-actions">
-          {#if source}<button onclick={() => select(source)}>Inspect source response</button>{/if}
-          {#if admission.status === 'rejected'}<button disabled={busy || pending !== null || batchOpen} onclick={() => openBatch('dismiss_admission', admission.task_id)}>Review response decision</button>{/if}
-        </div>
-      </section>
-    {/each}
-  </details>
-{/if}
-{#if batchOpen}<FutureBatchEditor {workflow} {client} {capabilities} initialTask={correctionSource} initialAction={batchAction} initialTarget={batchTarget} {onrefresh} {onerror} onclose={() => batchOpen = false} />{/if}
-<section class="panel" aria-label="Workflow tasks">
-  <div class="section-heading"><div><h2>Work in motion</h2><p class="muted">{workflow.task_count} {workflow.task_count === 1 ? 'task' : 'tasks'} · Actual execution times</p></div></div>
+{#if batchOpen}<FutureBatchEditor {workflow} {client} {capabilities} initialTask={correctionSource} initialAction={batchAction} initialTarget={batchTarget} {onrefresh} {onerror} onclose={closeBatch} />{/if}
+<div class="workflow-workspace" class:has-inspector={Boolean(selected) || loadingTask}>
+<section class="panel task-workspace" aria-label="Workflow tasks">
+  <div class="section-heading task-toolbar"><div><h2>Work in motion</h2><p class="muted">{workflow.task_count} {workflow.task_count === 1 ? 'task' : 'tasks'} · Actual execution times</p></div><div class="view-switch" aria-label="Task presentation"><button aria-pressed={view === 'timeline'} onclick={() => view = 'timeline'}>Timeline</button><button aria-pressed={view === 'list'} onclick={() => view = 'list'}>List</button></div></div>
   {#if workflow.task_count > workflow.tasks.length}<p class="notice">Showing {workflow.tasks.length} tasks from this page of {workflow.task_count}. Dependency columns describe this page; the inspector lists every declared dependency.</p><div class="form-actions"><button onclick={() => onpage()}>First task page</button>{#if workflow.next_task_cursor}<button onclick={() => onpage(workflow.next_task_cursor!)}>Next task page</button>{/if}</div>{/if}
-  <div class="view-switch" aria-label="Task presentation"><button aria-pressed={view === 'timeline'} onclick={() => view = 'timeline'}>Timeline</button><button aria-pressed={view === 'list'} onclick={() => view = 'list'}>List</button></div>
   {#if view === 'timeline'}
     {#if lanes.length}
       <div class="execution-lanes" role="region" aria-label="Actual task execution">
-        <p class="field-hint">Shared time axis for recorded starts and settlements. Overlapping bars show actual parallel work. Open bars have no recorded end and extend to the latest workflow observation.</p>
+        <p class="field-hint">Shared time axis · Overlap shows parallel work. Striped bars have no recorded end and extend to the latest observation.</p>
         {#each lanes as lane (lane.task.id)}<div class="execution-row"><button class="quiet execution-label" onclick={() => select(lane.task)}>{lane.task.title}</button><div class="execution-track"><button class:open={lane.task.ended_at === null} class="execution-bar" style={`left:${lane.left}%;width:${lane.width}%`} aria-label={`${lane.task.title}: started ${timeLabel(lane.task.started_at)}, ${lane.task.ended_at === null ? 'no end recorded' : `ended ${timeLabel(lane.task.ended_at)}`}`} onclick={() => select(lane.task)}></button></div></div>{/each}
       </div>
     {/if}
@@ -228,15 +236,54 @@
     </ol>
   {/if}
 
-  {#if error}<p class="notice error" role="alert">{error}</p>{/if}
-  {#if loadingTask && !selected}<p class="field-hint" role="status">Loading selected task…</p>{/if}
+  {#if !workflow.tasks.length}<p class="workspace-empty">No tasks on this page. Add future work to this workflow using Edit future batch.</p>{/if}
+</section>
+  {#if error}<p class="notice error workspace-error" role="alert">{error}</p>{/if}
+  {#if loadingTask && !selected}<p class="field-hint inspector-loading" role="status">Loading selected task…</p>{/if}
   {#if selected}
     {@const displayedResult = result ?? selected.result}
-    <section class="task-inspector" aria-labelledby="inspector-heading">
-      <div class="section-heading"><div><p class="eyebrow">Task inspector</p><h2 id="inspector-heading">{selected.definition.title}</h2></div><span class="badge {selected.state}">{stateLabel(selected)}</span></div>
-      {#if selected.reason}<p class="notice {selected.state === 'failed' || selected.state === 'uncertain' ? 'warning' : ''}">{selected.reason}</p>{/if}
+    <section class="panel task-inspector" aria-labelledby="inspector-heading">
+      <div class="inspector-heading"><div class="section-heading"><p class="eyebrow">Task inspector</p><button class="quiet inspector-toggle" bind:this={inspectorToggle} aria-expanded={inspectorOpen} aria-controls="task-inspector-content" onclick={toggleInspector}>{inspectorOpen ? 'Hide inspector' : 'Show inspector'}</button></div><h2 id="inspector-heading">{selected.definition.title}</h2><span class="badge {selected.state}">{stateLabel(selected)}</span></div>
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions (Escape closes this labeled disclosure while preserving its focused control for reopening.) -->
+      <div id="task-inspector-content" role="region" aria-label="Selected task details" hidden={!inspectorOpen} onfocusin={rememberInspectorFocus} onkeydown={inspectorKeydown}>
+      {#if selected.reason}<p class="notice {selected.state === 'failed' ? 'error' : 'warning'}">{selected.reason}</p>{/if}
       {#if selected.stop_requested && selected.state !== 'stopped'}<p class="notice warning">A stop was requested. The daemon has not reported that this task stopped; its current state remains {selected.state}.</p>{/if}
-      <dl class="facts"><dt>Task</dt><dd><code data-testid="task-id">{selected.id}</code></dd><dt>Capability</dt><dd>{selected.definition.capability.id} · {selected.definition.capability.operation}</dd><dt>Started</dt><dd>{selected.started_at === null ? 'Not started' : timeLabel(selected.started_at)}</dd><dt>Ended</dt><dd>{selected.ended_at === null ? 'No settlement recorded' : timeLabel(selected.ended_at)}</dd><dt>Dependencies</dt><dd>{selected.definition.dependencies.join(', ') || 'None'}</dd><dt>Required</dt><dd>{selected.definition.required ? 'Yes' : 'Optional'}</dd>{#if selected.definition.corrective_of}<dt>Corrects</dt><dd>{selected.definition.corrective_of}</dd>{/if}</dl>
+      <div class="form-actions inspector-actions">
+        {#if selected.state === 'queued' && selected.started_at === null}<button onclick={() => edit(selected!)} disabled={busy || pending !== null}>Edit unstarted task</button>{/if}
+        {#if selected.state === 'queued' || selected.state === 'running' || selected.state === 'uncertain'}<button class="danger" onclick={() => stop(selected!)} disabled={busy || pending !== null || selected.stop_requested}>Request stop</button>{/if}
+        <button disabled={busy || pending !== null || batchOpen} onclick={(event) => { openBatch(event.currentTarget); correctionSource = selected; }}>Create linked corrective work</button>
+        <button onclick={() => readResult(selected!)} disabled={busy || selected.result_restricted}>Read result</button>
+      </div>
+      {#if pending}<p class="notice warning">The change outcome is not confirmed. Refresh shows the daemon’s current state. You can safely replay the exact request.</p><button disabled={busy} onclick={() => change(pending!)}>Replay exact change</button>{/if}
+      <dl class="facts task-timing"><dt>Started</dt><dd>{selected.started_at === null ? 'Not started' : timeLabel(selected.started_at)}</dd><dt>Ended</dt><dd>{selected.ended_at === null ? 'No settlement recorded' : timeLabel(selected.ended_at)}</dd></dl>
+      {#if editing && editDefinition}
+        <form onsubmit={save} class="edit-form"><fieldset disabled={busy || pending !== null}><TaskDefinitionEditor bind:definition={editDefinition} {capabilities} /><p class="field-hint">The daemon accepts this edit only if the task is still unstarted and the observed generation is current.</p>{#if editGeneration !== workflow.generation}<p class="notice warning">The workflow changed while this draft was open. Review the current task and re-open its editor to use the new generation, or preserve this definition in a complete batch.</p>{/if}<div class="form-actions"><button class="primary">Save future task</button><button type="button" onclick={() => editing = false}>Cancel edit</button></div></fieldset></form>
+      {:else}
+        <h3 class="subheading">Accepted instructions</h3>
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex (Long accepted instructions remain scrollable with the keyboard.) -->
+        <pre class="accepted-instructions" role="region" aria-label="Accepted instructions" tabindex="0">{selected.definition.instructions}</pre>
+      {/if}
+      {#if selected.state === 'queued' && selected.started_at === null && suppliedNames.length}
+        <details><summary>Supply a required or replacement input</summary><form onsubmit={supplyInput}><fieldset disabled={busy || pending !== null}><label>Workflow input<select aria-label="Workflow input" bind:value={inputName}>{#each suppliedNames as name (name)}<option value={name}>{name}</option>{/each}</select></label><label>Input text<textarea bind:value={inputText} rows="4"></textarea></label><p class="field-hint">This value applies to future starts. Empty text is a supplied value; choose explicit absence in the batch editor if that is intended.</p><button>Supply input</button></fieldset></form></details>
+      {/if}
+      {#if displayedResult}
+        <details class="result-section" open><summary>{displayedResult.text ? 'Immutable result' : 'Retained outcome'}</summary>
+          {#if displayedResult.text || displayedResult.text_truncated}<div class="result-actions"><button disabled={busy} onclick={() => downloadResult(selected!)}>Download result</button></div>{/if}
+          {#if displayedResult.text_unavailable}<p class="notice warning">The retained output contains bytes that cannot be displayed as UTF-8 text. Retrieve the individual immutable artifacts listed below.</p>{:else if displayedResult.text_truncated}<p class="notice">Showing a bounded text preview. Download result requests the complete retained text; the digest below covers that complete text.</p>{/if}
+          {#if displayedResult.text}
+            <!-- svelte-ignore a11y_no_noninteractive_tabindex (The bounded result accepts focus so its complete content can be scrolled with the keyboard.) -->
+            <pre class="output inspector-text" role="region" aria-label="Retained result text" tabindex="0" data-testid="result-output">{displayedResult.text}</pre>
+          {:else if !displayedResult.text_truncated && !displayedResult.text_unavailable}<p class="field-hint">No text output was retained for this outcome. Inspect the task state and reason above.</p>{/if}
+          <details><summary>Result and input provenance</summary><dl class="facts"><dt>Result digest</dt><dd><code>{displayedResult.digest}</code></dd>{#each Object.entries(displayedResult.input_digests) as [name, digest] (name)}<dt>{name}</dt><dd><code>{digest}</code></dd>{/each}<dt>Artifacts</dt><dd>{displayedResult.artifacts.join(', ') || 'No additional artifacts'}</dd></dl></details>
+        </details>
+      {:else if selected.result_restricted}
+        <p class="notice warning result-section">Result contents are restricted by the current grant. The task’s lifecycle remains available.</p>
+      {:else}
+        <p class="field-hint result-section">No retained result is present in this snapshot. Read result requests the daemon’s current result or its reason for refusal.</p>
+      {/if}
+      <details class="task-details"><summary>Task details and dependencies</summary>
+        <dl class="facts"><dt>Task</dt><dd><code data-testid="task-id">{selected.id}</code></dd><dt>Capability</dt><dd>{selected.definition.capability.id} · {selected.definition.capability.operation}</dd><dt>Dependencies</dt><dd>{selected.definition.dependencies.join(', ') || 'None'}</dd><dt>Required</dt><dd>{selected.definition.required ? 'Yes' : 'Optional'}</dd>{#if selected.definition.corrective_of}<dt>Corrects</dt><dd>{selected.definition.corrective_of}</dd>{/if}</dl>
+      </details>
       {#each followupOrigins as origin (origin.task_id)}<p class="notice">Follow-up work admitted from task {origin.task_id}, response {origin.response_digest ?? 'digest unavailable in this authorized view'}.</p>{/each}
       {#if selected.definition.actions}<p class="field-hint">Model continuation is enabled. {selected.definition.actions.automatic_repair ? 'Automatic feedback after refused proposals is permitted within shared limits.' : 'Refused proposals require an explicit decision.'}</p>{/if}
       {#if selected.definition.tools.length}<p class="field-hint">Permitted tools: {selected.definition.tools.map((tool) => tool.kind === 'process' ? `${tool.capability.id} · ${tool.capability.operation}` : tool.kind.replaceAll('_', ' ')).join(', ')}.</p>{/if}
@@ -256,36 +303,42 @@
           {/each}
         </details>
       {/if}
-      {#if editing && editDefinition}
-        <form onsubmit={save} class="edit-form"><fieldset disabled={busy || pending !== null}><TaskDefinitionEditor bind:definition={editDefinition} {capabilities} /><p class="field-hint">The daemon accepts this edit only if the task is still unstarted and the observed generation is current.</p>{#if editGeneration !== workflow.generation}<p class="notice warning">The workflow changed while this draft was open. Review the current task and re-open its editor to use the new generation, or preserve this definition in a complete batch.</p>{/if}<div class="form-actions"><button class="primary">Save future task</button><button type="button" onclick={() => editing = false}>Cancel edit</button></div></fieldset></form>
-      {:else}
-        <h3 class="subheading">Accepted instructions</h3><pre>{selected.definition.instructions}</pre>
-      {/if}
-      {#if selected.state === 'queued' && selected.started_at === null && suppliedNames.length}
-        <details><summary>Supply a required or replacement input</summary><form onsubmit={supplyInput}><fieldset disabled={busy || pending !== null}><label>Workflow input<select aria-label="Workflow input" bind:value={inputName}>{#each suppliedNames as name (name)}<option value={name}>{name}</option>{/each}</select></label><label>Input text<textarea bind:value={inputText} rows="4"></textarea></label><p class="field-hint">This value applies to future starts. Empty text is a supplied value; choose explicit absence in the batch editor if that is intended.</p><button>Supply input</button></fieldset></form></details>
-      {/if}
-      <div class="form-actions">
-        {#if selected.state === 'queued' && selected.started_at === null}<button onclick={() => edit(selected!)} disabled={busy || pending !== null}>Edit unstarted task</button>{/if}
-        {#if selected.state === 'queued' || selected.state === 'running' || selected.state === 'uncertain'}<button class="danger" onclick={() => stop(selected!)} disabled={busy || pending !== null || selected.stop_requested}>Request stop</button>{/if}
-        <button disabled={busy || pending !== null || batchOpen} onclick={() => { openBatch(); correctionSource = selected; }}>Create linked corrective work</button>
-        <button onclick={() => readResult(selected!)} disabled={busy || selected.result_restricted}>Read result</button>
       </div>
-      {#if pending}<p class="notice warning">The change outcome is not confirmed. Refresh shows the daemon’s current state. You can safely replay the exact request.</p><button disabled={busy} onclick={() => change(pending!)}>Replay exact change</button>{/if}
-      {#if displayedResult}
-        <div class="result-section">
-          <div class="section-heading"><h3 class="subheading">{displayedResult.text ? 'Immutable result' : 'Retained outcome'}</h3>{#if displayedResult.text || displayedResult.text_truncated}<button disabled={busy} onclick={() => downloadResult(selected!)}>Download result</button>{/if}</div>
-          {#if displayedResult.text_unavailable}<p class="notice warning">The retained output contains bytes that cannot be displayed as UTF-8 text. Retrieve the individual immutable artifacts listed below.</p>{:else if displayedResult.text_truncated}<p class="notice">Showing a bounded text preview. Download result requests the complete retained text; the digest below covers that complete text.</p>{/if}
-          {#if displayedResult.text}
-            <!-- svelte-ignore a11y_no_noninteractive_tabindex (The bounded result accepts focus so its complete content can be scrolled with the keyboard.) -->
-            <pre class="output inspector-text" role="region" aria-label="Retained result text" tabindex="0" data-testid="result-output">{displayedResult.text}</pre>
-          {:else if !displayedResult.text_truncated && !displayedResult.text_unavailable}<p class="field-hint">No text output was retained for this outcome. Inspect the task state and reason above.</p>{/if}
-          <details><summary>Result and input provenance</summary><dl class="facts"><dt>Result digest</dt><dd><code>{displayedResult.digest}</code></dd>{#each Object.entries(displayedResult.input_digests) as [name, digest] (name)}<dt>{name}</dt><dd><code>{digest}</code></dd>{/each}<dt>Artifacts</dt><dd>{displayedResult.artifacts.join(', ') || 'No additional artifacts'}</dd></dl></details>
-        </div>
-      {:else if selected.result_restricted}
-        <p class="notice warning result-section">Result contents are restricted by the current grant. The task’s lifecycle remains available.</p>
-      {:else}
-        <p class="field-hint result-section">No retained result is present in this snapshot. Read result requests the daemon’s current result or its reason for refusal.</p>
-      {/if}
     </section>
   {/if}
-</section>
+</div>
+<div class="workflow-details">
+<details class="panel workflow-detail">
+  <summary>Workflow limits and current status</summary>
+  <p class="field-hint">These ceilings apply across descendants and restarts. Resuming never clears spending or unresolved effects.</p>
+  <dl class="facts">
+    <dt>Tasks admitted</dt><dd>{workflow.admitted_tasks} / {workflow.limits.tasks}</dd>
+    <dt>Model batches admitted</dt><dd>{workflow.admitted_model_batches} / {workflow.limits.model_batches}</dd>
+    <dt>Consecutive rejected responses</dt><dd>{workflow.rejected_responses} / {workflow.limits.rejected_responses}</dd>
+    <dt>Elapsed execution milliseconds</dt><dd>{workflow.active_execution_ms.toLocaleString()} / {workflow.limits.active_execution_ms.toLocaleString()}</dd>
+    <dt>Concurrent task ceiling</dt><dd>{workflow.limits.concurrent_tasks}</dd>
+    <dt>Corrective lineage failure ceiling</dt><dd>{workflow.limits.corrective_failures}</dd>
+    <dt>Tool calls per task</dt><dd>{workflow.limits.tool_calls_per_task}</dd>
+    <dt>Observed generation</dt><dd>{workflow.generation}</dd>
+  </dl>
+  <button disabled={busy || pending !== null || batchOpen} onclick={(event) => openBatch(event.currentTarget, 'set_limits')}>Review limit changes</button>
+</details>
+{#if workflow.admissions.length}
+  <details class="panel workflow-detail">
+    <summary>Model responses and future-work decisions</summary>
+    <p class="field-hint">These are the daemon's decisions for source tasks on this page. Inspect the source result to read the immutable response. Accepted aliases identify the resulting follow-up tasks.</p>
+    {#each workflow.admissions as admission (admission.task_id)}
+      {@const source = workflow.tasks.find((task) => task.id === admission.task_id)}
+      <section class="admission-record">
+        <h3>{source?.title ?? admission.task_id} · {admission.status}</h3>
+        {#if admission.reason}<p class="notice">{admission.reason}</p>{/if}
+        <dl class="facts"><dt>Source task</dt><dd>{admission.task_id}</dd><dt>Response digest</dt><dd>{admission.response_digest ?? 'Unavailable in this authorized view'}</dd><dt>Accepted receipt</dt><dd>{admission.receipt_key ?? 'No accepted receipt'}</dd>{#each Object.entries(admission.aliases) as [alias, taskId] (alias)}<dt>{alias}</dt><dd>{taskId}</dd>{/each}</dl>
+        <div class="form-actions">
+          {#if source}<button onclick={() => select(source)}>Inspect source response</button>{/if}
+          {#if admission.status === 'rejected'}<button disabled={busy || pending !== null || batchOpen} onclick={(event) => openBatch(event.currentTarget, 'dismiss_admission', admission.task_id)}>Review response decision</button>{/if}
+        </div>
+      </section>
+    {/each}
+  </details>
+{/if}
+</div>

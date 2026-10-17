@@ -112,38 +112,53 @@
   }
 </script>
 
-<section class="panel" aria-labelledby="task-composer-heading">
-  <div class="section-heading"><div><p class="eyebrow">Give work to your daemon</p><h2 id="task-composer-heading">Start a task</h2></div><button class="icon-button" onclick={oncancel} aria-label="Close task form">×</button></div>
-  <p class="muted">Describe the outcome and supply its context. The daemon keeps working when you close this page.</p>
-  <p class="subheading">Effective daemon defaults</p>
-  <div class="limits" aria-label="Effective workflow limits">
-    <span>{session.limits.tasks} tasks</span><span>{session.limits.concurrent_tasks} concurrent</span>
-    <span>{session.limits.model_batches} model batches</span><span>{session.limits.tool_calls_per_task} tool calls per task</span>
-    <span>{session.limits.active_execution_ms / 60000} active minutes</span>
-    <span>{session.limits.rejected_responses} consecutive rejected responses</span><span>{session.limits.corrective_failures} corrective failures</span>
-  </div>
+<section class="panel task-composer" aria-labelledby="task-composer-heading">
+  <div class="section-heading"><div><p class="eyebrow">{session.daemon_name} / New work</p><h1 id="task-composer-heading">Start a task</h1></div><button class="icon-button" onclick={oncancel} aria-label="Close task form">×</button></div>
+  <p class="muted">Set the outcome, then add the context your task needs. Work continues on your daemon when this page closes.</p>
   <form onsubmit={submit}>
     <fieldset disabled={busy || pending !== null}>
-      <div class="form-grid"><label>Task title<input bind:value={title} placeholder="Compare Rust animation approaches" required maxlength="256" /></label><label>Capability<select aria-label="Capability" value={capabilityIndex} onchange={selectCapability} required>{#each session.capabilities as capability, index (`${capability.id}/${capability.operation}`)}<option value={index}>{capability.id} · {capability.operation}</option>{/each}</select></label></div>
-      <label>Short description<input bind:value={description} placeholder="What this work is for" maxlength="4096" /></label>
-      <label>Instructions<textarea bind:value={instructions} placeholder="Explain the work to perform, the expected output, and any constraints." required rows="4"></textarea></label>
-      <label class="checkbox-label"><input type="checkbox" bind:checked={finishWhenSettled} /> Finish when required work settles</label>
-      {#if session.capabilities[capabilityIndex]?.operation === 'model.generate'}<TaskModelOptions bind:actions bind:tools capabilities={session.capabilities} />{/if}
-      <label class="checkbox-label"><input type="checkbox" bind:checked={supplyBrief} /> Supply brief now</label>
-      {#if supplyBrief}<label>Brief input<textarea bind:value={brief} placeholder="Project details, a question, or data the task should use." rows="4"></textarea></label>{:else}<p class="field-hint">The task requires a brief. It will stay queued until you supply that input in its inspector.</p>{/if}
-      <label>Text file input<input type="file" bind:files accept="text/*,.md,.toml,.json,.csv,.rs,.txt" onchange={captureFile} /></label>
-      <p class="field-hint">UTF-8 text up to {(session.input_limit_bytes / 1024).toLocaleString()} KiB. The daemon also checks the combined instructions and selected inputs.</p>
-      {#if upload}<p class="notice">Captured {upload.name} · {upload.bytes.toLocaleString()} bytes<br /><small>Input digest: <code>{upload.digest}</code></small></p>{/if}
-      <details><summary>Project filesystem access</summary><p class="field-hint">Declare a project root for configured processes or model file tools. The daemon validates the path against your grant.</p><label>Absolute project root<input bind:value={path} placeholder="/home/you/projects/animation" /></label><label class="checkbox-label"><input type="checkbox" bind:checked={pathWrite} /> Allow writes within this root</label></details>
+      <div class="authoring-layout">
+        <div class="authoring-main">
+          <fieldset class="form-section"><legend>Task instructions</legend>
+            <p class="field-hint">What should the task do, and what should it produce?</p>
+            <label>Task title<input bind:value={title} placeholder="Compare Rust animation approaches" required maxlength="256" /></label>
+            <label>Short description<input bind:value={description} placeholder="What this work is for" maxlength="4096" /></label>
+            <label>Instructions<textarea bind:value={instructions} placeholder="Explain the work to perform, the expected output, and any constraints." required rows="6"></textarea></label>
+          </fieldset>
+          <fieldset class="form-section"><legend>Supplied context</legend>
+            <p class="field-hint">Provide the brief and source material separately from the task’s instructions.</p>
+            <label class="checkbox-label"><input type="checkbox" bind:checked={supplyBrief} /> Supply brief now</label>
+            {#if supplyBrief}<label>Brief input<textarea bind:value={brief} placeholder="Project details, a question, or data the task should use." rows="4"></textarea></label>{:else}<p class="notice warning">The task requires a brief. It will stay queued until you supply that input in its inspector.</p>{/if}
+            <label>Text file input<input type="file" bind:files accept="text/*,.md,.toml,.json,.csv,.rs,.txt" onchange={captureFile} /></label>
+            <p class="field-hint">UTF-8 text up to {(session.input_limit_bytes / 1024).toLocaleString()} KiB. The daemon also checks the combined instructions and selected inputs.</p>
+            {#if upload}<p class="notice">Captured {upload.name} · {upload.bytes.toLocaleString()} bytes</p><details class="advanced-options"><summary>Captured file identity</summary><p class="field-hint">This digest identifies the exact file content retained by the daemon.</p><code>{upload.digest}</code></details>{/if}
+          </fieldset>
+        </div>
+        <aside class="authoring-aside" aria-label="Task execution options">
+          <fieldset class="form-section"><legend>Execution</legend>
+            <label>Capability<select aria-label="Capability" value={capabilityIndex} onchange={selectCapability} required>{#each session.capabilities as capability, index (`${capability.id}/${capability.operation}`)}<option value={index}>{capability.id} · {capability.operation}</option>{/each}</select></label>
+            <p class="field-hint">Choose a configured model or tool available on this daemon.</p>
+            <label class="checkbox-label"><input type="checkbox" bind:checked={finishWhenSettled} /> Finish when required work settles</label>
+            {#if session.capabilities[capabilityIndex]?.operation === 'model.generate'}<TaskModelOptions bind:actions bind:tools capabilities={session.capabilities} />{/if}
+          </fieldset>
+          <details class="advanced-options"><summary>Project filesystem access</summary><p class="field-hint">Declare a project root for configured processes or model file tools. The daemon validates the path against your grant.</p><label>Absolute project root<input bind:value={path} placeholder="/home/you/projects/animation" /></label><label class="checkbox-label"><input type="checkbox" bind:checked={pathWrite} /> Allow writes within this root</label></details>
+          <details class="advanced-options"><summary>Workflow limits</summary><p class="field-hint">These daemon defaults bound the work created by this submission.</p><div class="limits" aria-label="Effective workflow limits">
+            <span>{session.limits.tasks} tasks</span><span>{session.limits.concurrent_tasks} concurrent</span>
+            <span>{session.limits.model_batches} model batches</span><span>{session.limits.tool_calls_per_task} tool calls per task</span>
+            <span>{session.limits.active_execution_ms / 60000} active minutes</span>
+            <span>{session.limits.rejected_responses} consecutive rejected responses</span><span>{session.limits.corrective_failures} corrective failures</span>
+          </div></details>
+        </aside>
+      </div>
     </fieldset>
     {#if !session.capabilities.length}<p class="notice warning">No permitted capabilities are available. Ask the daemon administrator to configure a capability and your execution allowance.</p>{/if}
     {#if error}<p class="notice error" role="alert">{error}</p>{/if}
     {#if pendingUpload}<button type="button" onclick={retryUpload} disabled={busy}>Retry exact upload</button>{/if}
-    {#if pending}
+    <div class="authoring-footer">{#if pending}
       <p class="notice warning">The submission may have been accepted. Look up its receipt or replay the exact request. Both use request <code>{pending.request_id}</code>.</p>
       <div class="form-actions"><button type="button" class="primary" disabled={busy} onclick={findReceipt}>Find submission receipt</button><button type="button" disabled={busy} onclick={() => submit()}>Replay exact submission</button></div>
     {:else}
       <div class="form-actions"><button class="primary" disabled={busy || !session.capabilities.length || pendingUpload !== null}>{busy ? 'Submitting…' : 'Submit task'}</button><button type="button" class="quiet" onclick={oncancel}>Cancel</button></div>
-    {/if}
+    {/if}</div>
   </form>
 </section>

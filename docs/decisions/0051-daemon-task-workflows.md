@@ -1,8 +1,8 @@
 # 0051 — Daemon-owned tasks and locally expanded methods
 
 **Standing:** selected engineering design, 2026-10-12, with the October 17 connection correction
-below selected after partial user review. Implementation through prompt 03 and the assigned 02a
-connection correction is recorded in status; the visual correction and later phases require their own assignments.
+below selected after partial user review. Implementation through prompt 03 and the assigned 02a/02b
+connection and visual corrections is recorded in status; later phases require their own assignments.
 [Vision](../product/vision.md) owns the requirements;
 [status](../product/status.md) owns implemented facts. The
 [implementation sprint](../development/virtual-office/daemon-workflows-implementation/README.md)

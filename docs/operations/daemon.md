@@ -88,6 +88,12 @@ connecting afresh. The name refreshes across connected clients; disconnected nam
 cached. First-use trust comes from the configured endpoint and transport, not the returned identity.
 See [web hosting](../../apps/web/README.md) for build commands and connection setup.
 
+The client shows the daemon's shared name in its navigation and contextual header. On a narrow
+screen, open **Daemon navigation** to switch daemons or reach **Daemon settings**. Selected task
+details sit beside the timeline on wide screens and below it on narrow screens. Hiding the inspector
+preserves an unfinished edit; it does not stop or change daemon work. Results and technical facts
+use labeled disclosures, while execution state and stop requests remain visible.
+
 For phone/LAN use, terminate browser-trusted HTTPS for both the static site and daemon proxy.
 Keep the daemon's listener private, forward bearer/identity headers and disable buffering on the
 fetch stream. Loopback HTTP is the development exception. Phone-sized local browser checks do not

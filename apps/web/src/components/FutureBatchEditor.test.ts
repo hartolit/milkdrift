@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, expect, it, vi } from 'vitest';
 import FutureBatchEditor from './FutureBatchEditor.svelte';
 import type { ChangeWorkflowRequest, TaskReadDto, WorkflowReadDto } from '../lib/protocol.generated';
@@ -38,6 +38,16 @@ async function preview() {
   return JSON.parse(screen.getByTestId('batch-preview').textContent!) as ChangeWorkflowRequest;
 }
 
+it('moves focus to the labeled editor when it opens and does not steal focus during editing', async () => {
+  setup();
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Edit a complete future batch' })));
+  const alias = screen.getByLabelText('Batch alias');
+  alias.focus();
+  await fireEvent.input(alias, { target: { value: 'focused-draft' } });
+  expect(document.activeElement).toBe(alias);
+  expect((alias as HTMLInputElement).value).toBe('focused-draft');
+});
+
 it('stages complete input contracts and previews exact aliases without creating any task', async () => {
   const { request } = setup();
   await fireEvent.input(screen.getByLabelText('Batch alias'), { target: { value: 'compose' } });
@@ -56,8 +66,10 @@ it('stages complete input contracts and previews exact aliases without creating 
   await fireEvent.input(screen.getByLabelText('Input binding name'), { target: { value: 'failed' } });
   await fireEvent.input(screen.getByLabelText('Producer task identity or batch alias'), { target: { value: 'research-c' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Set named input' }));
+  await fireEvent.click(screen.getByText('Declared outputs', { exact: true }));
   await fireEvent.input(screen.getByLabelText('New output name'), { target: { value: 'report' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Add output' }));
+  await fireEvent.click(screen.getByText('Scoped project paths', { exact: true }));
   await fireEvent.input(screen.getByLabelText('Project path'), { target: { value: '/workspace/composition' } });
   await fireEvent.click(screen.getByLabelText('Permit writes in this path'));
   await fireEvent.click(screen.getByRole('button', { name: 'Add path' }));
@@ -71,6 +83,20 @@ it('stages complete input contracts and previews exact aliases without creating 
   } }]);
   await fireEvent.click(screen.getByRole('button', { name: 'Submit reviewed batch' }));
   expect(request).toHaveBeenCalledExactlyOnceWith('/v1/workflows/work/changes', batch);
+});
+
+it('keeps the staged draft intact while switching between editing and exact review', async () => {
+  const { request } = setup();
+  await fireEvent.change(screen.getByLabelText('Change to stage'), { target: { value: 'wait' } });
+  await fireEvent.input(screen.getByLabelText('Decision or missing input question'), { target: { value: 'Choose the next research direction.' } });
+  await stage();
+  const first = await preview();
+  expect((screen.getByText('Stage a change').closest('details') as HTMLDetailsElement).open).toBe(false);
+  await fireEvent.click(screen.getByRole('button', { name: 'Return to draft' }));
+  expect((screen.getByText('Stage a change').closest('details') as HTMLDetailsElement).open).toBe(true);
+  expect((screen.getByLabelText('Decision or missing input question') as HTMLTextAreaElement).value).toBe('Choose the next research direction.');
+  expect((await preview()).changes).toEqual(first.changes);
+  expect(request).not.toHaveBeenCalled();
 });
 
 it('adopts a correction with only explicitly selected version-guarded future bindings', async () => {

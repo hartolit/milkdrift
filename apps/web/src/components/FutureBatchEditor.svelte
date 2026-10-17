@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import type { ChangeWorkflowRequest, TaskBindingRedirectDto, TaskCapability, TaskChangeDto, TaskDefinitionDto, TaskReadDto, TaskSessionDto, TaskUploadReceipt, TaskUploadRequest, WorkflowLimitsDto, WorkflowReadDto } from '../lib/protocol.generated';
   import { DaemonClient, DaemonError } from '../lib/transport';
   import TaskDefinitionEditor from './TaskDefinitionEditor.svelte';
@@ -43,6 +44,8 @@
   let pendingUpload = $state<TaskUploadRequest | null>(null);
   let captured = $state<TaskUploadReceipt | null>(null);
   let initialized = false;
+  let heading: HTMLHeadingElement | undefined;
+  onMount(() => heading?.focus());
   let limits = $state<WorkflowLimitsDto | null>(null);
   const limitLabels: Record<keyof WorkflowLimitsDto, string> = {
     tasks: 'Total admitted tasks', concurrent_tasks: 'Concurrent tasks', model_batches: 'Total model batches',
@@ -152,13 +155,15 @@
 </script>
 
 <section class="panel batch-editor" aria-labelledby="batch-heading">
-  <div class="section-heading"><div><p class="eyebrow">Future work · generation {generation}</p><h2 id="batch-heading">Edit a complete future batch</h2></div><button onclick={onclose} disabled={busy || pending !== null}>Close batch editor</button></div>
-  <p class="muted">Stage related changes, inspect the exact request, then submit once. The daemon checks authority, inputs, dependencies, limits and start races before accepting the whole batch.</p>
+  <div class="section-heading"><div><p class="eyebrow">Future work</p><h2 id="batch-heading" bind:this={heading} tabindex="-1">Edit a complete future batch</h2></div><button class="quiet" onclick={onclose} disabled={busy || pending !== null}>Close batch editor</button></div>
+  <p class="muted">Plan the next tasks, supply context or request a stop. Stage related changes, review them, then submit together.</p>
+  <details class="advanced-options"><summary>Draft state and acceptance</summary><p class="field-hint">This draft uses workflow generation {generation}. The daemon checks your authority, inputs, dependencies, limits and any tasks that started while you were editing before accepting the whole batch.</p></details>
   {#if initialTask}<p class="notice">New work addresses {initialTask.id}. Its corrective link keeps replacement work waiting for the original task to settle; requesting stop does not prove settlement.</p>{/if}
   {#if error}<p class="notice error" role="alert">{error}</p>{/if}
   {#if conflict}<p class="notice warning">The daemon refused this batch against its current state. Your draft is retained. Refresh the observed generation, reload changed task definitions and review the complete batch before a new submission. Started task inputs cannot change.</p><button disabled={busy} onclick={refreshConflict}>Refresh generation for review</button>{/if}
   {#if !conflict && !pending && generation !== workflow.generation}<p class="notice warning">The observed workflow advanced to generation {workflow.generation} while this draft was open. Its guards still refer to generation {generation}. Refresh and review affected task versions before submitting.</p><button disabled={busy} onclick={refreshConflict}>Refresh generation for review</button>{/if}
   {#if !pending}
+    <details class="batch-stage" open={!preview}><summary>Stage a change</summary>
     <form onsubmit={addChange}>
       <fieldset disabled={busy || preview !== null || pendingUpload !== null}>
         <label>Change to stage<select bind:value={action} onchange={() => { version = 0; }}><option value="add">Add future task</option><option value="revise">Revise unstarted task</option><option value="remove">Remove unstarted task</option><option value="bind_input">Supply or replace a workflow input</option><option value="adopt_correction">Adopt a successful correction and rebind consumers</option><option value="stop">Request task stop</option><option value="dismiss_admission">Dismiss a response decision</option><option value="set_limits">Change prospective workflow limits</option><option value="continue">Resume prospectively</option><option value="wait">Wait for a decision</option><option value="finish">Finish when obligations settle</option></select></label>
@@ -184,13 +189,16 @@
         {#if action === 'set_limits' && limits}<p class="notice">New ceilings apply prospectively. Prior task admissions, model batches, elapsed execution and unresolved reservations remain spent or held.</p><div class="form-grid">{#each Object.entries(limitLabels) as [name, label] (name)}<label>{label}<input type="number" min="1" step="1" required bind:value={limits[name as keyof WorkflowLimitsDto]} /></label>{/each}</div>{/if}
         {#if action === 'continue'}<p class="notice">Resume retains spending, failed history and unresolved effects. It does not enlarge capability grants.</p>{/if}
         {#if action === 'finish'}<p class="notice">Completion still requires satisfied obligations and no running, uncertain or undecided work.</p>{/if}
-        <div class="form-actions"><button disabled={(action === 'revise' || action === 'remove') && !version}>Stage change</button></div>
+        <div class="form-actions"><button disabled={(action === 'revise' || action === 'remove') && !version}>Stage change</button><span class="field-hint">Staging updates this draft. It does not change the workflow yet.</span></div>
       </fieldset>
     </form>
     {#if pendingUpload}<p class="notice warning">The captured-file reply is not confirmed. Replay the exact upload before submitting its binding.</p><button disabled={busy} onclick={() => uploadFile()}>Replay exact file capture</button>{/if}
-    <details><summary>Import or revise typed changes</summary><p class="field-hint">This is the same public change array used by the CLI. Import replaces this draft only; it performs no daemon action.</p><label>Changes JSON<textarea bind:value={imported} rows="8" disabled={busy || preview !== null}></textarea></label><button disabled={busy || preview !== null} onclick={() => imported = JSON.stringify(changes, null, 2)}>Copy draft into JSON editor</button><button disabled={busy || preview !== null || !imported.trim()} onclick={importChanges}>Use JSON changes</button></details>
+    <details class="advanced-options"><summary>Import or revise typed changes</summary><p class="field-hint">This is the same public change array used by the CLI. Import replaces this draft only; it performs no daemon action.</p><label>Changes JSON<textarea bind:value={imported} rows="8" disabled={busy || preview !== null}></textarea></label><div class="form-actions"><button disabled={busy || preview !== null} onclick={() => imported = JSON.stringify(changes, null, 2)}>Copy draft into JSON editor</button><button disabled={busy || preview !== null || !imported.trim()} onclick={importChanges}>Use JSON changes</button></div></details>
+    </details>
   {/if}
+  <section class="batch-review" aria-label="Review staged workflow changes">
   <h3 class="subheading">Staged changes ({changes.length})</h3>
+  {#if !changes.length}<p class="field-hint">No changes staged yet. Add the related changes you want the daemon to consider together.</p>{/if}
   <ol class="staged-changes">{#each changes as change, index (index)}<li><strong>{change.kind.replaceAll('_', ' ')}</strong>{#if 'alias' in change} · {change.alias}{/if}{#if 'task' in change} · {change.task}{/if}{#if 'name' in change} · {change.name}{/if}{#if 'definition' in change && change.definition} · {change.definition.title}{/if}{#if !preview && !pending}<button disabled={busy} onclick={() => changes = changes.filter((_, current) => current !== index)} aria-label={`Remove staged change ${index + 1}`}>Remove</button>{/if}</li>{/each}</ol>
   {#if pending}<p class="notice warning">The reply was not confirmed. This exact request is held unchanged for safe replay; a new identity could duplicate accepted work.</p><button disabled={busy} onclick={() => submit(pending!)}>Replay exact batch</button>
   {:else if preview}
@@ -200,4 +208,5 @@
     <pre class="batch-preview" role="region" aria-label="Exact batch request" tabindex="0" data-testid="batch-preview">{JSON.stringify(preview, null, 2)}</pre>
     <div class="form-actions"><button class="primary" disabled={busy} onclick={() => submit(preview!)}>Submit reviewed batch</button><button disabled={busy} onclick={() => preview = null}>Return to draft</button></div>
   {:else}<button class="primary" disabled={busy || !changes.length || conflict || pendingUpload !== null} onclick={() => preview = { request_id: crypto.randomUUID(), expected_generation: generation, changes: copy(changes) }}>Preview complete batch</button>{/if}
+  </section>
 </section>

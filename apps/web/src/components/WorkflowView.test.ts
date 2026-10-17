@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/svelte';
 import { afterEach, expect, it, vi } from 'vitest';
 import { tick } from 'svelte';
 import WorkflowView from './WorkflowView.svelte';
@@ -43,6 +43,63 @@ it('shows a queued reason without fabricating a start and keeps list actions ava
   await fireEvent.click(screen.getByRole('button', { name: 'List' }));
   expect(screen.getAllByText('Missing required input: brief').length).toBeGreaterThan(0);
   expect(screen.getByRole('button', { name: 'Edit unstarted task' })).toBeTruthy();
+});
+
+it('keeps an inspector draft mounted and restores its focused field after closing with Escape', async () => {
+  await renderWorkflow([task()]);
+  await fireEvent.click(screen.getByRole('button', { name: 'Edit unstarted task' }));
+  const instructions = screen.getByLabelText('Instructions') as HTMLTextAreaElement;
+  await fireEvent.input(instructions, { target: { value: 'Keep this draft while reviewing the timeline' } });
+  instructions.focus();
+  await fireEvent.keyDown(instructions, { key: 'Escape' });
+  const show = screen.getByRole('button', { name: 'Show inspector' });
+  expect(show.getAttribute('aria-expanded')).toBe('false');
+  expect(document.activeElement).toBe(show);
+  expect(screen.queryByRole('textbox', { name: 'Instructions' })).toBeNull();
+  expect(instructions.isConnected).toBe(true);
+  await fireEvent.click(show);
+  expect(screen.getByRole('button', { name: 'Hide inspector' }).getAttribute('aria-expanded')).toBe('true');
+  expect(document.activeElement).toBe(instructions);
+  expect(instructions.value).toBe('Keep this draft while reviewing the timeline');
+});
+
+it('preserves a draft when switching presentation and reselecting the same task', async () => {
+  const client = await renderWorkflow([task()]);
+  await fireEvent.click(screen.getByRole('button', { name: 'Edit unstarted task' }));
+  await fireEvent.input(screen.getByLabelText('Instructions'), { target: { value: 'The same selected task draft' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Hide inspector' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'List' }));
+  await fireEvent.click(screen.getByRole('button', { name: /Research.*Compare the supplied project/ }));
+  expect((screen.getByLabelText('Instructions') as HTMLTextAreaElement).value).toBe('The same selected task draft');
+  expect(screen.getByRole('button', { name: 'Hide inspector' }).getAttribute('aria-expanded')).toBe('true');
+  expect(vi.mocked(client.request).mock.calls.every(([path]) => path.endsWith('/tasks/task-a'))).toBe(true);
+});
+
+it('returns batch focus to its invoking task action without losing the inspector draft', async () => {
+  await renderWorkflow([task()]);
+  const inspector = within(screen.getByRole('region', { name: 'Research' }));
+  await fireEvent.click(inspector.getByRole('button', { name: 'Edit unstarted task' }));
+  const instructions = inspector.getByLabelText('Instructions') as HTMLTextAreaElement;
+  await fireEvent.input(instructions, { target: { value: 'Preserved while considering a correction' } });
+  const trigger = inspector.getByRole('button', { name: 'Create linked corrective work' });
+  await fireEvent.click(trigger);
+  const close = screen.getByRole('button', { name: 'Close batch editor' });
+  close.focus();
+  await fireEvent.click(close);
+  expect(document.activeElement).toBe(trigger);
+  expect(inspector.getByLabelText('Instructions')).toBe(instructions);
+  expect(instructions.value).toBe('Preserved while considering a correction');
+});
+
+it('returns batch focus to the workflow action when its initiating inspector was hidden', async () => {
+  await renderWorkflow([task()]);
+  await fireEvent.click(screen.getByRole('button', { name: 'Create linked corrective work' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Hide inspector' }));
+  const close = screen.getByRole('button', { name: 'Close batch editor' });
+  close.focus();
+  await fireEvent.click(close);
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Edit future batch' }));
+  expect(screen.getByRole('button', { name: 'Show inspector' }).getAttribute('aria-expanded')).toBe('false');
 });
 
 it('keeps cancellation requests distinct from stopped evidence and exposes expired results', async () => {
@@ -95,7 +152,7 @@ it('holds an unconfirmed edit unchanged until exact replay', async () => {
   await fireEvent.input(screen.getByLabelText('Instructions'), { target: { value: 'The accepted future draft' } });
   await fireEvent.submit(screen.getByRole('button', { name: 'Save future task' }).closest('form')!);
   expect((screen.getByRole('button', { name: 'Request stop' }) as HTMLButtonElement).disabled).toBe(true);
-  expect(screen.getByLabelText('Instructions').closest('fieldset')?.disabled).toBe(true);
+  expect(screen.getByLabelText('Instructions').matches(':disabled')).toBe(true);
   await fireEvent.click(screen.getByRole('button', { name: 'Replay exact change' }));
   expect(request.mock.calls[1]).toEqual(request.mock.calls[0]);
 });

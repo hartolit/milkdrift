@@ -34,3 +34,16 @@ it('also clears model choices when a manually entered operation changes', async 
   expect(screen.queryByLabelText('Allow model to propose future work')).toBeNull();
   expect(edited()).toMatchObject({ capability: { operation: 'process.execute' }, actions: null, tools: [] });
 });
+
+it('keeps the corrective link open and focused when its final character is cleared', async () => {
+  const task = { ...definition(), corrective_of: 'original-task' };
+  render(TaskDefinitionEditorTestHarness, { initial: task });
+  const input = screen.getByLabelText('Corrects task') as HTMLInputElement;
+  input.focus();
+  await fireEvent.input(input, { target: { value: '' } });
+  expect((input.closest('details') as HTMLDetailsElement).open).toBe(true);
+  expect(document.activeElement).toBe(input);
+  expect(edited().corrective_of).toBeNull();
+  await fireEvent.input(input, { target: { value: 'another-task' } });
+  expect(edited().corrective_of).toBe('another-task');
+});

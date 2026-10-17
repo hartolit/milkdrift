@@ -21,7 +21,13 @@ const path = process.env.MILKDRIFT_BROWSER_CONFIG;
 if (!path) throw new Error('Set MILKDRIFT_BROWSER_CONFIG to the private browser.json produced by the Rust connected-task evidence harness.');
 const config = JSON.parse(readFileSync(path, 'utf8')) as BrowserFixture;
 
+async function openDaemonNavigation(page: Page) {
+  const navigation = page.getByRole('button', { name: 'Daemon navigation', exact: true });
+  if (await navigation.isVisible() && await navigation.getAttribute('aria-expanded') === 'false') await navigation.click();
+}
+
 async function connect(page: Page, daemon: DaemonFixture) {
+  await openDaemonNavigation(page);
   await page.getByRole('button', { name: 'Add daemon connection' }).click();
   await page.getByLabel('Daemon URL').fill(daemon.url);
   await page.getByLabel('Bearer credential').fill(daemon.token);
@@ -38,7 +44,7 @@ async function fillTask(page: Page, title: string, inputPath: string, deferBrief
   if (deferBrief) await page.getByLabel('Supply brief now').uncheck();
   await page.getByLabel('Capability', { exact: true }).selectOption({ label: `${config.capability} · process.execute` });
   await page.getByLabel('Text file input').setInputFiles(inputPath);
-  await expect(page.getByText(/^Captured /)).toBeVisible();
+  await expect(page.getByText(/^Captured .+ · [\d,]+ bytes$/)).toBeVisible();
 }
 
 async function submit(page: Page, title: string, inputPath: string, deferBrief = false) {
@@ -46,6 +52,40 @@ async function submit(page: Page, title: string, inputPath: string, deferBrief =
   await page.getByRole('button', { name: 'Submit task', exact: true }).click();
   await expect(page.getByRole('heading', { name: title, level: 1, exact: true })).toBeVisible();
 }
+
+test('the branded workspace keeps empty discovery, connection and settings usable at narrow widths', async ({ page }, testInfo) => {
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Connect to your work', exact: true })).toBeVisible();
+  await page.keyboard.press('Tab');
+  const skip = page.getByRole('link', { name: 'Skip to workspace', exact: true });
+  await expect(skip).toBeFocused();
+  await expect(skip).toBeVisible();
+  const logo = page.locator('img.brand-logo');
+  await expect(logo).toHaveAttribute('src', '/milkdrift-logo.svg');
+  await expect.poll(() => logo.evaluate((element) => (element as HTMLImageElement).complete && (element as HTMLImageElement).naturalWidth > 0)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('empty-workspace-desktop.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: 'Connect a daemon', exact: true }).click();
+  await expect(page.getByLabel('Daemon URL')).toBeVisible();
+  await expect(page.getByLabel('Bearer credential')).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('connection-phone.png'), fullPage: true });
+  await page.getByLabel('Daemon URL').fill(config.b.url);
+  await page.getByLabel('Bearer credential').fill(config.b.token);
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'A clear space for your next task', exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('empty-discovery-phone.png'), fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.screenshot({ path: testInfo.outputPath('empty-discovery-desktop.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Daemon settings', exact: true }).click();
+  await expect(page.getByLabel('Daemon name')).toHaveValue('Studio B');
+  await page.getByText('Connection details', { exact: true }).click();
+  await expect(page.getByText(config.b.identity, { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('daemon-settings-desktop.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('daemon-settings-phone.png'), fullPage: true });
+});
 
 test('a real uploaded project produces discoverable input-dependent results after the browser closes', async ({ browser }, testInfo) => {
   const title = `Cargo analysis ${Date.now()}`;
@@ -67,9 +107,21 @@ test('a real uploaded project produces discoverable input-dependent results afte
   await expect(output).toBeVisible({ timeout: 30000 });
   for (const expected of config.expect_a ?? ['dependencies']) await expect(output).toContainText(expected);
   const firstResult = await output.innerText();
+  await page.getByText('Immutable result', { exact: true }).click();
+  await expect(output).toBeHidden();
+  await page.keyboard.press('Enter');
+  await expect(output).toBeVisible();
+  await expect(output).toHaveText(firstResult);
   console.log('CHECKPOINT: Production Svelte submitted the uploaded Cargo task, observed Running, disposed the client, then a fresh browser discovered its retained input-dependent result.');
   await page.getByRole('button', { name: 'List', exact: true }).click();
   await expect(page.getByRole('list').last()).toContainText('Completed');
+  const completedBadge = page.locator('.task-list .badge').first();
+  await expect(completedBadge).toHaveText('Completed');
+  expect(await completedBadge.evaluate((element) => {
+    const label = document.createRange();
+    label.selectNodeContents(element);
+    return label.getClientRects().length;
+  })).toBe(1);
   await page.screenshot({ path: testInfo.outputPath('desktop-result.png'), fullPage: true });
 
   await page.getByRole('button', { name: '← All workflows', exact: true }).click();
@@ -88,10 +140,12 @@ test('a real uploaded project produces discoverable input-dependent results afte
   await page.getByRole('searchbox').fill(title);
   await page.getByRole('button', { name: 'Search', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'No matching workflows', exact: true })).toBeVisible();
+  await openDaemonNavigation(page);
   await page.getByRole('button', { name: /^Studio A/ }).click();
   await expect(page.getByRole('heading', { name: variedTitle, level: 1, exact: true })).toBeVisible();
   const persisted = await page.evaluate(() => JSON.stringify({ local: { ...window.localStorage }, session: { ...window.sessionStorage } }));
   expect(persisted.includes(config.a.token) || persisted.includes(config.b.token)).toBe(false);
+  await openDaemonNavigation(page);
   await page.getByRole('button', { name: 'Disconnect', exact: true }).click();
   await expect(page.getByTestId('result-output')).toHaveCount(0);
   await fresh.close();
@@ -128,6 +182,67 @@ test('a queued missing-input task can be edited and repaired through the same in
   await expect(page.getByRole('button', { name: 'Edit unstarted task', exact: true })).toHaveCount(0);
 });
 
+test('the responsive inspector preserves a long-title task draft and keyboard focus while hidden', async ({ page }, testInfo) => {
+  const title = `Animation research across rendering, learned motion, training data and validation boundaries ${Date.now()}`;
+  const draft = 'Keep this unsaved instruction while inspecting the same queued work on a narrow screen.';
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/');
+  await connect(page, config.a);
+  await fillTask(page, title, config.input_a, true);
+  await page.screenshot({ path: testInfo.outputPath('task-authoring-desktop.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('task-authoring-phone.png'), fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole('button', { name: 'Submit task', exact: true }).click();
+  await expect(page.getByRole('heading', { name: title, level: 1, exact: true })).toBeVisible();
+  const timeline = page.getByLabel('Task dependency timeline');
+  await expect(timeline).toContainText('missing supplied input brief');
+  const inspector = page.locator('.task-inspector');
+  await expect(inspector.getByRole('heading', { name: title, exact: true })).toBeVisible();
+  const desktop = await Promise.all([page.locator('.task-workspace').boundingBox(), inspector.boundingBox()]);
+  expect(desktop[0]).not.toBeNull();
+  expect(desktop[1]).not.toBeNull();
+  expect(desktop[1]!.x).toBeGreaterThanOrEqual(desktop[0]!.x + desktop[0]!.width);
+  await page.screenshot({ path: testInfo.outputPath('queued-long-title-desktop.png'), fullPage: true });
+
+  await page.getByRole('button', { name: 'Edit unstarted task', exact: true }).click();
+  const instructions = page.getByLabel('Instructions', { exact: true });
+  await instructions.fill(draft);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const stacked = await Promise.all([page.locator('.task-workspace').boundingBox(), inspector.boundingBox()]);
+  expect(stacked[0]).not.toBeNull();
+  expect(stacked[1]).not.toBeNull();
+  expect(stacked[1]!.y).toBeGreaterThanOrEqual(stacked[0]!.y + stacked[0]!.height);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await instructions.focus();
+  await page.keyboard.press('Escape');
+  const reopen = page.getByRole('button', { name: 'Show inspector', exact: true });
+  await expect(reopen).toBeFocused();
+  await expect(reopen).toHaveAttribute('aria-expanded', 'false');
+  await expect(instructions).toBeHidden();
+  await page.keyboard.press('Enter');
+  await expect(instructions).toBeFocused();
+  await expect(instructions).toHaveValue(draft);
+  const visibleFocus = await instructions.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return style.outlineStyle !== 'none' && Number.parseFloat(style.outlineWidth) > 0;
+  });
+  expect(visibleFocus).toBe(true);
+  await page.getByRole('button', { name: 'List', exact: true }).click();
+  await page.locator('.task-list').getByRole('button').filter({ has: page.getByRole('heading', { name: title, exact: true }) }).click();
+  await expect(instructions).toHaveValue(draft);
+  await expect(inspector.getByText('Not started', { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('queued-inspector-draft-phone.png'), fullPage: true });
+
+  await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await expect(instructions).toHaveValue(draft);
+  await expect(page.getByRole('button', { name: 'Save future task', exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('queued-inspector-enlarged-text.png'), fullPage: true });
+});
+
 test('queued cancellation permits linked replacement without inventing original execution times', async ({ page }) => {
   await page.goto('/');
   await connect(page, config.a);
@@ -137,6 +252,7 @@ test('queued cancellation permits linked replacement without inventing original 
   await expect(page.getByLabel('Task dependency timeline').getByText('Stopped', { exact: true })).toBeVisible();
   await expect(page.getByText('Not started', { exact: true }).first()).toBeVisible();
   await expect(page.getByTestId('result-output')).toHaveCount(0);
+  await page.getByText('Task details and dependencies', { exact: true }).click();
   const originalId = await page.getByTestId('task-id').innerText();
   await page.getByRole('button', { name: 'Create linked corrective work', exact: true }).click();
   await page.getByRole('button', { name: 'Stage change', exact: true }).click();
@@ -157,11 +273,36 @@ test('queued cancellation permits linked replacement without inventing original 
   await expect(timeline.getByText('Not started', { exact: true })).toBeVisible();
 });
 
+test('an invalid supplied manifest leaves a readable failed task and blocked workflow', async ({ page }, testInfo) => {
+  const title = `Invalid project manifest ${Date.now()}`;
+  await page.goto('/');
+  await connect(page, config.a);
+  await fillTask(page, title, config.input_a);
+  await page.getByLabel('Text file input').setInputFiles({
+    name: 'Broken.toml', mimeType: 'text/plain', buffer: Buffer.from('[package\nname = "unfinished manifest"\n'),
+  });
+  await expect(page.getByText(/^Captured Broken.toml/)).toBeVisible();
+  await page.getByRole('button', { name: 'Submit task', exact: true }).click();
+  await expect(page.getByRole('heading', { name: title, level: 1, exact: true })).toBeVisible();
+  await expect(page.getByLabel('Task dependency timeline').getByText('Failed', { exact: true })).toBeVisible({ timeout: 30000 });
+  await expect(page.locator('.workflow-header').getByText('blocked', { exact: true })).toBeVisible();
+  const inspector = page.locator('.task-inspector');
+  await expect(inspector.getByText('Failed', { exact: true })).toBeVisible();
+  await expect(inspector.getByRole('button', { name: 'Create linked corrective work', exact: true })).toBeVisible();
+  await expect(inspector.getByRole('button', { name: 'Edit unstarted task', exact: true })).toHaveCount(0);
+  await expect(inspector.getByRole('button', { name: 'Request stop', exact: true })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('blocked-failure-desktop.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('blocked-failure-phone.png'), fullPage: true });
+});
+
 test('a reviewed future batch atomically revises a queued task and supplies its missing input', async ({ page }, testInfo) => {
   await page.goto('/');
   await connect(page, config.a);
   await submit(page, `Reviewed batch ${Date.now()}`, config.input_b, true);
   await expect(page.getByLabel('Task dependency timeline')).toContainText('missing supplied input brief');
+  await page.getByText('Task details and dependencies', { exact: true }).click();
   const taskId = await page.getByTestId('task-id').innerText();
   await page.getByRole('button', { name: 'Edit future batch', exact: true }).click();
   await page.getByLabel('Change to stage').selectOption('revise');
@@ -185,9 +326,11 @@ test('a reviewed future batch atomically revises a queued task and supplies its 
   await expect.poll(() => page.getByTestId('batch-preview').evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
   await page.keyboard.press('Control+Home');
   await expect.poll(() => page.getByTestId('batch-preview').evaluate((element) => element.scrollTop)).toBe(0);
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: testInfo.outputPath('reviewed-batch-desktop.png'), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: testInfo.outputPath('reviewed-batch-phone.png'), fullPage: true });
   await page.getByRole('button', { name: 'Submit reviewed batch', exact: true }).click();
   await expect(page.getByTestId('result-output')).toBeVisible({ timeout: 30000 });
@@ -202,6 +345,7 @@ test('a cyclic future batch is refused without changing accepted work or losing 
   await connect(page, config.a);
   await submit(page, `Refused batch ${Date.now()}`, config.input_b, true);
   await expect(page.getByLabel('Task dependency timeline')).toContainText('missing supplied input brief');
+  await page.getByText('Task details and dependencies', { exact: true }).click();
   const taskId = await page.getByTestId('task-id').innerText();
   await page.getByRole('button', { name: 'Edit future batch', exact: true }).click();
   await page.getByLabel('Change to stage').selectOption('revise');
@@ -290,14 +434,26 @@ test('the daemon admits model-authored parallel research and correction without 
   await page.getByRole('button', { name: 'Submit task', exact: true }).click();
   await expect(page.getByRole('heading', { name: title, level: 1, exact: true })).toBeVisible();
   const timeline = page.getByLabel('Task dependency timeline');
+  await expect.poll(() => timeline.getByText('Running', { exact: true }).count(), { timeout: 30000 }).toBeGreaterThanOrEqual(2);
+  await expect.poll(() => page.getByLabel('Actual task execution').getByRole('button', { name: /no end recorded$/ }).count()).toBeGreaterThanOrEqual(2);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: testInfo.outputPath('running-parallel-desktop.png'), fullPage: true });
   for (const child of config.planning_expect ?? ['Animation composition', 'Corrected render research', 'Adopt corrected research', 'Final animation report']) {
     await expect(timeline.getByRole('heading', { name: child, exact: true })).toBeVisible({ timeout: 90000 });
   }
   const finalTask = timeline.getByRole('button').filter({ has: page.getByRole('heading', { name: 'Final animation report', exact: true }) });
   await expect(finalTask).toContainText('Completed', { timeout: 90000 });
-  await expect(page.locator('.detail-meta')).toContainText('completed');
+  await expect(page.locator('.workflow-header').getByText('completed', { exact: true })).toBeVisible();
   expect(continuations).toBe(0);
-  await expect(timeline.getByRole('button').filter({ has: page.getByRole('heading', { name: 'Research render validation', exact: true }) })).toContainText('Failed');
+  const failedResearch = timeline.getByRole('button').filter({ has: page.getByRole('heading', { name: 'Research render validation', exact: true }) });
+  await expect(failedResearch).toContainText('Failed');
+  await failedResearch.click();
+  await expect(page.locator('.task-inspector').getByText('Failed', { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('retained-failure-desktop.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('retained-failure-phone.png'), fullPage: true });
+  await page.setViewportSize({ width: 1280, height: 720 });
   const actual = page.getByLabel('Actual task execution');
   const motion = actual.getByRole('button', { name: /^Research motion representation: started/ });
   const training = actual.getByRole('button', { name: /^Research training data: started/ });
@@ -316,6 +472,7 @@ test('the daemon admits model-authored parallel research and correction without 
   await expect.poll(() => responseText.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
   await page.keyboard.press('Control+Home');
   await expect.poll(() => responseText.evaluate((element) => element.scrollTop)).toBe(0);
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: testInfo.outputPath('automatic-animation-desktop.png'), fullPage: true });
   await finalTask.click();
   await expect(page.getByTestId('result-output')).toBeVisible();
@@ -323,6 +480,7 @@ test('the daemon admits model-authored parallel research and correction without 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('button', { name: 'List', exact: true }).click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: testInfo.outputPath('automatic-animation-phone.png'), fullPage: true });
 });
 
@@ -334,6 +492,10 @@ test('keyboard access and identity refusal are visible on a phone layout', async
   await page.goto('/');
   await page.keyboard.press('Tab');
   await expect(page.getByRole('link', { name: 'Skip to workspace' })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('button', { name: 'Daemon navigation', exact: true })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('button', { name: 'Daemon navigation', exact: true })).toHaveAttribute('aria-expanded', 'true');
   await page.getByRole('button', { name: /^Old studio/ }).click();
   await page.getByLabel('Bearer credential').fill(config.a.token);
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
@@ -341,8 +503,10 @@ test('keyboard access and identity refusal are visible on a phone layout', async
   await expect(page.getByRole('heading', { name: 'Your workflows' })).toHaveCount(0);
   expect(await page.evaluate(() => JSON.parse(window.localStorage.getItem('milkdrift.connections.v1')!)[0].daemonId)).toBe('not-the-configured-installation');
   await expect(page.getByLabel('Bearer credential')).toHaveValue('');
+  await openDaemonNavigation(page);
   await page.getByRole('button', { name: 'Forget Old studio connection' }).click();
   await connect(page, config.a);
+  await openDaemonNavigation(page);
   await expect(page.getByRole('button', { name: /^Studio A/ })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
@@ -399,6 +563,7 @@ test('independent clients share a recovered rename and distinguish duplicate nam
     await expect(duplicates.filter({ hasText: config.b.url })).toBeVisible();
     await first.screenshot({ path: testInfo.outputPath('shared-name-desktop.png'), fullPage: true });
     await first.setViewportSize({ width: 390, height: 844 });
+    await openDaemonNavigation(first);
     await expect(duplicates.filter({ hasText: config.a.url })).toContainText(config.a.url);
     await expect(duplicates.filter({ hasText: config.b.url })).toContainText(config.b.url);
     expect(await first.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -421,14 +586,34 @@ test('independent clients share a recovered rename and distinguish duplicate nam
     expect(profiles.map((profile: { daemonId: string }) => profile.daemonId)).toEqual([config.a.identity, config.b.identity]);
     expect(JSON.stringify(profiles).includes(config.a.token)).toBe(false);
     expect(JSON.stringify(profiles).includes(config.b.token)).toBe(false);
+    await first.unroute('**/v1/daemon/rename');
+    const longName = 'A'.repeat(80);
+    await first.getByLabel('Daemon name').fill(longName);
+    await first.getByRole('button', { name: 'Save daemon name', exact: true }).click();
+    await expect(first.getByRole('button', { name: new RegExp(`^${longName}`) })).toBeVisible();
+    expect(await first.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await first.getByRole('button', { name: 'Back to work', exact: true }).click();
+    await first.getByRole('button', { name: '+ New task', exact: true }).click();
+    await expect(first.getByRole('heading', { name: 'Start a task', exact: true })).toBeVisible();
+    expect(await first.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await first.screenshot({ path: testInfo.outputPath('long-daemon-name-composer-phone.png'), fullPage: true });
+    await first.getByRole('button', { name: 'Close task form', exact: true }).click();
+    await openDaemonNavigation(first);
+    await first.getByRole('button', { name: 'Daemon settings', exact: true }).click();
+    await expect(first.getByLabel('Daemon name')).toHaveValue(longName);
   } finally {
     await first.unroute('**/v1/daemon/rename');
     // Leave the shared review fixture with its seeded human-readable name.
+    if (!await first.getByLabel('Daemon name').count()) {
+      await openDaemonNavigation(first);
+      await first.getByRole('button', { name: 'Daemon settings', exact: true }).click();
+    }
     if (await first.getByRole('button', { name: 'Find rename receipt' }).count()) {
       await first.getByRole('button', { name: 'Find rename receipt' }).click();
     }
     await first.getByLabel('Daemon name').fill('Studio A');
     await first.getByRole('button', { name: 'Save daemon name', exact: true }).click();
+    await openDaemonNavigation(first);
     await expect(first.getByRole('button', { name: /^Studio A/ })).toBeVisible();
     await controller.close();
     await observer.close();

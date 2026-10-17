@@ -9,8 +9,10 @@ The subsequent partial review reports successful Studio A connection and request
 daemon-owned names and a visual redesign using the supplied mockup and real logo. The assigned correction
 [02a](../development/virtual-office/daemon-workflows-implementation/02a-daemon-connection-identity.md)
 now implements simple connection and shared names, with the user's recheck pending.
+The subsequently assigned
 [02b](../development/virtual-office/daemon-workflows-implementation/02b-visual-design-and-brand.md)
-remains unassigned and precedes completion of that review and prompt 04. Prompt 03 stays complete and is not replayed.
+implements the supplied dark visual direction and exact logo across the client. Its visual review
+and the remaining task journey precede prompt 04. Prompt 03 stays complete and is not replayed.
 Earlier checkpoints and stores remain preserved; no corrected hosted run is claimed.
 Prompts 04–07 remain unassigned; 07 owns the named
 final full-system test-and-repair gate. The superseded remedial P00–P09 is historical evidence only.
@@ -22,8 +24,8 @@ The new program delivers these outcomes in order:
 1. A real standalone Svelte client submits a useful task to its daemon, inspects results and
    reconnects from a fresh client; the ordinary workflow replacement is adopted end to end.
 2. An actual early user review tests that journey and repairs behavior and usability findings.
-   Its implemented 02a correction simplifies connection and shares the daemon's name; 02b will apply the
-   supplied visual direction and logo. Recheck naming, finish the visual correction and resume the substantive review
+   Its implemented 02a correction simplifies connection and shares the daemon's name; 02b applies the
+   supplied visual direction and logo. Recheck naming and appearance, then resume the substantive review
    before adding methods. This insertion preserves the remaining prompt numbers and final gate.
 3. Models and humans build parallel research, composition and corrective future work through the
    same commands, with explicit readiness, authority and cumulative limits.
