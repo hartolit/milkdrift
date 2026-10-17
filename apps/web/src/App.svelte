@@ -205,8 +205,9 @@
 
   async function created(connection: Connection, receipt: WorkflowReceipt) {
     if (activeId === connection.profile.id) composing = false;
-    await refresh(connection);
+    // A confirmed receipt identifies the work even while discovery is slow or being refreshed.
     await selectWorkflow(connection, receipt.workflow_id);
+    await refresh(connection);
   }
 
   onDestroy(() => { for (const connection of connections) { connection.stream.abort(); connection.client.disconnect(); } });
@@ -233,7 +234,7 @@
         {#if composing}
           <TaskComposer client={active.client} session={active.session} oncreated={created.bind(null, active)} oncancel={() => composing = false} onerror={fail.bind(null, active)} />
         {:else if active.selected}
-          <WorkflowView workflow={active.selected} client={active.client} onrefresh={refresh.bind(null, active)} onpage={selectWorkflow.bind(null, active, active.selected.id)} onback={() => active!.selected = null} onerror={fail.bind(null, active)} />
+          <WorkflowView workflow={active.selected} client={active.client} capabilities={active.session.capabilities} onrefresh={refresh.bind(null, active)} onpage={selectWorkflow.bind(null, active, active.selected.id)} onback={() => active!.selected = null} onerror={fail.bind(null, active)} />
         {:else}
           <div class="page-heading"><div><p class="eyebrow">{active.profile.label}</p><h1>Your workflows</h1><p>Start something useful. Come back when it’s ready.</p></div><button class="primary" onclick={() => composing = true}>+ New task</button></div>
           <form class="toolbar" onsubmit={(event) => { event.preventDefault(); search(active!); }}><label><span class="visually-hidden">Search workflows and retained results</span><input type="search" bind:value={active.search} placeholder="Search workflows and retained results" /></label><button>Search</button><button type="button" onclick={() => refresh(active!)}>Refresh</button></form>

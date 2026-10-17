@@ -13,6 +13,8 @@ interface BrowserFixture {
   expect_b?: string[];
   model_capability?: string;
   model_expect?: string[];
+  planning_capability?: string;
+  planning_expect?: string[];
 }
 
 const path = process.env.MILKDRIFT_BROWSER_CONFIG;
@@ -127,13 +129,97 @@ test('a queued missing-input task can be edited and repaired through the same in
   await expect(page.getByRole('button', { name: 'Edit unstarted task', exact: true })).toHaveCount(0);
 });
 
-test('queued cancellation is a daemon outcome and does not invent execution times', async ({ page }) => {
+test('queued cancellation permits linked replacement without inventing original execution times', async ({ page }) => {
   await page.goto('/');
   await connect(page, config.a, 'Stop studio');
   await submit(page, `Queued stop ${Date.now()}`, config.input_a, true);
+  await expect(page.getByLabel('Task dependency timeline')).toContainText('missing supplied input brief');
   await page.getByRole('button', { name: 'Request stop', exact: true }).click();
   await expect(page.getByLabel('Task dependency timeline').getByText('Stopped', { exact: true })).toBeVisible();
   await expect(page.getByText('Not started', { exact: true }).first()).toBeVisible();
+  await expect(page.getByTestId('result-output')).toHaveCount(0);
+  const originalId = await page.getByTestId('task-id').innerText();
+  await page.getByRole('button', { name: 'Create linked corrective work', exact: true }).click();
+  await page.getByRole('button', { name: 'Stage change', exact: true }).click();
+  await page.getByLabel('Change to stage').selectOption('bind_input');
+  await page.getByLabel('Supplied workflow input name').fill('brief');
+  await page.getByLabel('Supplied input text').fill('Run the replacement against the original captured manifest after the stop settled.');
+  await page.getByRole('button', { name: 'Stage change', exact: true }).click();
+  await page.getByRole('button', { name: 'Preview complete batch', exact: true }).click();
+  const batch = JSON.parse(await page.getByTestId('batch-preview').innerText());
+  expect(batch.changes[0].definition).toMatchObject({ corrective_of: originalId, dependencies: [] });
+  await page.getByRole('button', { name: 'Submit reviewed batch', exact: true }).click();
+  const timeline = page.getByLabel('Task dependency timeline');
+  const replacement = timeline.getByRole('button').filter({ has: page.getByRole('heading', { name: /^Correction: Queued stop / }) });
+  await expect(replacement).toContainText('Completed', { timeout: 30000 });
+  await replacement.click();
+  await expect(page.getByTestId('result-output')).toBeVisible();
+  await expect(timeline.getByText('Stopped', { exact: true })).toBeVisible();
+  await expect(timeline.getByText('Not started', { exact: true })).toBeVisible();
+});
+
+test('a reviewed future batch atomically revises a queued task and supplies its missing input', async ({ page }, testInfo) => {
+  await page.goto('/');
+  await connect(page, config.a, 'Batch studio');
+  await submit(page, `Reviewed batch ${Date.now()}`, config.input_b, true);
+  await expect(page.getByLabel('Task dependency timeline')).toContainText('missing supplied input brief');
+  const taskId = await page.getByTestId('task-id').innerText();
+  await page.getByRole('button', { name: 'Edit future batch', exact: true }).click();
+  await page.getByLabel('Change to stage').selectOption('revise');
+  await page.getByLabel('Target task').selectOption(taskId);
+  await page.getByRole('button', { name: 'Load observed task definition' }).click();
+  await expect(page.getByText('Observed task version: 1', { exact: true })).toBeVisible();
+  await page.getByLabel('Instructions', { exact: true }).fill('Read this captured manifest and report the actual runtime dependencies.');
+  await page.getByRole('button', { name: 'Stage change', exact: true }).click();
+  await page.getByLabel('Change to stage').selectOption('bind_input');
+  await page.getByLabel('Supplied workflow input name').fill('brief');
+  await page.getByLabel('Supplied input text').fill('Compare the runtime manifest after this reviewed batch is accepted.');
+  await page.getByRole('button', { name: 'Stage change', exact: true }).click();
+  let mutations = 0;
+  page.on('request', (request) => { if (request.method() === 'POST' && request.url().endsWith('/changes')) mutations++; });
+  await page.getByRole('button', { name: 'Preview complete batch', exact: true }).click();
+  await expect(page.getByTestId('batch-preview')).toContainText('"kind": "revise"');
+  await expect(page.getByTestId('batch-preview')).toContainText('"kind": "bind_input"');
+  expect(mutations).toBe(0);
+  await page.getByRole('region', { name: 'Exact batch request', exact: true }).focus();
+  await page.keyboard.press('End');
+  await expect.poll(() => page.getByTestId('batch-preview').evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await page.keyboard.press('Control+Home');
+  await expect.poll(() => page.getByTestId('batch-preview').evaluate((element) => element.scrollTop)).toBe(0);
+  await page.screenshot({ path: testInfo.outputPath('reviewed-batch-desktop.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('reviewed-batch-phone.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Submit reviewed batch', exact: true }).click();
+  await expect(page.getByTestId('result-output')).toBeVisible({ timeout: 30000 });
+  expect(mutations).toBe(1);
+  await page.getByText('Frozen start and selected inputs', { exact: true }).click();
+  await expect(page.getByText('Compare the runtime manifest after this reviewed batch is accepted.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Read this captured manifest and report the actual runtime dependencies.', { exact: true })).toBeVisible();
+});
+
+test('a cyclic future batch is refused without changing accepted work or losing its draft', async ({ page }) => {
+  await page.goto('/');
+  await connect(page, config.a, 'Refusal studio');
+  await submit(page, `Refused batch ${Date.now()}`, config.input_b, true);
+  await expect(page.getByLabel('Task dependency timeline')).toContainText('missing supplied input brief');
+  const taskId = await page.getByTestId('task-id').innerText();
+  await page.getByRole('button', { name: 'Edit future batch', exact: true }).click();
+  await page.getByLabel('Change to stage').selectOption('revise');
+  await page.getByLabel('Target task').selectOption(taskId);
+  await page.getByRole('button', { name: 'Load observed task definition' }).click();
+  await expect(page.getByText('Observed task version: 1', { exact: true })).toBeVisible();
+  await page.getByLabel('Instructions', { exact: true }).fill('This cyclic edit must never be accepted.');
+  await page.getByLabel('Dependency task identity or batch alias').fill(taskId);
+  await page.getByRole('button', { name: 'Add dependency', exact: true }).click();
+  await page.getByRole('button', { name: 'Stage change', exact: true }).click();
+  await page.getByRole('button', { name: 'Preview complete batch', exact: true }).click();
+  await page.getByRole('button', { name: 'Submit reviewed batch', exact: true }).click();
+  await expect(page.getByRole('alert').last()).toContainText(/cycle|cyclic|self/i);
+  await expect(page.getByRole('heading', { name: 'Staged changes (1)' })).toBeVisible();
+  await page.getByRole('button', { name: 'Close batch editor', exact: true }).click();
+  await expect(page.getByText('This cyclic edit must never be accepted.', { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('Task dependency timeline')).toContainText('Queued');
   await expect(page.getByTestId('result-output')).toHaveCount(0);
 });
 
@@ -184,6 +270,63 @@ test('the configured controlled model receives the same brief and captured file 
   for (const expected of config.model_expect ?? ['Controlled analysis']) await expect(page.getByTestId('result-output')).toContainText(expected);
   await page.getByText('Frozen start and selected inputs', { exact: true }).click();
   await expect(page.getByText('file · Cargo.toml', { exact: true })).toBeVisible();
+});
+
+test('the daemon admits model-authored parallel research and correction without browser continuation', async ({ page }, testInfo) => {
+  if (!config.planning_capability) throw new Error('The Rust prompt-03 fixture must provide planning_capability for automatic-work evidence.');
+  test.setTimeout(120000);
+  await page.goto('/');
+  await connect(page, config.a, 'Animation studio');
+  let continuations = 0;
+  page.on('request', (request) => { if (request.method() === 'POST' && request.url().endsWith('/changes')) continuations++; });
+  const title = `Automatic animation research ${Date.now()}`;
+  await page.getByRole('button', { name: '+ New task', exact: true }).click();
+  await page.getByLabel('Task title', { exact: true }).fill(title);
+  await page.getByLabel('Short description').fill('Parallel animation research with one explicit failed outcome and a successful adopted correction.');
+  await page.getByLabel('Instructions', { exact: true }).fill('Plan parallel research for the supplied animation brief. Admit research and composition through structured actions, address the failed research prospectively, and explicitly finish after the final report.');
+  await page.getByLabel('Brief input').fill('Develop a Rust approach to learned animation. Compare motion representation, training data and render validation in separate project folders, compose the evidence, and correct failed research without changing its original result.');
+  await page.getByLabel('Capability', { exact: true }).selectOption({ label: `${config.planning_capability} · model.generate` });
+  await page.getByLabel('Finish when required work settles').uncheck();
+  await page.getByText('Model continuation and permitted tools', { exact: true }).click();
+  await page.getByLabel('Allow model to propose future work').check();
+  await page.getByLabel('Allow automatic feedback after refused proposals').check();
+  await page.getByRole('button', { name: 'Submit task', exact: true }).click();
+  await expect(page.getByRole('heading', { name: title, level: 1, exact: true })).toBeVisible();
+  const timeline = page.getByLabel('Task dependency timeline');
+  for (const child of config.planning_expect ?? ['Animation composition', 'Corrected render research', 'Adopt corrected research', 'Final animation report']) {
+    await expect(timeline.getByRole('heading', { name: child, exact: true })).toBeVisible({ timeout: 90000 });
+  }
+  const finalTask = timeline.getByRole('button').filter({ has: page.getByRole('heading', { name: 'Final animation report', exact: true }) });
+  await expect(finalTask).toContainText('Completed', { timeout: 90000 });
+  await expect(page.locator('.detail-meta')).toContainText('completed');
+  expect(continuations).toBe(0);
+  await expect(timeline.getByRole('button').filter({ has: page.getByRole('heading', { name: 'Research render validation', exact: true }) })).toContainText('Failed');
+  const actual = page.getByLabel('Actual task execution');
+  const motion = actual.getByRole('button', { name: /^Research motion representation: started/ });
+  const training = actual.getByRole('button', { name: /^Research training data: started/ });
+  const interval = async (bar: typeof motion) => bar.evaluate((element) => ({ left: parseFloat((element as HTMLElement).style.left), width: parseFloat((element as HTMLElement).style.width) }));
+  const [motionInterval, trainingInterval] = await Promise.all([interval(motion), interval(training)]);
+  expect(motionInterval.left).toBeLessThan(trainingInterval.left + trainingInterval.width);
+  expect(trainingInterval.left).toBeLessThan(motionInterval.left + motionInterval.width);
+  await timeline.getByRole('button').filter({ has: page.getByRole('heading', { name: 'Animation composition', exact: true }) }).click();
+  await page.getByText('Accepted inputs, outputs and project paths', { exact: true }).click();
+  await expect(page.getByText(/Retained outcome of .*including failure/)).toBeVisible();
+  await page.getByText('Frozen start and selected inputs', { exact: true }).click();
+  await expect(page.getByText(/Follow-up work admitted from task/)).toBeVisible();
+  const responseText = page.getByRole('region', { name: 'Retained result text', exact: true });
+  await responseText.focus();
+  await page.keyboard.press('End');
+  await expect.poll(() => responseText.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await page.keyboard.press('Control+Home');
+  await expect.poll(() => responseText.evaluate((element) => element.scrollTop)).toBe(0);
+  await page.screenshot({ path: testInfo.outputPath('automatic-animation-desktop.png'), fullPage: true });
+  await finalTask.click();
+  await expect(page.getByTestId('result-output')).toBeVisible();
+  await expect(page.getByTestId('result-output')).toHaveText(/^Final animation report/);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: 'List', exact: true }).click();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('automatic-animation-phone.png'), fullPage: true });
 });
 
 test('keyboard access and identity refusal are visible on a phone layout', async ({ page }) => {

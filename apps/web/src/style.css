@@ -45,8 +45,8 @@ input[type="file"] { padding: 8px; font-size: .8rem; }
 input::placeholder, textarea::placeholder { color: #889592; }
 pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .84rem; background: #f6f8f5; border: 1px solid var(--line); border-radius: 8px; padding: 18px; line-height: 1.7; }
 code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .85em; overflow-wrap: anywhere; }
-.skip-link { position: fixed; top: -80px; left: 16px; padding: 12px; z-index: 10; background: white; }
-.skip-link:focus { top: 8px; }
+.skip-link { position: fixed; top: 8px; left: 16px; padding: 12px; z-index: 10; background: white; clip-path: inset(50%); }
+.skip-link:focus { clip-path: none; }
 .app-header { height: 76px; display: flex; align-items: center; padding: 0 32px; border-bottom: 1px solid var(--line); background: #fbfcf8; gap: 11px; }
 .brand-mark { display: grid; place-items: center; height: 34px; width: 34px; border-radius: 11px; background: var(--ink); color: #b5d2b9; font-family: Georgia, serif; font-size: 25px; font-style: italic; }
 .brand { font-size: 1.26rem; font-weight: 700; letter-spacing: -.055em; }
@@ -154,3 +154,18 @@ main { padding: 42px clamp(22px, 4vw, 64px) 64px; max-width: 1700px; width: 100%
   .empty { padding: 45px 16px; }
   .facts { grid-template-columns: 95px 1fr; gap: 9px; }
 }
+
+.draft-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 10px 0; padding: 10px; background: #f7faf5; border-radius: 5px; overflow-wrap: anywhere; }
+.draft-row > span { flex: 1; min-width: 140px; }
+.draft-row button, .staged-changes button { margin-left: auto; }
+.nested-fields { border: 1px solid var(--line); padding: 14px; margin: 12px 0; }
+.staged-changes li { margin-bottom: 10px; overflow-wrap: anywhere; }
+.staged-changes button { margin-inline-start: 12px; }
+.batch-editor { margin-block: 20px; }
+.batch-preview, .inspector-text { max-height: 28rem; overflow: auto; }
+.execution-lanes { margin-block: 18px; }
+.execution-row { display: grid; grid-template-columns: minmax(100px, 28%) 1fr; align-items: center; gap: 14px; margin-block: 9px; }
+.execution-label { text-align: left; padding: 5px; overflow-wrap: anywhere; }
+.execution-track { position: relative; height: 26px; background: #edf1eb; border-radius: 4px; }
+.execution-bar { position: absolute; height: 26px; min-width: 3px; padding: 0; border-radius: 4px; background: #92b29d; border: 1px solid #52745c; }
+.execution-bar.open { background: repeating-linear-gradient(135deg, #92b29d, #92b29d 6px, #dce9dc 6px, #dce9dc 12px); }

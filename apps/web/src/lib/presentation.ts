@@ -1,4 +1,22 @@
-import type { TaskReadDto, TaskSummaryDto } from './protocol.generated';
+import type { InputBinding, TaskReadDto, TaskSummaryDto } from './protocol.generated';
+
+export function inputLabel(input: InputBinding): string {
+  switch (input.kind) {
+    case 'inline': return input.value.kind === 'text' ? `Captured inline text: ${input.value.text}` : input.value.kind === 'uploaded' ? `Captured upload ${input.value.input_id}` : 'Explicit absence';
+    case 'supplied': return `Workflow input ${input.name} · ${input.optional ? 'optional' : 'required'}`;
+    case 'task_output': return `${input.task} / ${input.output} · ${input.optional ? 'optional after producer settles' : 'requires producer success'}`;
+    case 'settled_outcome': return `Retained outcome of ${input.task}, including failure`;
+  }
+}
+
+/** Shared actual-time coordinates; queued work has no invented placement on this axis. */
+export function executionLanes(tasks: TaskSummaryDto[], observedAt: number): { task: TaskSummaryDto; left: number; width: number }[] {
+  const started = tasks.filter((task) => task.started_at !== null);
+  if (!started.length) return [];
+  const origin = Math.min(...started.map((task) => task.started_at!));
+  const end = Math.max(origin + 1, ...started.map((task) => task.ended_at ?? Math.max(observedAt, task.started_at!)));
+  return started.map((task) => ({ task, left: 100 * (task.started_at! - origin) / (end - origin), width: 100 * (Math.max(task.started_at!, task.ended_at ?? observedAt) - task.started_at!) / (end - origin) }));
+}
 
 export function timeLabel(value: number | null): string {
   return value === null ? 'Not recorded' : new Date(value).toLocaleString(undefined, {

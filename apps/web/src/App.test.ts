@@ -66,3 +66,41 @@ it('keeps another daemon draft open when an earlier connection confirms a submis
   await waitFor(() => expect(request.mock.calls.some(([path]) => path === '/v1/workflows/workflow-a')).toBe(true));
   expect((screen.getByLabelText('Task title') as HTMLInputElement).value).toBe('Second daemon draft');
 });
+
+it('opens the accepted workflow from its receipt while discovery refresh remains pending', async () => {
+  vi.spyOn(DaemonClient.prototype, 'stream').mockImplementation(async (_path, _onEvent, signal) => {
+    await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+  });
+  let listReads = 0;
+  let releaseList!: (value: unknown) => void;
+  const delayedList = new Promise((resolve) => { releaseList = resolve; });
+  const emptyPage = { items: [], next_cursor: null, truncated: false };
+  const request = vi.spyOn(DaemonClient.prototype, 'request').mockImplementation(async <T>(path: string, body?: unknown): Promise<T> => {
+    if (path === '/v1/session') return fixture.value as T;
+    if (path === '/v1/workflows' && body) return { request_id: 'accepted-request', workflow_id: 'accepted-workflow', generation: 1, aliases: {} } as T;
+    if (path === '/v1/workflows/accepted-workflow') return {
+      id: 'accepted-workflow', title: 'Accepted model work', description: 'Continues in the daemon',
+      generation: 1, state: 'waiting', created_at: 1, updated_at: 1, task_count: 0, tasks: [],
+      admissions: [], next_task_cursor: null, wait_question: null, limits: fixture.value.limits,
+      admitted_tasks: 0, admitted_model_batches: 0, rejected_responses: 0, active_execution_ms: 0,
+    } as T;
+    if (path.startsWith('/v1/workflows?')) return (listReads++ === 0 ? emptyPage : await delayedList) as T;
+    throw new Error(`Unexpected request ${path}`);
+  });
+  render(App);
+  await fireEvent.click(screen.getByRole('button', { name: 'Add daemon connection' }));
+  await fireEvent.input(screen.getByLabelText('Connection name'), { target: { value: 'Receipt studio' } });
+  await fireEvent.input(screen.getByLabelText('Daemon URL'), { target: { value: 'http://127.0.0.1:10001' } });
+  await fireEvent.input(screen.getByLabelText('Installation identity'), { target: { value: fixture.value.daemon_id } });
+  await fireEvent.input(screen.getByLabelText('Bearer credential'), { target: { value: 'private-test-credential' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+  await screen.findByRole('heading', { name: 'Your workflows' });
+  await fireEvent.click(screen.getByRole('button', { name: '+ New task' }));
+  await fireEvent.input(screen.getByLabelText('Task title'), { target: { value: 'Accepted model work' } });
+  await fireEvent.submit(screen.getByRole('button', { name: 'Submit task' }).closest('form')!);
+  try {
+    await screen.findByRole('heading', { name: 'Accepted model work', level: 1 });
+    expect(listReads).toBe(2);
+    expect(request.mock.calls.filter(([path, body]) => path === '/v1/workflows' && body)).toHaveLength(1);
+  } finally { releaseList(emptyPage); }
+});

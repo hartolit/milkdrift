@@ -10,17 +10,19 @@ afterEach(cleanup);
 function task(overrides: Partial<TaskReadDto> = {}): TaskReadDto {
   return {
     id: 'task-a', version: 1, definition: {
+      actions: null, tools: [],
       title: 'Research', description: 'Compare the supplied project', instructions: 'Inspect the manifest',
       capability: { id: 'report', operation: 'process.execute' }, inputs: {}, dependencies: [], outputs: {}, required: true,
       corrective_of: null, paths: [],
     },
     state: 'queued', reason: 'Missing required input: brief', started_at: null, ended_at: null,
-    stop_requested: false, stop_request_id: 'stop-task-a', frozen: null, result: null, result_restricted: false, ...overrides,
+    stop_requested: false, stop_request_id: 'stop-task-a', frozen: null, result: null, result_restricted: false, origin: null, ...overrides,
   };
 }
 
 async function renderWorkflow(tasks: TaskReadDto[], overrides: Partial<WorkflowReadDto> = {}, onpage: (cursor?: string) => Promise<void> = vi.fn(async () => {})) {
   const workflow: WorkflowReadDto = {
+    wait_question: null, admitted_tasks: tasks.length, admitted_model_batches: 0, rejected_responses: 0, active_execution_ms: 0, admissions: [],
     id: 'workflow-a', title: 'Animation', description: 'Project research', generation: 1, state: 'waiting',
     created_at: 1000, updated_at: 1000, task_count: tasks.length, next_task_cursor: null,
     tasks: tasks.map(({ id, version, definition, state, reason, started_at, ended_at, stop_requested, stop_request_id, result }) => ({ id, version, title: definition.title, description: definition.description, dependencies: definition.dependencies, state, reason, started_at, ended_at, stop_requested, stop_request_id, has_result: result !== null })),
@@ -134,4 +136,17 @@ it('distinguishes restricted output from an absent retained result', async () =>
   expect(screen.getByText(/Result contents are restricted by the current grant/)).toBeTruthy();
   expect(screen.queryByText(/No retained result is present/)).toBeNull();
   expect((screen.getByRole('button', { name: 'Read result' }) as HTMLButtonElement).disabled).toBe(true);
+});
+
+it('shows cumulative limits, pending decisions and the accepted cause of follow-up work', async () => {
+  await renderWorkflow([task({ origin: { task_id: 'planner', status: 'accepted', response_digest: 'response-identity', reason: null, receipt_key: 'batch-key', aliases: { research: 'task-a' } } })], {
+    wait_question: 'Review the rejected correction.', admitted_tasks: 8, admitted_model_batches: 4,
+    active_execution_ms: 2345, rejected_responses: 2,
+    admissions: [{ task_id: 'other-source-on-this-page', status: 'rejected', response_digest: 'other-response', reason: 'Proposed path is outside the grant.', receipt_key: null, aliases: {} }],
+  });
+  expect(screen.getByRole('status').textContent).toContain('Review the rejected correction.');
+  expect(screen.getByText('8 / 256')).toBeTruthy();
+  expect(screen.getByText('4 / 32')).toBeTruthy();
+  expect(screen.getByText('Follow-up work admitted from task planner, response response-identity.')).toBeTruthy();
+  expect(screen.getByText('Proposed path is outside the grant.')).toBeTruthy();
 });

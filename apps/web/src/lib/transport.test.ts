@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DaemonClient, DaemonError, streamEvents } from './transport';
+import { PROTOCOL } from './protocol.generated';
 
 describe('authenticated observation transport', () => {
   it('keeps credentials in headers and clears them on disconnect', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{"protocol":{"major":3,"minor":0},"value":{"daemon_id":"a"}}'));
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ protocol: PROTOCOL, value: { daemon_id: 'a' } })));
     const client = new DaemonClient('http://127.0.0.1:10001', 'private-value');
     await expect(client.request('/v1/session')).resolves.toEqual({ daemon_id: 'a' });
     expect(fetchMock.mock.calls[0][0]).toBe('http://127.0.0.1:10001/v1/session');
@@ -14,7 +15,7 @@ describe('authenticated observation transport', () => {
   });
 
   it('does not borrow another connection credential', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('{"protocol":{"major":3,"minor":0},"value":{}}'));
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({ protocol: PROTOCOL, value: {} })));
     const first = new DaemonClient('http://127.0.0.1:10001', 'first');
     const second = new DaemonClient('http://127.0.0.1:10002', 'second');
     await Promise.all([first.request('/v1/session'), second.request('/v1/session')]);

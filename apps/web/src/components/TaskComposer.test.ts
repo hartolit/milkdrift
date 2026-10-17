@@ -41,3 +41,37 @@ it('uses the connected daemon input limit before reading or uploading a file', a
   expect(screen.getByRole('alert').textContent).toContain('daemon upload bound of 8 bytes');
   expect(request).not.toHaveBeenCalled();
 });
+
+it('sends only the explicit model continuation and tool choices in the initial request', async () => {
+  const client = new DaemonClient('http://127.0.0.1:10001', 'unit-test-credential');
+  const request = vi.spyOn(client, 'request').mockResolvedValue({ request_id: 'accepted', workflow_id: 'workflow-a', generation: 1, aliases: { task: 'task-a' } });
+  render(TaskComposer, { client, session: { ...fixture.value, capabilities: [{ id: 'model', operation: 'model.generate' }] }, oncreated: vi.fn(async () => {}), oncancel: vi.fn(), onerror: vi.fn() });
+  await fireEvent.click(screen.getByLabelText('Finish when required work settles'));
+  await fireEvent.click(screen.getByLabelText('Allow model to propose future work'));
+  await fireEvent.click(screen.getByLabelText('Allow automatic feedback after refused proposals'));
+  await fireEvent.click(screen.getByLabelText('Permit bounded file reads in declared paths'));
+  await fireEvent.input(screen.getByLabelText('Absolute project root'), { target: { value: '/project/research' } });
+  await fireEvent.submit(screen.getByRole('button', { name: 'Submit task' }).closest('form')!);
+  expect(request.mock.calls[0]?.[1]).toMatchObject({ finish_when_settled: false, tasks: [{ definition: {
+    actions: { automatic_repair: true }, tools: [{ kind: 'read_file' }], paths: [{ path: '/project/research', write: false }],
+  } }] });
+});
+
+it('hides model options for processes and clears model choices when switching capability kind', async () => {
+  const client = new DaemonClient('http://127.0.0.1:10001', 'unit-test-credential');
+  const request = vi.spyOn(client, 'request').mockResolvedValue({ request_id: 'accepted', workflow_id: 'workflow-a', generation: 1, aliases: { task: 'task-a' } });
+  const capabilities = [{ id: 'process', operation: 'process.execute' }, { id: 'model', operation: 'model.generate' }, { id: 'another-model', operation: 'model.generate' }];
+  render(TaskComposer, { client, session: { ...fixture.value, capabilities }, oncreated: vi.fn(async () => {}), oncancel: vi.fn(), onerror: vi.fn() });
+  expect(screen.queryByLabelText('Allow model to propose future work')).toBeNull();
+  await fireEvent.change(screen.getByLabelText('Capability'), { target: { value: '1' } });
+  await fireEvent.click(screen.getByLabelText('Allow model to propose future work'));
+  await fireEvent.click(screen.getByLabelText('Allow automatic feedback after refused proposals'));
+  await fireEvent.click(screen.getByLabelText('Permit bounded file reads in declared paths'));
+  await fireEvent.change(screen.getByLabelText('Capability'), { target: { value: '2' } });
+  expect((screen.getByLabelText('Allow automatic feedback after refused proposals') as HTMLInputElement).checked).toBe(true);
+  expect((screen.getByLabelText('Permit bounded file reads in declared paths') as HTMLInputElement).checked).toBe(true);
+  await fireEvent.change(screen.getByLabelText('Capability'), { target: { value: '0' } });
+  expect(screen.queryByLabelText('Allow model to propose future work')).toBeNull();
+  await fireEvent.submit(screen.getByRole('button', { name: 'Submit task' }).closest('form')!);
+  expect(request.mock.calls[0]?.[1]).toMatchObject({ tasks: [{ definition: { capability: capabilities[0], actions: null, tools: [] } }] });
+});

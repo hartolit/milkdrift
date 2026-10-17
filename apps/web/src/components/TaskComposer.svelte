@@ -1,6 +1,8 @@
 <script lang="ts">
-  import type { CreateWorkflowRequest, TaskSessionDto, TaskUploadReceipt, TaskUploadRequest, WorkflowReceipt } from '../lib/protocol.generated';
+  import type { CreateWorkflowRequest, TaskActionPolicyDto, TaskSessionDto, TaskToolDto, TaskUploadReceipt, TaskUploadRequest, WorkflowReceipt } from '../lib/protocol.generated';
   import { DaemonClient, DaemonError } from '../lib/transport';
+  import TaskModelOptions from './TaskModelOptions.svelte';
+  import { captureTextRequest } from '../lib/task-input';
 
   let { client, session, oncreated, oncancel, onerror }: {
     client: DaemonClient;
@@ -19,10 +21,21 @@
   let upload = $state<TaskUploadReceipt | null>(null);
   let path = $state('');
   let pathWrite = $state(false);
+  let actions = $state<TaskActionPolicyDto | null>(null);
+  let tools = $state<TaskToolDto[]>([]);
+  let finishWhenSettled = $state(true);
   let error = $state('');
   let busy = $state(false);
   let pending = $state<CreateWorkflowRequest | null>(null);
   let pendingUpload = $state<TaskUploadRequest | null>(null);
+
+  function selectCapability(event: Event) {
+    capabilityIndex = Number((event.currentTarget as HTMLSelectElement).value);
+    if (session.capabilities[capabilityIndex]?.operation !== 'model.generate') {
+      actions = null;
+      tools = [];
+    }
+  }
 
   async function captureFile() {
     const reportError = onerror;
@@ -33,9 +46,7 @@
     upload = null;
     pendingUpload = null;
     try {
-      if (file.size > session.input_limit_bytes) throw new Error(`This file exceeds the daemon upload bound of ${session.input_limit_bytes.toLocaleString()} bytes. Supply a smaller text file.`);
-      const text = new TextDecoder('utf-8', { fatal: true }).decode(await file.arrayBuffer());
-      pendingUpload = { request_id: crypto.randomUUID(), name: file.name, media_type: 'text/plain', text };
+      pendingUpload = await captureTextRequest(file, session.input_limit_bytes);
       upload = await client.request<TaskUploadReceipt>('/v1/task-inputs', pendingUpload);
       pendingUpload = null;
     } catch (failure) {
@@ -64,10 +75,10 @@
     if (!capability) return;
     if (!pending) {
       pending = {
-        request_id: crypto.randomUUID(), title, description, finish_when_settled: true, limits: null,
+        request_id: crypto.randomUUID(), title, description, finish_when_settled: finishWhenSettled, limits: null,
         inputs: { ...(supplyBrief ? { brief: { kind: 'text' as const, text: brief } } : {}), ...(upload ? { file: { kind: 'uploaded' as const, input_id: upload.input_id } } : {}) },
         tasks: [{ alias: 'task', definition: {
-          title, description, instructions, capability,
+          title, description, instructions, capability, actions, tools,
           inputs: { brief: { kind: 'supplied', name: 'brief', optional: false }, ...(upload ? { file: { kind: 'supplied' as const, name: 'file', optional: false } } : {}) },
           dependencies: [], outputs: {}, required: true, corrective_of: null,
           paths: path.trim() ? [{ path: path.trim(), write: pathWrite }] : [],
@@ -113,15 +124,17 @@
   </div>
   <form onsubmit={submit}>
     <fieldset disabled={busy || pending !== null}>
-      <div class="form-grid"><label>Task title<input bind:value={title} placeholder="Compare Rust animation approaches" required maxlength="256" /></label><label>Capability<select aria-label="Capability" bind:value={capabilityIndex} required>{#each session.capabilities as capability, index (`${capability.id}/${capability.operation}`)}<option value={index}>{capability.id} · {capability.operation}</option>{/each}</select></label></div>
+      <div class="form-grid"><label>Task title<input bind:value={title} placeholder="Compare Rust animation approaches" required maxlength="256" /></label><label>Capability<select aria-label="Capability" value={capabilityIndex} onchange={selectCapability} required>{#each session.capabilities as capability, index (`${capability.id}/${capability.operation}`)}<option value={index}>{capability.id} · {capability.operation}</option>{/each}</select></label></div>
       <label>Short description<input bind:value={description} placeholder="What this work is for" maxlength="4096" /></label>
       <label>Instructions<textarea bind:value={instructions} placeholder="Explain the work to perform, the expected output, and any constraints." required rows="4"></textarea></label>
+      <label class="checkbox-label"><input type="checkbox" bind:checked={finishWhenSettled} /> Finish when required work settles</label>
+      {#if session.capabilities[capabilityIndex]?.operation === 'model.generate'}<TaskModelOptions bind:actions bind:tools capabilities={session.capabilities} />{/if}
       <label class="checkbox-label"><input type="checkbox" bind:checked={supplyBrief} /> Supply brief now</label>
       {#if supplyBrief}<label>Brief input<textarea bind:value={brief} placeholder="Project details, a question, or data the task should use." rows="4"></textarea></label>{:else}<p class="field-hint">The task requires a brief. It will stay queued until you supply that input in its inspector.</p>{/if}
       <label>Text file input<input type="file" bind:files accept="text/*,.md,.toml,.json,.csv,.rs,.txt" onchange={captureFile} /></label>
       <p class="field-hint">UTF-8 text up to {(session.input_limit_bytes / 1024).toLocaleString()} KiB. The daemon also checks the combined instructions and selected inputs.</p>
       {#if upload}<p class="notice">Captured {upload.name} · {upload.bytes.toLocaleString()} bytes<br /><small>Input digest: <code>{upload.digest}</code></small></p>{/if}
-      <details><summary>Project filesystem access</summary><p class="field-hint">For configured process work that needs a native project. The daemon validates the path against your grant.</p><label>Absolute project root<input bind:value={path} placeholder="/home/you/projects/animation" /></label><label class="checkbox-label"><input type="checkbox" bind:checked={pathWrite} /> Allow writes within this root</label></details>
+      <details><summary>Project filesystem access</summary><p class="field-hint">Declare a project root for configured processes or model file tools. The daemon validates the path against your grant.</p><label>Absolute project root<input bind:value={path} placeholder="/home/you/projects/animation" /></label><label class="checkbox-label"><input type="checkbox" bind:checked={pathWrite} /> Allow writes within this root</label></details>
     </fieldset>
     {#if !session.capabilities.length}<p class="notice warning">No permitted capabilities are available. Ask the daemon administrator to configure a capability and your execution allowance.</p>{/if}
     {#if error}<p class="notice error" role="alert">{error}</p>{/if}
