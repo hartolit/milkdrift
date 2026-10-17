@@ -161,6 +161,89 @@ fn ordinary_submission_replays_aliases_and_refuses_conflicting_request() -> Test
 }
 
 #[test]
+fn process_actions_refuse_create_add_and_revise_before_any_partial_work_or_entry() -> TestResult {
+    for automatic_repair in [false, true] {
+        let root = tempfile::tempdir()?;
+        let (runtime, executor, control) = runtime(
+            root.path(),
+            Arc::new(RevocableAuthority(AtomicBool::new(false))),
+            Arc::new(ManualClock::new(1000)),
+        )?;
+        let mut forbidden = request()?;
+        forbidden
+            .tasks
+            .first_mut()
+            .ok_or("task absent")?
+            .definition
+            .actions = Some(milkdrift_blueprint::TaskActionPolicy { automatic_repair });
+        let rejected = control.create(&context()?, "invalid-process-actions", forbidden.clone());
+        assert!(rejected.as_ref().is_err_and(|error| {
+            error
+                .to_string()
+                .contains("only model task capabilities may publish structured actions")
+        }));
+        let rejected_id =
+            TaskRuntime::workflow_identity(context()?.actor().as_str(), "invalid-process-actions")?;
+        assert!(runtime.workflow(&rejected_id)?.is_none());
+        assert_eq!(executor.entry_count(), 0);
+
+        let created = control.create(&context()?, "ordinary-process", request()?)?;
+        let before = runtime
+            .workflow(&created.workflow)?
+            .ok_or("workflow absent")?;
+        let source = before.tasks.values().next().ok_or("source absent")?;
+        let definition = forbidden
+            .tasks
+            .pop()
+            .ok_or("forbidden task absent")?
+            .definition;
+        let add = TaskChange::Add {
+            alias: TaskId::new("forbidden-child")?,
+            definition: definition.clone(),
+        };
+        let revise = TaskChange::Revise {
+            task: source.id.clone(),
+            expected_version: source.version,
+            definition,
+        };
+        for (key, change) in [
+            ("add-process-actions", add),
+            ("revise-process-actions", revise),
+        ] {
+            let batch = TaskBatch {
+                expected_generation: before.generation,
+                changes: vec![
+                    TaskChange::BindInput {
+                        name: "manifest".into(),
+                        value: TaskInputValue::Text {
+                            text: "must not partially release source".into(),
+                        },
+                    },
+                    change,
+                ],
+            };
+            assert!(
+                control
+                    .edit(&context()?, key, &created.workflow, batch)
+                    .as_ref()
+                    .is_err_and(|error| error
+                        .to_string()
+                        .contains("only model task capabilities may publish structured actions"))
+            );
+            assert_eq!(
+                runtime
+                    .workflow(&created.workflow)?
+                    .ok_or("workflow absent")?,
+                before
+            );
+        }
+        assert!(runtime.tick(1)?.is_empty());
+        assert_eq!(executor.entry_count(), 0);
+    }
+    Ok(())
+}
+
+#[test]
 fn captured_file_bytes_and_definition_freeze_at_start_and_edit_race_refuses() -> TestResult {
     let root = tempfile::tempdir()?;
     let (runtime, executor, control) = runtime(

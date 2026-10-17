@@ -22,9 +22,11 @@ remain immutable. A correction names the task it addresses, and adoption separat
 unstarted consumer bindings to redirect. Original results remain evidence.
 
 `actions` explicitly enables a model task's structured future-work proposals; its `automatic_repair`
-policy separately permits ordinary feedback tasks. Neither field grants capabilities. `tools` selects
-bounded native text read/write operations or exact configured process capabilities for a model's
-conversation. File tools require declared path claims. Every producer-output binding must name a
+policy separately permits ordinary feedback tasks. Neither field grants capabilities.
+Runtime refuses action policies on a resolved capability outside the model category, before
+accepting any part of a create or future-work batch. Configured process tasks remain ordinary work.
+`tools` selects bounded native text read/write operations or exact configured process capabilities
+for a model's conversation. File tools require declared path claims. Every producer-output binding must name a
 declared output, including optional bindings; optional changes readiness, not reference validity.
 
 `WorkflowLimits` bounds cumulative task/model admission and active execution, consecutive rejected

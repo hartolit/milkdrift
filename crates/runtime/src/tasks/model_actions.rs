@@ -94,6 +94,13 @@ impl TaskRuntime {
                 "only model task capabilities may select a model/tool catalog",
             ));
         }
+        if definition.actions.is_some()
+            && resolved.descriptor().category() != &milkdrift_capability::CapabilityCategory::Model
+        {
+            return Err(invalid(
+                "only model task capabilities may publish structured actions or request automatic feedback",
+            ));
+        }
         for tool in &definition.tools {
             if let milkdrift_blueprint::TaskTool::Process { capability } = tool {
                 let tool = self.executor.resolve_authorized(

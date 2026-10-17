@@ -40,6 +40,8 @@ requests and settlement. The host separately chooses whether accepted workers dr
 recovery. Public callers use [`TaskControlService`](../control/README.md), which rechecks scoped
 authority for mutations and reads.
 
+Only resolved model capabilities may opt into structured action admission or automatic feedback;
+create, add and revise refuse other capability categories before accepting any partial change.
 Opted-in model tasks publish an immutable `model_response`. Accepting its output report records
 pending action admission in the same transaction, so a restart cannot detach that accepted response
 from its proposal. Control admits actions only after successful task settlement; an interrupted

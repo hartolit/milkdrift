@@ -1,7 +1,90 @@
-use super::{RevocableAuthority, TestResult, context, request, runtime};
+use super::{RevocableAuthority, TaskStoreClock, TestResult, context, request};
 use milkdrift_blueprint::{TaskActionPolicy, TaskBatch, TaskChange, TaskId, TaskInputValue};
-use milkdrift_runtime::{ManualClock, ModelAdmissionStatus, WorkflowState};
+use milkdrift_capability::{
+    CancellationAcknowledgement, CancellationRequest, CapabilityDescriptorDocument,
+    CapabilityRequirement, InvocationAdmissionEnvelope, InvocationEvent, InvocationEventKind,
+    InvocationTerminal, SideEffectClass, TerminalStatus,
+};
+use milkdrift_control::TaskControlService;
+use milkdrift_redb_store::{RedbStore, RedbStoreConfig};
+use milkdrift_runtime::{
+    DeterministicExecutor, ExecutionDispatch, ExecutorError, ManualClock, ModelAdmissionStatus,
+    PreparedExecution, ResolvedCapability, SequentialIdGenerator, TaskExecutor, TaskRuntime,
+    WorkflowState,
+};
 use std::sync::{Arc, atomic::AtomicBool};
+
+/// This controlled boundary is a model capability with no remote resource consumption.
+/// Production provider accounting remains covered by the HTTP and control admission suites.
+struct ModelExecutor(DeterministicExecutor);
+
+impl TaskExecutor for ModelExecutor {
+    fn resolve(
+        &self,
+        requirement: &CapabilityRequirement,
+        now: u64,
+    ) -> Result<ResolvedCapability, ExecutorError> {
+        self.0.resolve(requirement, now)
+    }
+
+    fn prepare_exact_entry<'a>(
+        &'a self,
+        dispatch: &ExecutionDispatch,
+    ) -> Result<PreparedExecution<'a>, ExecutorError> {
+        Ok(PreparedExecution::new(
+            dispatch,
+            InvocationAdmissionEnvelope::not_applicable(),
+            |dispatch, reporter| {
+                reporter.invocation(InvocationEvent::new(
+                    dispatch.request().invocation().clone(),
+                    1,
+                    InvocationEventKind::Terminal {
+                        terminal: InvocationTerminal::new(
+                            TerminalStatus::Success,
+                            Vec::new(),
+                            None,
+                            None,
+                            SideEffectClass::None,
+                        )?,
+                    },
+                )?)?;
+                Ok(())
+            },
+        ))
+    }
+
+    fn cancel(
+        &self,
+        request: &CancellationRequest,
+    ) -> Result<CancellationAcknowledgement, ExecutorError> {
+        self.0.cancel(request)
+    }
+}
+
+fn runtime(
+    root: &std::path::Path,
+    authority: Arc<RevocableAuthority>,
+    clock: Arc<ManualClock>,
+) -> TestResult<(Arc<TaskRuntime>, Arc<ModelExecutor>, TaskControlService)> {
+    let descriptor = CapabilityDescriptorDocument::from_json(include_bytes!(
+        "../../../capability/tests/fixtures/descriptor-v1.json"
+    ))?;
+    let executor = Arc::new(ModelExecutor(DeterministicExecutor::new(
+        descriptor.body().clone(),
+    )));
+    let store = Arc::new(RedbStore::open_with_config(
+        RedbStoreConfig::new(root).with_clock(Arc::new(TaskStoreClock(clock.clone()))),
+    )?);
+    let runtime = Arc::new(TaskRuntime::new(
+        store,
+        executor.clone(),
+        authority.clone(),
+        clock.clone(),
+        Arc::new(SequentialIdGenerator::new("model-action-tests", 1)?),
+    ));
+    let control = TaskControlService::new(runtime.clone(), authority, clock);
+    Ok((runtime, executor, control))
+}
 
 #[test]
 fn saved_response_admission_and_receipt_survive_restart_without_duplicate_children() -> TestResult {

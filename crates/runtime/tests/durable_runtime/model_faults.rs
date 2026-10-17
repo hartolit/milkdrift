@@ -138,15 +138,9 @@ impl Fixture {
                 .with_clock(Arc::new(TaskStoreClock(clock.clone())))
                 .with_fault_injector(faults.clone()),
         )?);
-        let mut value: serde_json::Value = serde_json::from_slice(include_bytes!(
+        let descriptor = CapabilityDescriptorDocument::from_json(include_bytes!(
             "../../../capability/tests/fixtures/descriptor-v1.json"
         ))?;
-        value
-            .get_mut("descriptor")
-            .and_then(serde_json::Value::as_object_mut)
-            .ok_or("descriptor absent")?
-            .insert("category".into(), serde_json::json!({"type":"process"}));
-        let descriptor = CapabilityDescriptorDocument::from_json(&serde_json::to_vec(&value)?)?;
         let executor = Arc::new(Executor {
             resolver: DeterministicExecutor::new(descriptor.body().clone()),
             faults: faults.clone(),
