@@ -44,7 +44,11 @@ pub(crate) async fn execute(session: &CliSession, args: &WorkflowArgs) -> Result
                 &session.client().create_workflow(&request).await?,
             )
         }
-        WorkflowCommand::Edit { workflow, file } => {
+        WorkflowCommand::Edit {
+            workflow,
+            file,
+            preview,
+        } => {
             let request: ChangeWorkflowRequest = serde_json::from_value(
                 session
                     .read_json(
@@ -55,10 +59,14 @@ pub(crate) async fn execute(session: &CliSession, args: &WorkflowArgs) -> Result
                     .await?,
             )
             .map_err(|e| CliError::Invalid(e.to_string()))?;
-            session.output(
-                "workflow.edit",
-                &session.client().change_workflow(workflow, &request).await?,
-            )
+            if *preview {
+                preview_change(session, workflow, &request).await
+            } else {
+                session.output(
+                    "workflow.edit",
+                    &session.client().change_workflow(workflow, &request).await?,
+                )
+            }
         }
         WorkflowCommand::Receipt { request } => session.output(
             "workflow.receipt",
@@ -122,4 +130,60 @@ pub(crate) async fn execute(session: &CliSession, args: &WorkflowArgs) -> Result
             &session.client().task_session().await?,
         ),
     }
+}
+
+/// Inspection preserves every requested guard; only the daemon can decide admission.
+async fn preview_change(
+    session: &CliSession,
+    workflow: &str,
+    request: &ChangeWorkflowRequest,
+) -> Result<(), CliError> {
+    let snapshot = session.client().workflow(workflow).await?;
+    let mut requested_versions = std::collections::BTreeSet::new();
+    for change in &request.changes {
+        match change {
+            TaskChangeDto::Revise {
+                task,
+                expected_version,
+                ..
+            }
+            | TaskChangeDto::Remove {
+                task,
+                expected_version,
+            } => {
+                requested_versions.insert((task.as_str(), *expected_version));
+            }
+            TaskChangeDto::AdoptCorrection { redirects, .. } => {
+                requested_versions.extend(
+                    redirects
+                        .iter()
+                        .map(|redirect| (redirect.consumer.as_str(), redirect.expected_version)),
+                );
+            }
+            _ => {}
+        }
+    }
+    let mut guards = Vec::new();
+    for (id, expected_version) in requested_versions {
+        let task = session.client().task(workflow, id).await?;
+        guards.push(serde_json::json!({
+            "task": id,
+            "expected_version": expected_version,
+            "observed_version": task.version,
+            "version_matches": expected_version == task.version,
+            "state": task.state,
+            "started_at": task.started_at,
+        }));
+    }
+    session.output(
+        "workflow.edit.preview",
+        &serde_json::json!({
+            "request": request,
+            "observed_generation": snapshot.generation,
+            "generation_matches": request.expected_generation == snapshot.generation,
+            "guarded_tasks": guards,
+            "workflow": snapshot,
+            "notice": "Inspection only; no changes submitted. Refresh and review stale definitions before creating a new request. The daemon checks complete admission atomically on submission.",
+        }),
+    )
 }

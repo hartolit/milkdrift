@@ -22,6 +22,7 @@ owns the JSON request shapes; the [Svelte client](../web/README.md) provides the
 | Read retained output | `workflow result WORKFLOW TASK` |
 | Recover a lost acceptance reply | `workflow receipt REQUEST_ID`; replay the exact create/edit document if necessary |
 | Change future work | `workflow edit WORKFLOW FILE` with an exact request ID and observed generation |
+| Review a complete future batch without submitting | `workflow edit WORKFLOW FILE --preview` |
 | Request cancellation | `workflow stop WORKFLOW TASK`; inspect the resulting state to establish whether it stopped |
 | Inspect the installation | `daemon readiness`, `health`, `authority`, `capability`, `provider` |
 | Use an independent execution host | `invocation prepare`, `start`, `lookup`, `show`, `observe`, `cancel` |
@@ -32,6 +33,27 @@ Use family `--help` for exact arguments. Started definitions are immutable. An e
 missing input, add work, revise an unstarted task, request a stop, or explicitly adopt a successful
 correction. It cannot change what an earlier task executed. Queued work has no start timestamp;
 `uncertain` means a possible external effect lacks settlement evidence.
+
+Use `workflow edit WORKFLOW changes.json --preview` before submitting a batch. It displays the
+exact request together with the current workflow generation and each guarded task's version and state.
+The preview is a read: it does not validate authority for the proposed actions, reserve work or
+change stale guards. If a human or model changed the workflow, inspect `workflow show` and
+`workflow task`, review the affected definitions, then deliberately create a new request with
+current guards. The daemon either accepts every change atomically or refuses the batch.
+
+One batch can add parallel tasks with local aliases, set required/optional input policies, consume
+a failed task through `settled_outcome`, revise future dependencies, supply missing inputs and
+adopt a successful correction with explicit version-guarded consumer redirects. Required output
+bindings still require producer success. Correction adoption preserves the failed original and
+started consumers' frozen inputs. Use an explicit `finish` change for completion, `wait` for a
+decision, or `continue` for prospective resume; an empty runnable queue alone means no completion.
+Workflow inspection exposes the shared cumulative limits. Resume never resets prior spending.
+Use `set_limits` to change complete finite ceilings prospectively. `dismiss_admission` closes a
+response decision and can share a batch with explicitly reviewed replacement changes; it preserves
+the model's immutable result and grants no additional capability. `workflow show` reports the
+current wait question, cumulative task/model admissions, elapsed execution and source-response
+decisions for that task page. Task definitions opt in to model actions with `actions` and select
+their exact native/process tool catalog with `tools`; plain model text alone never schedules work.
 
 ## Automation and recovery
 

@@ -1,4 +1,6 @@
 //! Shared production-daemon fixture for finite task evidence and browser journeys.
+mod animation;
+mod animation_check;
 mod check;
 mod model;
 mod report;
@@ -200,6 +202,28 @@ async fn run_fixture(
         .canonicalize()?;
     connections.insert("capability".into(), json!("cargo-report"));
     connections.insert("model_capability".into(), json!("controlled-model"));
+    connections.insert("planning_capability".into(), json!("controlled-planner"));
+    connections.insert(
+        "planning_expect".into(),
+        json!([
+            "Animation composition",
+            "Corrected render research",
+            "Adopt corrected research",
+            "Final animation report"
+        ]),
+    );
+    connections.insert(
+        "planning_research_titles".into(),
+        json!([
+            "Research motion representation",
+            "Research training data",
+            "Research render validation"
+        ]),
+    );
+    connections.insert(
+        "planning_project_root".into(),
+        json!(root.join("daemon-a/animation-project")),
+    );
     connections.insert(
         "model_expect".into(),
         json!(["Controlled analysis", "detected_sections", "input_digest"]),

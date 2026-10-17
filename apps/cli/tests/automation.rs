@@ -15,6 +15,8 @@ use std::{
 };
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
+#[path = "automation/future_batch.rs"]
+mod future_batch;
 #[path = "automation/upload_preparation.rs"]
 mod upload_preparation;
 
@@ -84,6 +86,13 @@ impl Server {
         responses: Vec<String>,
         mut before_response: impl FnMut(usize) -> std::io::Result<()> + Send + 'static,
     ) -> TestResult<Self> {
+        Self::with_request_hook(responses, move |index, _| before_response(index))
+    }
+
+    fn with_request_hook(
+        responses: Vec<String>,
+        mut before_response: impl FnMut(usize, &[u8]) -> std::io::Result<()> + Send + 'static,
+    ) -> TestResult<Self> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         listener.set_nonblocking(true)?;
         let endpoint = format!("http://{}/", listener.local_addr()?);
@@ -138,7 +147,7 @@ impl Server {
                         }
                     }
                 }
-                before_response(response_index)?;
+                before_response(response_index, &request)?;
                 response_index += 1;
                 if let Some(response) = responses.next() {
                     stream.write_all(response.as_bytes())?;

@@ -36,6 +36,9 @@ pub(super) fn configure(
     let directory = root.join(format!("daemon-{name}"));
     fs::create_dir(&directory)?;
     private_directory(&directory)?;
+    for folder in ["motion", "training", "render"] {
+        fs::create_dir_all(directory.join("animation-project").join(folder))?;
+    }
     let mut entropy = [0u8; 32];
     getrandom::fill(&mut entropy).map_err(|_| "operating-system token entropy unavailable")?;
     let token = blake3::hash(&entropy).to_hex().to_string();
@@ -100,7 +103,7 @@ pub(super) fn configure(
     set(
         &mut configuration,
         "/actors/0/authority/resources/capability/identities",
-        json!({"type":"only","values":["cargo-report","controlled-model"]}),
+        json!({"type":"only","values":["cargo-report","controlled-model","controlled-planner"]}),
     )?;
     set(
         &mut configuration,
@@ -120,7 +123,7 @@ pub(super) fn configure(
     set(
         &mut configuration,
         "/actors/0/authority/resources/network",
-        json!({"profiles":["controlled-model-profile"],"destinations":[model.server.address().to_string()]}),
+        json!({"profiles":["controlled-model-profile","controlled-planning-profile"],"destinations":[model.server.address().to_string()]}),
     )?;
     set(
         &mut configuration,
@@ -147,8 +150,18 @@ pub(super) fn configure(
     )?;
     set(
         &mut configuration,
+        "/actors/0/authority/budget/duration_ms",
+        json!(64_000_000),
+    )?;
+    set(
+        &mut configuration,
+        "/actors/0/authority/budget/units",
+        json!(64_000_000),
+    )?;
+    set(
+        &mut configuration,
         "/adapters",
-        json!({"process_profiles":[profile],"model_profiles":[{"capability_id":"controlled-model","profile":model.profile(&directory)?}]}),
+        json!({"process_profiles":[profile],"model_profiles":[{"capability_id":"controlled-model","profile":model.profile(&directory)?},{"capability_id":"controlled-planner","profile":model.planning_profile(&directory,name)?}]}),
     )?;
     let validated: milkdrift_daemon::DaemonConfig = serde_json::from_value(configuration)?;
     validated.clone().validate(&directory)?;

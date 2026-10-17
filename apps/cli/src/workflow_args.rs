@@ -26,8 +26,14 @@ pub(crate) enum WorkflowCommand {
     },
     /// Submit a typed JSON task request; the daemon allocates all identities.
     Create { file: PathBuf },
-    /// Apply a typed generation-guarded change request to future work.
-    Edit { workflow: String, file: PathBuf },
+    /// Apply a complete typed, generation-guarded future-work batch.
+    Edit {
+        workflow: String,
+        file: PathBuf,
+        /// Read current guards and display the exact request without submitting it.
+        #[arg(long)]
+        preview: bool,
+    },
     /// Find exact durable acceptance after a lost reply.
     Receipt { request: String },
     /// Read one task and its frozen execution facts.

@@ -12,7 +12,7 @@ use milkdrift_evidence::{
 use serde_json::{Value, json};
 use std::{fs, path::Path, time::Duration};
 
-fn client(instance: &Daemon) -> EvidenceResult<ControlClient> {
+pub(super) fn client(instance: &Daemon) -> EvidenceResult<ControlClient> {
     let mut config = ClientConfig::new(instance.endpoint.parse()?);
     config.request_timeout = Duration::from_secs(2);
     config.safe_query_retries = 0;
@@ -226,12 +226,18 @@ pub(super) async fn run(
         other.workflows("ci-", None, 50).await?.items.is_empty(),
         "independent daemon disclosed another daemon's workflows",
     )?;
+    let animation = super::animation_check::run(
+        root,
+        daemon_binary,
+        instances.first_mut().ok_or("daemon A absent")?,
+    )
+    .await?;
     let report = json!({
         "schema_version":1,"outcome":"passed","fixture_mode":true,"qualifying":false,
         "cli_submission":true,"public_client_discovery":true,"exact_replay_after_restart":true,
         "changed_reuse":"conflict","captured_input_survives_local_edit":true,
         "process_task":receipt.workflow_id,"controlled_model_task":model_receipt.workflow_id,
-        "isolated_daemons":2,"model_requests":1,"shutdown":"confirmed before report publication"
+        "isolated_daemons":2,"model_requests":1,"animation":animation,"shutdown":"confirmed before report publication"
     });
     let text = report.to_string();
     ensure(

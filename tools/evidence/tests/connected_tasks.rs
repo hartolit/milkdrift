@@ -79,6 +79,44 @@ async fn real_cli_and_public_client_replay_discover_and_preserve_private_capture
         report.get("model_requests").and_then(Value::as_u64),
         Some(1)
     );
+    assert_eq!(
+        report
+            .pointer("/animation/initial_client_tasks")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        report
+            .pointer("/animation/retained_tasks")
+            .and_then(Value::as_u64),
+        Some(8)
+    );
+    assert_eq!(
+        report
+            .pointer("/animation/accepted_model_batches")
+            .and_then(Value::as_u64),
+        Some(3)
+    );
+    assert_eq!(
+        report
+            .pointer("/animation/client_continuation_batches")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    for fact in [
+        "parallel_start_end_evidence",
+        "failed_outcome_composition",
+        "correction_rebinds_required_input",
+        "native_read_write_tools",
+        "canonical_action_outputs",
+        "restart_preserves_accepted_batches",
+    ] {
+        assert_eq!(
+            report.pointer(&format!("/animation/{fact}")),
+            Some(&Value::Bool(true)),
+            "missing automatic animation evidence {fact}"
+        );
+    }
     let private: Value = serde_json::from_slice(&fs::read(root.join("browser.json"))?)?;
     for name in ["a", "b"] {
         let token = private
