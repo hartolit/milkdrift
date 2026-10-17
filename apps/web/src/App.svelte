@@ -2,11 +2,12 @@
   import { onDestroy } from 'svelte';
   import { SvelteURLSearchParams } from 'svelte/reactivity';
   import ConnectionForm from './components/ConnectionForm.svelte';
+  import DaemonSettings, { type RenameDraft } from './components/DaemonSettings.svelte';
   import TaskComposer from './components/TaskComposer.svelte';
   import WorkflowView from './components/WorkflowView.svelte';
   import { endpointUrl, loadProfiles, maxConnections, saveProfiles } from './lib/connections';
   import type { ConnectionProfile } from './lib/connections';
-  import type { TaskSessionDto, WorkflowPageDto, WorkflowReadDto, WorkflowReceipt, WorkflowSummaryDto } from './lib/protocol.generated';
+  import type { RenameDaemonReceipt, TaskSessionDto, WorkflowPageDto, WorkflowReadDto, WorkflowReceipt, WorkflowSummaryDto } from './lib/protocol.generated';
   import { DaemonClient, DaemonError } from './lib/transport';
   import { timeLabel } from './lib/presentation';
 
@@ -14,6 +15,7 @@
     profile: ConnectionProfile;
     client: DaemonClient;
     session: TaskSessionDto;
+    rename: RenameDraft;
     workflows: WorkflowSummaryDto[];
     nextCursor: string | null;
     pageCursor: string | undefined;
@@ -36,19 +38,26 @@
   let connectionForm = $state(false);
   let reconnectProfile = $state<ConnectionProfile | undefined>();
   let composing = $state(false);
+  let settings = $state(false);
   let globalError = $state('');
+  let bootstrap: DaemonClient | undefined;
+  let bootstrapGeneration = 0;
   let active = $derived(connections.find((connection) => connection.profile.id === activeId));
 
   function fail(connection: Connection, failure: unknown) {
+    if (connection.stream.signal.aborted) return;
     if (failure instanceof Error && failure.name === 'AbortError') return;
     const message = failure instanceof Error ? failure.message : 'The daemon request failed.';
-    if (failure instanceof DaemonError && failure.authorizationLost) {
+    if (failure instanceof DaemonError && (failure.authorizationLost || failure.code === 'daemon_identity_mismatch')) {
       disconnect(connection);
-      globalError = `${connection.profile.label}: ${message} Authenticate again to read permitted work.`;
+      globalError = failure.code === 'daemon_identity_mismatch'
+        ? `${connection.profile.cachedName}: This address now connects to a different daemon. Forget this saved connection, check the address, then connect afresh.`
+        : `${connection.profile.cachedName}: ${message} Authenticate again to read permitted work.`;
     } else connection.error = message;
   }
 
   function disconnect(connection: Connection) {
+    connection.refreshGeneration++;
     connection.stream.abort();
     connection.client.disconnect();
     connection.workflows = [];
@@ -60,7 +69,42 @@
     connection.cursor = undefined;
     connection.taskCursor = undefined;
     connections = connections.filter((item) => item.profile.id !== connection.profile.id);
-    if (activeId === connection.profile.id) { activeId = ''; composing = false; }
+    if (activeId === connection.profile.id) { activeId = ''; composing = false; settings = false; }
+  }
+
+  function cacheName(connection: Connection, name: string) {
+    if (connection.profile.cachedName === name) return;
+    connection.profile.cachedName = name;
+    profiles = profiles.map((profile) => profile.id === connection.profile.id ? { ...profile, cachedName: name } : profile);
+    try { saveProfiles(profiles); }
+    catch { globalError = 'The current daemon name is shown, but this browser could not save its connection cache. Reconnect to read the latest name next time.'; }
+  }
+
+  function renamed(connection: Connection, receipt: RenameDaemonReceipt) {
+    if (connection.stream.signal.aborted || receipt.daemon_id !== connection.session.daemon_id || receipt.generation < connection.session.daemon_name_generation) return;
+    connection.session.daemon_name = receipt.name;
+    connection.session.daemon_name_generation = receipt.generation;
+    cacheName(connection, receipt.name);
+  }
+
+  async function refreshSession(connection: Connection) {
+    try {
+      const session = await connection.client.request<TaskSessionDto>('/v1/session');
+      if (connection.stream.signal.aborted) return;
+      if (session.daemon_id !== connection.profile.daemonId) {
+        fail(connection, new DaemonError('daemon_identity_mismatch', 'This address now connects to a different daemon.', 409));
+        return;
+      }
+      if (session.daemon_name_generation >= connection.session.daemon_name_generation) {
+        connection.session = session;
+        cacheName(connection, session.daemon_name);
+      }
+    } catch (failure) { fail(connection, failure); }
+  }
+
+  async function refreshObserved(connection: Connection) {
+    // Metadata remains observable even when workflow discovery is slow or unavailable.
+    await Promise.all([refreshSession(connection), refresh(connection)]);
   }
 
   async function refresh(connection: Connection, nextPage = false) {
@@ -80,9 +124,16 @@
         const selectedId = connection.selected.id;
         const suffix = connection.taskCursor ? `?cursor=${encodeURIComponent(connection.taskCursor)}` : '';
         const snapshot = await connection.client.request<WorkflowReadDto>(`/v1/workflows/${encodeURIComponent(selectedId)}${suffix}`);
-        if (generation === connection.refreshGeneration && connection.selected?.id === selectedId) connection.selected = snapshot;
+        if (generation === connection.refreshGeneration && !connection.stream.signal.aborted && connection.selected?.id === selectedId) connection.selected = snapshot;
       }
     } catch (failure) {
+      if (generation !== connection.refreshGeneration || connection.stream.signal.aborted) return;
+      if (failure instanceof DaemonError && failure.status === 403) {
+        connection.workflows = [];
+        connection.selected = null;
+        connection.error = failure.message;
+        return;
+      }
       if (failure instanceof DaemonError && (failure.status === 410 || failure.code === 'expired_cursor')) {
         connection.nextCursor = null;
         connection.pageCursor = undefined;
@@ -109,10 +160,10 @@
             connection.nextCursor = null;
             connection.pageCursor = undefined;
             resync = true;
-            await refresh(connection);
+            await refreshObserved(connection);
           } else if (event.event === 'workflow_changed') {
             if (event.id) connection.cursor = event.id;
-            await refresh(connection);
+            await refreshObserved(connection);
           } else if (event.event === 'forbidden') {
             fail(connection, new DaemonError('unauthorized', 'Observation authority changed.', 403));
           }
@@ -124,7 +175,7 @@
           connection.pageCursor = undefined;
           connection.taskCursor = undefined;
           resync = true;
-          await refresh(connection);
+          await refreshObserved(connection);
         } else fail(connection, failure);
       }
       if (signal.aborted) return;
@@ -137,60 +188,79 @@
     }
   }
 
-  async function connect(details: { label: string; endpoint: string; daemonId: string; token: string }) {
-    if (!reconnectProfile && profiles.length >= maxConnections) throw new Error(`At most ${maxConnections} named connections can be saved. Forget a connection before adding another.`);
+  function cancelBootstrap() {
+    bootstrapGeneration++;
+    bootstrap?.disconnect();
+    bootstrap = undefined;
+  }
+
+  function closeConnectionForm() { cancelBootstrap(); connectionForm = false; }
+
+  async function connect(details: { endpoint: string; token: string }) {
+    const previous = reconnectProfile;
+    if (!previous && profiles.length >= maxConnections) throw new Error(`At most ${maxConnections} connections can be saved. Forget a connection before adding another.`);
+    cancelBootstrap();
+    const generation = bootstrapGeneration;
     const endpoint = endpointUrl(details.endpoint);
     const client = new DaemonClient(endpoint, details.token);
+    bootstrap = client;
+    if (previous) {
+      const live = connections.find((item) => item.profile.id === previous.id);
+      if (live) disconnect(live);
+    }
     try {
       const session = await client.request<TaskSessionDto>('/v1/session');
-      if (session.daemon_id !== details.daemonId) throw new Error('Installation identity does not match this daemon. Check the endpoint and the identity in your daemon configuration.');
+      if (generation !== bootstrapGeneration) return;
+      if (previous && session.daemon_id !== previous.daemonId) throw new Error('This address now connects to a different daemon. Forget this saved connection, check the address, then connect afresh. Your previous work has not been transferred.');
       client.bindIdentity(session.daemon_id);
-      const previous = reconnectProfile;
-      if (previous) {
-        const live = connections.find((item) => item.profile.id === previous.id);
-        if (live) disconnect(live);
-      }
-      const profile = { id: previous?.id ?? crypto.randomUUID(), label: details.label, endpoint, daemonId: session.daemon_id };
+      const profile = { id: previous?.id ?? crypto.randomUUID(), cachedName: session.daemon_name, endpoint, daemonId: session.daemon_id };
       profiles = [...profiles.filter((item) => item.id !== profile.id), profile];
-      try { saveProfiles(profiles); } catch { globalError = 'This browser could not save the connection name. The authenticated connection still works for this session.'; }
+      try { saveProfiles(profiles); } catch { globalError = 'This browser could not save the connection cache. The authenticated connection and current daemon name still work for this session.'; }
       const connection: Connection = {
-        profile, client, session, workflows: [], nextCursor: null, pageCursor: undefined, truncated: false, search: '', appliedSearch: '', selected: null, taskCursor: undefined,
+        profile, client, session, rename: { name: session.daemon_name, dirty: false, pending: null }, workflows: [], nextCursor: null, pageCursor: undefined, truncated: false, search: '', appliedSearch: '', selected: null, taskCursor: undefined,
         error: '', observation: 'Connecting live updates', stream: new AbortController(), cursor: undefined, refreshGeneration: 0, busy: false,
       };
       connections = [...connections, connection];
       activeId = profile.id;
       connectionForm = false;
       composing = false;
+      settings = false;
+      bootstrap = undefined;
       // Read and update through the reactive connection proxy after insertion.
       const installed = connections.find((item) => item.profile.id === profile.id)!;
-      await refresh(installed);
       void observe(installed);
+      await refresh(installed);
     } catch (failure) { client.disconnect(); throw failure; }
   }
 
   function choose(profile: ConnectionProfile) {
+    cancelBootstrap();
     globalError = '';
     composing = false;
+    settings = false;
     const live = connections.find((item) => item.profile.id === profile.id);
     if (live) { activeId = profile.id; connectionForm = false; }
     else { reconnectProfile = profile; connectionForm = true; }
   }
 
-  function addConnection() { reconnectProfile = undefined; connectionForm = true; composing = false; globalError = ''; }
+  function addConnection() { cancelBootstrap(); reconnectProfile = undefined; connectionForm = true; composing = false; settings = false; globalError = ''; }
 
   function forget(profile: ConnectionProfile) {
+    if (reconnectProfile?.id === profile.id) cancelBootstrap();
     const live = connections.find((connection) => connection.profile.id === profile.id);
     if (live) disconnect(live);
     profiles = profiles.filter((item) => item.id !== profile.id);
     if (reconnectProfile?.id === profile.id) { reconnectProfile = undefined; connectionForm = false; }
-    try { saveProfiles(profiles); } catch { globalError = 'This browser could not update saved connection names.'; }
+    try { saveProfiles(profiles); } catch { globalError = 'This browser could not remove the saved connection. It may reappear after reloading; clear this site’s saved data to forget it permanently.'; }
   }
 
   async function selectWorkflow(connection: Connection, id: string, cursor?: string) {
     connection.busy = true;
     try {
       const suffix = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
-      connection.selected = await connection.client.request<WorkflowReadDto>(`/v1/workflows/${encodeURIComponent(id)}${suffix}`);
+      const selected = await connection.client.request<WorkflowReadDto>(`/v1/workflows/${encodeURIComponent(id)}${suffix}`);
+      if (connection.stream.signal.aborted) return;
+      connection.selected = selected;
       connection.taskCursor = cursor;
     }
     catch (failure) { fail(connection, failure); }
@@ -204,13 +274,14 @@
   }
 
   async function created(connection: Connection, receipt: WorkflowReceipt) {
+    if (connection.stream.signal.aborted) return;
     if (activeId === connection.profile.id) composing = false;
     // A confirmed receipt identifies the work even while discovery is slow or being refreshed.
     await selectWorkflow(connection, receipt.workflow_id);
     await refresh(connection);
   }
 
-  onDestroy(() => { for (const connection of connections) { connection.stream.abort(); connection.client.disconnect(); } });
+  onDestroy(() => { cancelBootstrap(); for (const connection of connections) { connection.stream.abort(); connection.client.disconnect(); } });
 </script>
 
 <svelte:head><meta name="description" content="Submit work to your Milkdrift daemon, follow its progress, and return to retained results." /></svelte:head>
@@ -219,24 +290,26 @@
 <div class="workspace">
   <aside class="sidebar" aria-label="Daemon connections">
     <div class="sidebar-heading"><p class="eyebrow">Daemons</p><button class="quiet" onclick={addConnection} aria-label="Add daemon connection">+</button></div>
-    <ul class="connection-list">{#each profiles as profile (profile.id)}{@const connected = connections.some((item) => item.profile.id === profile.id)}<li><button class:active={activeId === profile.id} onclick={() => choose(profile)} aria-pressed={activeId === profile.id}><span class="status-dot" class:connected aria-hidden="true"></span><span>{profile.label}<small>{connected ? 'Connected' : 'Authenticate to reconnect'}</small></span></button><button class="quiet forget-connection" onclick={() => forget(profile)} aria-label={`Forget ${profile.label} connection`}>Forget</button></li>{/each}</ul>
+    <ul class="connection-list">{#each profiles as profile (profile.id)}{@const connected = connections.some((item) => item.profile.id === profile.id)}<li><button class:active={activeId === profile.id} onclick={() => choose(profile)} aria-pressed={activeId === profile.id}><span class="status-dot" class:connected aria-hidden="true"></span><span>{profile.cachedName}<small>{profile.endpoint}</small><small>{connected ? 'Connected' : 'Cached name · Authenticate to reconnect'}</small></span></button><button class="quiet forget-connection" onclick={() => forget(profile)} aria-label={`Forget ${profile.cachedName} connection`}>Forget</button></li>{/each}</ul>
     {#if !profiles.length}<p class="sidebar-footer">Add your first daemon to start a task.</p>{/if}
-    {#if active}<div class="connection-detail"><div><p>{active.session.actor_id} · {active.session.daemon_id}</p><p aria-live="polite">{active.observation}</p></div><button class="quiet" onclick={() => disconnect(active!)}>Disconnect</button></div>{/if}
+    {#if active}<div class="connection-detail"><div><p aria-live="polite">{active.observation}</p></div><button class="quiet" onclick={() => { closeConnectionForm(); settings = true; composing = false; }}>Daemon settings</button><button class="quiet" onclick={() => disconnect(active!)}>Disconnect</button></div>{/if}
     <p class="sidebar-footer">Each connection has its own credentials, work and settings. Closing this client leaves your daemon running.</p>
   </aside>
   <main id="main">
     {#if globalError}<p class="notice error" role="alert">{globalError}</p>{/if}
     {#if connectionForm}
-      <ConnectionForm profile={reconnectProfile} onconnect={connect} oncancel={() => connectionForm = false} />
+      {#key reconnectProfile?.id}<ConnectionForm profile={reconnectProfile} onconnect={connect} oncancel={closeConnectionForm} />{/key}
     {:else if active}
       {#if active.error}<p class="notice error" role="alert">{active.error}</p>{/if}
       {#key active.profile.id}
-        {#if composing}
+        {#if settings}
+          <DaemonSettings client={active.client} session={active.session} bind:draft={active.rename} onrenamed={renamed.bind(null, active)} onrefresh={refreshSession.bind(null, active)} onerror={fail.bind(null, active)} onback={() => settings = false} />
+        {:else if composing}
           <TaskComposer client={active.client} session={active.session} oncreated={created.bind(null, active)} oncancel={() => composing = false} onerror={fail.bind(null, active)} />
         {:else if active.selected}
           <WorkflowView workflow={active.selected} client={active.client} capabilities={active.session.capabilities} onrefresh={refresh.bind(null, active)} onpage={selectWorkflow.bind(null, active, active.selected.id)} onback={() => active!.selected = null} onerror={fail.bind(null, active)} />
         {:else}
-          <div class="page-heading"><div><p class="eyebrow">{active.profile.label}</p><h1>Your workflows</h1><p>Start something useful. Come back when it’s ready.</p></div><button class="primary" onclick={() => composing = true}>+ New task</button></div>
+          <div class="page-heading"><div><p class="eyebrow">{active.session.daemon_name}</p><h1>Your workflows</h1><p>Start something useful. Come back when it’s ready.</p></div><button class="primary" onclick={() => composing = true}>+ New task</button></div>
           <form class="toolbar" onsubmit={(event) => { event.preventDefault(); search(active!); }}><label><span class="visually-hidden">Search workflows and retained results</span><input type="search" bind:value={active.search} placeholder="Search workflows and retained results" /></label><button>Search</button><button type="button" onclick={() => refresh(active!)}>Refresh</button></form>
           {#if active.workflows.length}
             <ul class="workflow-list">{#each active.workflows as workflow (workflow.id)}<li><button class="workflow-card" onclick={() => selectWorkflow(active!, workflow.id)} disabled={active.busy}><span><h3>{workflow.title}</h3><p>{workflow.description}</p><small>{workflow.task_count} {workflow.task_count === 1 ? 'task' : 'tasks'} · Updated {timeLabel(workflow.updated_at)}</small></span><span><span class="badge {workflow.state}">{workflow.state}</span></span></button></li>{/each}</ul>

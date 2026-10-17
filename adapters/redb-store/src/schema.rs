@@ -1,6 +1,6 @@
 use redb::TableDefinition;
 
-pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 19;
+pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 20;
 pub(crate) const SCHEMA_VERSION_KEY: &str = "storage_schema_version";
 pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION: u64 = 22;
 pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION_KEY: &str = "internal_document_format_version";
@@ -20,15 +20,30 @@ macro_rules! physical_tables {
 
         pub(crate) fn initialize_tables(write: &redb::WriteTransaction) -> Result<(), milkdrift_persistence::PersistenceError> {
             $(drop(write.open_table($table).map_err(crate::error::redb)?);)*
+            initialize_daemon_tables(write)?;
             Ok(())
         }
 
         pub(crate) fn validate_tables(read: &redb::ReadTransaction) -> Result<(), milkdrift_persistence::PersistenceError> {
+            validate_table_membership(read, true)
+        }
+
+        pub(crate) fn validate_previous_tables(read: &redb::ReadTransaction) -> Result<(), milkdrift_persistence::PersistenceError> {
+            validate_table_membership(read, false)
+        }
+
+        fn validate_table_membership(read: &redb::ReadTransaction, daemon_metadata: bool) -> Result<(), milkdrift_persistence::PersistenceError> {
             use redb::TableHandle as _;
             // Typed opens independently reject absent tables and wrong key/value encodings.
             $(drop(read.open_table($table).map_err(crate::error::redb)?);)*
+            if daemon_metadata {
+                drop(read.open_table(DAEMON_METADATA).map_err(crate::error::redb)?);
+                drop(read.open_table(DAEMON_RENAME_RECEIPTS).map_err(crate::error::redb)?);
+            }
             for table in read.list_tables().map_err(crate::error::redb)? {
-                if !matches!(table.name(), $($name)|*) {
+                if !matches!(table.name(), $($name)|*)
+                    && !(daemon_metadata && matches!(table.name(), DAEMON_METADATA_TABLE | DAEMON_RENAME_RECEIPTS_TABLE))
+                {
                     return Err(crate::error::corruption("unexpected physical table"));
                 }
             }
@@ -38,6 +53,29 @@ macro_rules! physical_tables {
             Ok(())
         }
     };
+}
+
+const DAEMON_METADATA_TABLE: &str = "milkdrift.v1.daemon.metadata";
+const DAEMON_RENAME_RECEIPTS_TABLE: &str = "milkdrift.v1.daemon.rename_receipts";
+pub(crate) const DAEMON_METADATA: TableDefinition<'static, &'static str, &'static [u8]> =
+    TableDefinition::new(DAEMON_METADATA_TABLE);
+pub(crate) const DAEMON_RENAME_RECEIPTS: TableDefinition<'static, &'static str, &'static [u8]> =
+    TableDefinition::new(DAEMON_RENAME_RECEIPTS_TABLE);
+
+pub(crate) fn initialize_daemon_tables(
+    write: &redb::WriteTransaction,
+) -> Result<(), milkdrift_persistence::PersistenceError> {
+    drop(
+        write
+            .open_table(DAEMON_METADATA)
+            .map_err(crate::error::redb)?,
+    );
+    drop(
+        write
+            .open_table(DAEMON_RENAME_RECEIPTS)
+            .map_err(crate::error::redb)?,
+    );
+    Ok(())
 }
 
 physical_tables! {

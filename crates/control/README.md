@@ -30,5 +30,11 @@ feedback eligibility; exhausted persistence capacity leaves a retained refusal f
 
 Authority presets expand to ordinary operation sets. Resource selectors, ceilings, expiry and
 revocation remain explicit grant facts; choosing a preset does not enable a hidden controller.
+Only `Controller` includes `RenameDaemon`, and its resource scope must separately permit daemon
+configuration. `Supervisor` and `Autonomous` workflow permissions do not authorize a daemon rename.
+Changing a preset's operation set changes its immutable grant digest. Retained workflow execution
+claims are not refreshed from the new preset; later entry still needs their original exact authority.
+See [daemon operation](../../docs/operations/daemon.md#configuration-and-startup) before upgrading
+Controller grants while work remains unfinished.
 The [authority tests](tests/task_authority.rs) demonstrate creation refusal when start scope is absent
 and read isolation across workflow scopes.

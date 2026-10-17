@@ -1,7 +1,7 @@
-/** Only these non-secret presentation fields may be saved between browser sessions. */
+/** A saved pin identifies the daemon; its cached name is only the last observed presentation. */
 export interface ConnectionProfile {
   id: string;
-  label: string;
+  cachedName: string;
   endpoint: string;
   daemonId: string;
 }
@@ -29,23 +29,23 @@ export function endpointUrl(value: string, pageProtocol = window.location.protoc
   return url.origin;
 }
 
-export function loadProfiles(storage: Storage = window.localStorage): ConnectionProfile[] {
+export function loadProfiles(storage?: Storage): ConnectionProfile[] {
   try {
-    const value: unknown = JSON.parse(storage.getItem(profileKey) ?? '[]');
+    const value: unknown = JSON.parse((storage ?? window.localStorage).getItem(profileKey) ?? '[]');
     if (!Array.isArray(value)) return [];
-    return value.slice(0, maxConnections).filter((item): item is ConnectionProfile =>
+    return value.slice(0, maxConnections).filter((item) =>
       item !== null && typeof item === 'object' &&
-      typeof item.id === 'string' && typeof item.label === 'string' &&
+      typeof item.id === 'string' && (typeof item.cachedName === 'string' || typeof item.label === 'string') &&
       typeof item.endpoint === 'string' && typeof item.daemonId === 'string',
-    ).map(({ id, label, endpoint, daemonId }) => ({ id, label, endpoint, daemonId }));
+    ).map(({ id, cachedName, label, endpoint, daemonId }) => ({ id, cachedName: typeof cachedName === 'string' ? cachedName : label, endpoint, daemonId }));
   } catch {
     return [];
   }
 }
 
 export function saveProfiles(profiles: ConnectionProfile[], storage: Storage = window.localStorage): void {
-  if (profiles.length > maxConnections) throw new Error(`At most ${maxConnections} named daemon connections can be saved. Forget a connection before adding another.`);
-  storage.setItem(profileKey, JSON.stringify(profiles.map(({ id, label, endpoint, daemonId }) =>
-    ({ id, label, endpoint, daemonId }),
+  if (profiles.length > maxConnections) throw new Error(`At most ${maxConnections} daemon connections can be saved. Forget a connection before adding another.`);
+  storage.setItem(profileKey, JSON.stringify(profiles.map(({ id, cachedName, endpoint, daemonId }) =>
+    ({ id, cachedName, endpoint, daemonId }),
   )));
 }

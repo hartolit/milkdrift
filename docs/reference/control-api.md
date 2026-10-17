@@ -1,4 +1,4 @@
-# Local control API 3.1
+# Local control API 3.2
 
 Use this API to submit ordinary tasks, discover permitted workflows and inspect retained results.
 All clients use the daemon's owner queue. The standalone [Svelte client](../../apps/web/README.md),
@@ -13,31 +13,86 @@ maps that credential to an immutable actor/grant revision. JSON cannot choose an
 negotiates the exact version before use; older graph clients are refused:
 
 ```json
-{"protocol":{"major":3,"minor":1}}
+{"protocol":{"major":3,"minor":2}}
 ```
 
-Send this to `POST /v1/version`. `GET /v1/session` returns the installation identity, authenticated
-actor, available task capabilities and effective defaults. Browser requests subsequently carry
-`x-milkdrift-daemon` with that identity; a mismatch is refused. Keep credentials in memory and out
-of URLs, logs and browser storage. All closed requests reject unknown fields and duplicate keys.
-The bounded JSON reader limits bytes, nesting and collection sizes before dispatch.
+Send this to `POST /v1/version`. `GET /v1/session` returns `daemon_id`, `daemon_name`,
+`daemon_name_generation` and `can_rename_daemon`, together with the authenticated actor, available
+task capabilities and effective defaults. First connection needs only the endpoint and credential.
+The browser learns the stable daemon identity through this authenticated bootstrap, then sends it
+in `x-milkdrift-daemon` on subsequent requests. First-use trust comes from the supplied endpoint and
+transport policy; discovering an identity does not independently verify the endpoint.
+
+The browser saves the endpoint and learned identity together and compares the identity before
+loading work on reconnect. A supplied mismatched pin returns `daemon_identity_mismatch` with HTTP
+409. The client clears active state and requires the user to forget the saved connection and
+connect afresh; it never transfers old drafts or results to the replacement. The server header is
+optional for independent native/JSON callers, and supplying it enables the same mismatch check on
+task and metadata routes. Rust callers can use `ControlClient::with_daemon_identity` to bind their
+requests. Keep credentials in memory and out of URLs, logs and browser storage. All closed requests
+reject unknown fields and duplicate keys. The bounded JSON reader limits bytes, nesting and
+collection sizes before dispatch.
 
 Success bodies use the common envelope:
 
 ```json
-{"protocol":{"major":3,"minor":1},"request_id":"req-1","value":{}}
+{"protocol":{"major":3,"minor":2},"request_id":"req-1","value":{}}
 ```
 
 Errors use a stable code and redacted explanation. They never include credentials or task content:
 
 ```json
-{"protocol":{"major":3,"minor":1},"request_id":"req-1","code":"conflict","message":"workflow generation changed","retryable":false,"details":{}}
+{"protocol":{"major":3,"minor":2},"request_id":"req-1","code":"conflict","message":"workflow generation changed","retryable":false,"details":{}}
 ```
 
 `unauthenticated` means the credential failed, `unauthorized` means the current grant does not
 permit the action, and `not_found` means no permitted retained object is available. `conflict`
 requires inspecting current state before choosing a new request. Capacity/overload refusals are
 explicit; retryability never authorizes changing or blindly repeating a semantic action.
+
+## Shared daemon name
+
+The daemon owns one display name; clients have no competing local rename operation. Duplicate
+names are permitted, so connection selectors also show the endpoint. The stable installation
+identity remains separate from the name and continues to bind requests, receipts and cursors.
+
+| Method and route | Purpose |
+| --- | --- |
+| `GET /v1/daemon/metadata` | Read `daemon_id`, `name`, `generation` and the current actor's `can_rename` permission. |
+| `POST /v1/daemon/rename` | Submit `request_id`, `expected_generation` and the proposed `name`. |
+| `GET /v1/daemon/rename-requests/{request_id}` | Recover this authenticated actor's accepted rename. |
+
+Metadata and receipt reads use the authenticated session negotiation permission; an inspector can
+read the shared name without configuration administration. A rename requires `RenameDaemon` and
+the `daemon_configuration` resource fact within configuration scope. Only the Controller preset
+includes that operation; Supervisor workflow editing does not imply it. Both daemon roles expose
+the same naming boundary. Clients display the returned permission but the daemon checks current
+authority on every mutation.
+
+The Rust metadata owner trims surrounding whitespace, requires 1–80 Unicode scalar values after
+trimming, and rejects control characters anywhere in the submitted name. Operator configuration
+`name` seeds absent metadata; omission supplies `Milkdrift`. Startup never overwrites an accepted
+rename with the seed. Generation starts at one, independently of any workflow generation.
+
+Acceptance atomically stores the new name and an actor-scoped receipt containing `request_id`,
+`daemon_id`, `name` and `generation`. Exact canonical request comparison occurs before stale
+generation or capacity rejection. The canonical request retains the untrimmed submitted name:
+changing spaces in that value is changed reuse, even when both names would normalize identically.
+Replaying an earlier acceptance returns that receipt without undoing a later rename. After a lost
+reply, query its receipt or replay every original field; do not substitute the current generation
+or allocate another request identity. The CLI's `daemon name`, `daemon rename` and
+`daemon rename-receipt` use these same operations.
+
+Rename request identities contain 1–512 UTF-8 bytes without control characters. Spaces and Unicode
+are preserved; encode the complete identity as one URL path segment for receipt lookup. The exact
+identities `.` and `..` are refused before mutation because URL path normalization would prevent
+unambiguous recovery.
+
+The store retains at most 1,024 accepted rename receipts, with at most 16 KiB of combined canonical
+request and saved result data per receipt. A full receipt family refuses new renames with a
+nonretryable `overload`; name reads, receipt reads and exact replay remain available. Accepted keys
+are never evicted. Another actor cannot retrieve this actor's receipt, even with the same request
+identity. A generation conflict leaves the client's draft available for a deliberate new request.
 
 ## Ordinary task routes
 
@@ -172,8 +227,11 @@ sets `text_unavailable` while retaining task state, artifacts and the complete b
 result text permits 2 MiB of artifact content plus bounded separators; individual immutable artifacts use `/v1/artifacts/{artifact}/content` and bounded ranges.
 
 The workflow stream uses authenticated fetch, not native EventSource with a token in its URL.
-It sends periodic `workflow_changed` invalidations; clients refresh their visible page and selected
-workflow. It is not a replayable task journal. The connection has a finite lifetime. On reconnect,
+It sends `workflow_changed` invalidations every two seconds; clients coalesce a session refresh with
+their visible page and selected workflow refresh. Session refresh also updates the shared name when
+no workflows exist or discovery fails. A checked name generation cannot replace newer metadata,
+and late responses after disconnect or replacement are discarded. It is not a replayable task
+journal. The connection has a finite lifetime. On reconnect,
 `Last-Event-ID` is checked against actor/grant/daemon binding; an old daemon incarnation yields
 `resync_required` and a fresh authorized snapshot is required. Revocation/expiry closes the stream
 with a useful forbidden state. Queue/connection saturation refuses admission explicitly.
@@ -199,5 +257,11 @@ cookies. Standalone static hosting needs no CLI or filesystem access. Loopback H
 development exception. Phone/LAN use requires browser-trusted HTTPS for the static site and daemon
 proxy; forward authentication headers and disable SSE buffering. Physical phone and deployed proxy
 behavior require separate qualification. See the [web setup](../../apps/web/README.md).
+
+Saved browser profiles retain endpoints, identity pins and local selection IDs. Older profiles keep
+their label only as a disconnected cached name until authentication replaces it with the daemon's
+name. Disconnected names are labelled as cached. A failed cache write is reported separately while
+the authenticated session continues to show the current daemon name; browser labels never become
+rename commands. The browser retains no credential in that profile.
 
 [Current versions](versions.md) are checked against their owning constants.

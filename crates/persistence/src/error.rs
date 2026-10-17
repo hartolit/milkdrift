@@ -31,6 +31,22 @@ pub enum StorageFailureClass {
 /// explains how to recover a result when an error may have arrived after commit.
 #[derive(Debug, Error)]
 pub enum PersistenceError {
+    /// Another accepted rename changed the daemon's name.
+    #[error("daemon name generation conflict: expected {expected}, actual {actual}")]
+    DaemonGenerationConflict {
+        /// Generation observed by the caller.
+        expected: u64,
+        /// Current accepted generation.
+        actual: u64,
+    },
+    /// A rename request key already identifies different canonical request bytes.
+    #[error("daemon rename {key} idempotency conflict for actor {actor}")]
+    DaemonIdempotencyConflict {
+        /// Authenticated actor owning the request.
+        actor: milkdrift_authority::ActorRef,
+        /// Conflicting actor-local request key.
+        key: String,
+    },
     /// A task workflow changed after its transition was planned.
     #[error("workflow {workflow} generation conflict: expected {expected:?}, actual {actual:?}")]
     WorkflowGenerationConflict {

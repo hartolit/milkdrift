@@ -112,16 +112,7 @@ impl super::DaemonHost {
             ));
         }
         self.dispatch(false, move |owner| {
-            if expected_host
-                .as_ref()
-                .is_some_and(|expected| expected != owner.host_id.as_str())
-            {
-                return Err(PublicFailure::new(
-                    ErrorCode::Conflict,
-                    "connection names a different daemon installation",
-                    false,
-                ));
-            }
+            owner.check_daemon_identity(expected_host.as_deref())?;
             match request {
                 TaskRequest::Session => serde_json::to_value(owner.task_session(&session)?),
                 TaskRequest::List {

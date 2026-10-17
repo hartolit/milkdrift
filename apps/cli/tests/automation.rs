@@ -15,6 +15,8 @@ use std::{
 };
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
+#[path = "automation/daemon_name.rs"]
+mod daemon_name;
 #[path = "automation/future_batch.rs"]
 mod future_batch;
 #[path = "automation/upload_preparation.rs"]

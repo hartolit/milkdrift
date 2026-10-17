@@ -7,6 +7,7 @@ use milkdrift_control_protocol::tasks::{
     TaskSummaryDto, TaskToolDto, TaskUploadReceipt, TaskUploadRequest, WorkflowLimitsDto,
     WorkflowPageDto, WorkflowReadDto, WorkflowReceipt, WorkflowSummaryDto,
 };
+use milkdrift_control_protocol::{DaemonMetadataDto, RenameDaemonReceipt, RenameDaemonRequest};
 use ts_rs::TS;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -38,6 +39,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         WorkflowReadDto::decl(&config),
         WorkflowPageDto::decl(&config),
         TaskSessionDto::decl(&config),
+        DaemonMetadataDto::decl(&config),
+        RenameDaemonRequest::decl(&config),
+        RenameDaemonReceipt::decl(&config),
         TaskUploadRequest::decl(&config),
         TaskUploadReceipt::decl(&config),
     ];

@@ -49,6 +49,21 @@ JSON consumers. Rust generates the TypeScript declarations and envelope decoder.
 DTOs deliberately have different payload sizes: a discovery page never embeds all captured files.
 `validate_response_capacity`, cursor binding and error status mapping remain pure wire helpers.
 
+`DaemonDisplayName` is the one validated Rust name type. `DaemonMetadataStore` and its metadata,
+rename and receipt types are workspace storage contracts used by the daemon's private metadata
+module and implemented by redb. They bind names to an existing installation and atomically retain
+actor-scoped exact receipts; they do not create a generic settings service or a synthetic workflow.
+`RenameDaemon` crosses the authority boundary independently of workflow editing. Existing grant
+schema-5 documents remain readable, while changed preset content requires deliberate grant revisions.
+
+`DaemonMetadataDto`, `RenameDaemonRequest`, `RenameDaemonReceipt` and the session's name fields are
+external transport contracts shared by Svelte and the Rust client/CLI. Display-name validation stays
+with the persistence type, not the DTOs or frontend. `ControlClient::with_daemon_identity` preserves
+an explicitly learned pin on subsequent requests and refuses replacing it on that client. It does
+not make an endpoint trustworthy or impose a persistent profile on every native caller.
+`DaemonIdentityMismatch` distinguishes replacement from an ordinary optimistic conflict so clients
+can discard inaccessible active state without discarding a valid conflict draft.
+
 Independent `DirectInvocationDraft`, request preparation, serving invocation records, peer limits
 and artifacts remain their host/protocol owners. Managed-resource requests and durable holds remain
 independent of ordinary task definitions. No public graph, proposal, controller, prompt-sequence,

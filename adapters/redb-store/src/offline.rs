@@ -72,7 +72,7 @@ pub(crate) fn preflight_format(root: &Path) -> Result<(), PersistenceError> {
     let database = Database::open(&copy).map_err(error::database)?;
     // An interrupted first schema transaction can leave a genuine empty redb file.
     if !crate::store::open::database_is_uninitialized(&database)? {
-        crate::store::schema::validate_format(&database)?;
+        crate::store::schema::validate_for_open(&database)?;
     }
     Ok(())
 }

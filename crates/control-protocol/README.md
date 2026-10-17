@@ -16,7 +16,15 @@ receipt. Generation/version-guarded edits affect only future work; replay binds 
 requests before defaults or upload resolution. Summary DTOs keep captured input/result bodies out
 of discovery pages. Result text and frozen input previews declare truncation explicitly.
 
-`tasks.rs` also owns Rust-generated browser declarations. Regenerate with:
+The session and `DaemonMetadataDto` expose the daemon-owned name independently from its stable
+identity. `RenameDaemonRequest` carries an exact actor-scoped request identity and observed name
+generation; `RenameDaemonReceipt` records the accepted normalized name and generation. The protocol
+preserves the submitted name unchanged so that exact replay can distinguish requests. Its Rust
+persistence owner validates names and bounds receipts. `daemon_identity_mismatch` means that a
+saved endpoint now serves a different daemon; clients must clear active state and require a
+deliberate new connection instead of replacing their pin.
+
+The task and metadata DTOs also own Rust-generated browser declarations. Regenerate with:
 
 ```sh
 cargo run -p milkdrift-control-protocol --example export_web --features web-codegen

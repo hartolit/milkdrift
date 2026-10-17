@@ -121,6 +121,10 @@ fn emit_error(
                 "conflict",
                 "exact request, generation or runtime policy conflict",
             ),
+            ErrorCode::DaemonIdentityMismatch => (
+                "daemon_identity_mismatch",
+                "the address now serves a different daemon; verify the intended connection before starting a new session",
+            ),
             ErrorCode::Uncertain => (
                 "uncertain",
                 "operation outcome is unknown; inspect retained evidence and recover with the exact original request and command ID",
@@ -188,6 +192,7 @@ mod tests {
             (ErrorCode::Unauthenticated, false, 3),
             (ErrorCode::Unauthorized, false, 3),
             (ErrorCode::Conflict, false, 4),
+            (ErrorCode::DaemonIdentityMismatch, false, 4),
             (ErrorCode::Uncertain, false, 4),
             (ErrorCode::Uncertain, true, 4),
             (ErrorCode::Overload, true, 5),

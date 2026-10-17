@@ -2,6 +2,7 @@
 schema_version = 14
 role = "workflow_enabled"
 host_id = "host:local"
+name = "Milkdrift"
 data_root = "./data"
 bind = "127.0.0.1:9734"
 security_audit_record_bound = 10000
@@ -14,7 +15,7 @@ variable = "MILKDRIFT_TOKEN"
 credential_ref = "credential:operator"
 actor = "human:operator"
 grant_id = "grant:operator"
-grant_revision = 1
+grant_revision = 2
 revocation_generation = 0
 preset = "controller"
 enabled = true

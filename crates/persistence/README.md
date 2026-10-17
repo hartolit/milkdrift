@@ -32,6 +32,7 @@ grant access, and corruption remains an error rather than an empty result.
 | Operation | Contract and consequence |
 | --- | --- |
 | Accept or change ordinary work | [`WorkflowStore`](src/task.rs) saves one generation and its exact command result atomically. |
+| Name the daemon | [`DaemonMetadataStore`](src/daemon.rs) binds one shared display name to the installation, with guarded changes and exact actor-scoped replay. A startup seed never overwrites an accepted rename. |
 | Publish or read artifact content | [`ArtifactStore`](src/artifact.rs) owns resumable chunks, verified publication, accounting and bounded reads. Content integrity and read authorization are separate requirements. |
 | Hold a native directory | [`NativePathClaimStore`](src/native_paths.rs) atomically claims complete physical path sets; equal or nested writers conflict, while readers may share. |
 | Protect a managed installation | [Managed resource ports](src/managed.rs) preserve frozen descriptor bindings, active uses, physical fences, independent evaluation evidence and update/removal guards. |

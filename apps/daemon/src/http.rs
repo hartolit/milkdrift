@@ -1,4 +1,5 @@
 mod browser;
+mod metadata;
 mod response;
 mod tasks;
 use response::{
@@ -107,6 +108,9 @@ pub(crate) fn router(host: DaemonHost) -> Result<Router, HostError> {
     };
     let router = authorized_routes! { Router::new();
         "/v1/session" => get(tasks::session), RouteAuthorityMapping::QueryDerived, RouteResourceMapping::Daemon;
+        "/v1/daemon/metadata" => get(metadata::read), RouteAuthorityMapping::Exact(AuthorityOperation::NegotiateControlProtocol), RouteResourceMapping::Daemon;
+        "/v1/daemon/rename" => post(metadata::rename), RouteAuthorityMapping::Exact(AuthorityOperation::RenameDaemon), RouteResourceMapping::Daemon;
+        "/v1/daemon/rename-requests/{request}" => get(metadata::receipt), RouteAuthorityMapping::Exact(AuthorityOperation::NegotiateControlProtocol), RouteResourceMapping::Daemon;
         "/v1/workflows" => get(tasks::list).post(tasks::create), RouteAuthorityMapping::CommandDerived, RouteResourceMapping::Run;
         "/v1/workflows/stream" => get(tasks::stream), RouteAuthorityMapping::StreamDerived, RouteResourceMapping::Run;
         "/v1/workflows/{workflow}" => get(tasks::workflow), RouteAuthorityMapping::QueryDerived, RouteResourceMapping::Run;

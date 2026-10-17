@@ -61,6 +61,9 @@ impl Cli {
                 crate::InvocationCommand::Output { .. } => "invocation.output",
             },
             TopCommand::Daemon { command } => match command {
+                DaemonCommand::Name => "daemon.name",
+                DaemonCommand::Rename { .. } => "daemon.rename",
+                DaemonCommand::RenameReceipt { .. } => "daemon.rename_receipt",
                 DaemonCommand::Health(_) => "daemon.health",
                 DaemonCommand::Readiness => "daemon.readiness",
                 DaemonCommand::Authority => "daemon.authority",

@@ -593,6 +593,13 @@ pub struct TaskSessionDto {
     pub input_limit_bytes: u32,
     /// Installation identity required on subsequent task operations.
     pub daemon_id: String,
+    /// Shared current daemon name; never a connection-local label.
+    pub daemon_name: String,
+    /// Generation of the observed name, independent of workflow changes.
+    #[cfg_attr(feature = "web-codegen", ts(type = "number"))]
+    pub daemon_name_generation: u64,
+    /// Whether the authenticated actor may change the shared daemon name.
+    pub can_rename_daemon: bool,
     /// Server-owned authenticated actor identity.
     pub actor_id: String,
     /// Effective default policy offered before start.

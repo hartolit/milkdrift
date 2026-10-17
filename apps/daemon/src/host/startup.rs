@@ -66,6 +66,7 @@ impl DaemonHost {
         let DaemonPlanParts {
             role,
             host_id,
+            name,
             serving,
             storage,
             authentication,
@@ -109,6 +110,7 @@ impl DaemonHost {
         let owner_plan = OwnerPlan {
             role,
             host_id,
+            name,
             serving,
             recovery_controls,
             storage,
@@ -215,6 +217,7 @@ pub(super) struct StartedServices {
 pub(super) struct OwnerPlan {
     role: milkdrift_control_protocol::HostRole,
     host_id: String,
+    name: milkdrift_persistence::DaemonDisplayName,
     serving: crate::config::ServingHostConfig,
     recovery_controls: bool,
     storage: StoragePlan,
@@ -301,6 +304,7 @@ impl Owner {
         let OwnerPlan {
             role,
             host_id,
+            name,
             serving,
             recovery_controls,
             storage,
@@ -352,6 +356,12 @@ impl Owner {
         )
         .map_err(|error| error.to_string())?;
         let owner_queue = OwnerQueue::new(sender, health.clone(), thread::current().id());
+        milkdrift_persistence::DaemonMetadataStore::initialize_daemon_metadata(
+            store.as_ref(),
+            &host_identity,
+            &name,
+        )
+        .map_err(|error| error.to_string())?;
         let clock = DurableClock::new(owner_queue.clone(), Arc::downgrade(&store), health.clone());
         let authority = Arc::new(
             GrantSetEvaluator::new(

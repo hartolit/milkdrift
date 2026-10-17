@@ -502,6 +502,9 @@ pub struct DaemonConfig {
     pub role: milkdrift_control_protocol::HostRole,
     /// Stable installation identity; replay and artifact ownership remain scoped to this host.
     pub host_id: String,
+    /// Initial shared display name; an accepted daemon rename takes precedence on later starts.
+    #[serde(default = "default_daemon_name")]
+    pub name: String,
     /// Common client/peer serving workers, admission bounds and retention policy.
     #[serde(default)]
     pub serving: ServingHostConfig,
@@ -532,4 +535,10 @@ pub struct DaemonConfig {
 
 const fn default_security_audit_record_bound() -> u32 {
     10_000
+}
+
+fn default_daemon_name() -> String {
+    milkdrift_persistence::DaemonDisplayName::default()
+        .as_str()
+        .to_owned()
 }

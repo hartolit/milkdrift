@@ -16,6 +16,16 @@ worker limits or peer relationships require validation and restart. Credentials 
 configured file or exact environment variable at use time; they can rotate without logging them.
 The [authority guide](authority.md) owns scopes and revocation.
 
+The Controller preset now includes daemon renaming. Its expanded operation set changes the grant
+digest; publish changed grant content under a new `grant_revision`. Existing workflows retain their
+original execution claim. Storage adoption preserves that claim and its exact command receipts; it
+does not authorize them under the expanded grant. Current authenticated clients can still inspect
+retained work and recover their receipts, but a ready queued task whose original grant no longer
+matches is refused before entry and records a failure. `Continue` does not replace that claim.
+Finish or deliberately stop outstanding Controller work using its preserved executable and original
+configuration before upgrading the preset. Never edit saved claims, digests or receipts to make a
+new grant appear to have authorized earlier work.
+
 `role = "workflow_enabled"` constructs the ordinary task runtime. `role = "execution_only"`
 serves independent configured capabilities without a workflow scheduler and refuses retained
 non-completed workflows. Both roles retain managed installations and independent serving guards.
@@ -26,8 +36,23 @@ Startup validates the compiled plan, acquires the store lock, checks the exact
 execution state and registers configured adapters. An interrupted task with durable entry intent
 and no terminal evidence becomes uncertain; it is not blindly sent again. Claims and reservations
 remain owned until durable settlement or an authorized prospective decision resolves them.
-Legacy formats and recognized legacy directories are refused before writes. No migration tool or
-compatibility reader is included. Inspect or back up an old store with its matching executable.
+Physical schema 20 atomically adopts the exact preceding schema 19/internal format 22 by adding
+daemon metadata tables. Existing workflow and receipt encodings remain unchanged; interruption
+leaves either format ready for retry. Older document formats, graph stores and recognized legacy
+directories are refused before writes. Inspect or back up an older store with its matching executable.
+
+The optional top-level `name` seeds shared metadata only when absent; existing schema-14
+configurations without it seed `Milkdrift`. Restart never overwrites an accepted rename. Names
+trim surrounding whitespace, require 1–80 Unicode scalar values and refuse control characters.
+The `host_id` remains the installation identity; equal display names do not join two installations.
+
+An administrator can change the name in **Daemon settings** or with the
+[CLI daemon commands](../../apps/cli/README.md). Controller authority must also permit
+`authority.resources.daemon.configuration`; workflow-edit permission alone is insufficient.
+Read the current generation before renaming and keep the exact request ID/name/generation if its
+reply is lost. Receipt lookup or exact replay recovers the accepted result. Conflicts require a
+fresh read and explicit review. At 1,024 accepted receipts the daemon refuses new renames while
+retaining reads and replay; there is no eviction or automatic reset.
 
 Readiness is coarse and authenticated; detailed health reports owner queue, worker and peer-serving
 state without task content or credentials. Startup success alone does not qualify a configured
@@ -56,8 +81,12 @@ workflow ownership merely because a remote task carries originating coordinates.
 Configure exact `serving.browser_origins`, for example `http://127.0.0.1:5173`. An empty list disables
 browser origins. Mismatched origins and malformed preflight requests are refused. Svelte is an
 independent static application; it cannot read the database or invoke the CLI. Its bearer tokens
-stay in memory. The daemon checks actor scope and expected installation identity on each task
-request. See [web hosting](../../apps/web/README.md) for build commands and connection setup.
+stay in memory. Connect with its address and credential. The client learns the daemon identity and
+shared name, saves the identity with the endpoint, and binds subsequent task requests to it.
+An address serving a different daemon requires deliberately forgetting that saved connection and
+connecting afresh. The name refreshes across connected clients; disconnected names are explicitly
+cached. First-use trust comes from the configured endpoint and transport, not the returned identity.
+See [web hosting](../../apps/web/README.md) for build commands and connection setup.
 
 For phone/LAN use, terminate browser-trusted HTTPS for both the static site and daemon proxy.
 Keep the daemon's listener private, forward bearer/identity headers and disable buffering on the

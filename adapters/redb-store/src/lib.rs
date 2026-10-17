@@ -16,6 +16,7 @@ mod admin;
 mod artifact;
 mod clock;
 mod codec;
+mod daemon;
 mod error;
 mod fault;
 mod json;

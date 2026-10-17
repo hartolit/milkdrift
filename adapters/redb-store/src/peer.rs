@@ -60,7 +60,7 @@ const LOCATION_HOT: u8 = 1;
 const LOCATION_ARCHIVED: u8 = 2;
 const OBSERVATION_DIGEST_DOMAIN: &[u8] = b"milkdrift.peer.observation-history.v1\0";
 
-fn bind_host_in_transaction(
+pub(crate) fn bind_host_in_transaction(
     write: &redb::WriteTransaction,
     host: &milkdrift_capability::PeerId,
 ) -> Result<(), PersistenceError> {

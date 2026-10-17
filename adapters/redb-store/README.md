@@ -4,11 +4,15 @@ This adapter implements Milkdrift's [persistence contracts](../../crates/persist
 one redb database and owned artifact directories. Runtime decides what task transitions mean; this
 package makes accepted snapshots, receipts, resource holds and artifacts durable.
 
-The current task format uses internal document format 22 and physical schema 19. Earlier task
+The current task format uses internal document format 22 and physical schema 20. Earlier task
 documents lack the enforced-duration reservations and elapsed-time watermarks required by runtime.
 Existing databases are locked through a read-only
 handle and copied privately for the format check before redb can open the source for housekeeping
-writes. Older formats are refused without migration. Keep preserved generations with their matching
+writes. The exact prompt-03 format (physical schema 19, internal format 22) gains two empty daemon
+metadata tables and the new physical marker in one transaction. Existing task, receipt and host
+identity rows keep their exact bytes. Unexpected tables, partial adoption and invalid accounting
+refuse before the source opens for writes. Other older formats are refused without migration.
+Keep preserved generations with their matching
 binary and use an explicitly new directory for task development. Tested byte and modification-time
 invariance establishes software-level refusal, not power-loss durability.
 
@@ -20,7 +24,8 @@ One `Arc<RedbStore>` supplies narrow traits to runtime and other consumers; call
 transaction or table handle. Import the relevant persistence trait to call its methods.
 
 Opening validates the directory, physical schema and required accounting anchors, then restores the
-configured security-audit bound. It does not scan every historical record or recover external work.
+configured security-audit bound. The daemon name's finite receipt history is checked together with
+its generation; opening does not scan every task record or recover external work.
 The daemon's [startup composition](../../apps/daemon/src/host/startup.rs) owns recovery before admission.
 Use [daemon operations](../../docs/operations/daemon.md) for setup, shutdown and backups.
 
@@ -31,6 +36,14 @@ generation and mark each copy inspection-only. The [operator procedure](../../do
 explains private destinations, copy limits, completion verification and explicit activation.
 
 ## What a write makes durable
+
+[`daemon.rs`](src/daemon.rs) binds a shared display name to the stable installation identity.
+Initialization uses the configured seed only when metadata is absent. A guarded rename saves its
+new name and actor-scoped exact receipt together, so losing the reply does not require another rename.
+Its independent allowance retains 1,024 receipts with at most 16 KiB of canonical request and result
+bytes per receipt. At capacity, reads and exact replay remain available; new renames refuse and no
+accepted key is evicted. Startup scans at most that finite receipt set to verify its generation and
+current name. These records neither create workflows nor consume task settlement reservations.
 
 [`task.rs`](src/task.rs) atomically saves a workflow snapshot, discovery fields, exact command result,
 managed-execution holds and capacity counters. Defaults admit at most 1 GiB of retained task documents,

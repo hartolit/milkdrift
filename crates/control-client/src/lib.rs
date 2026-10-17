@@ -35,6 +35,7 @@ use thiserror::Error;
 use url::Url;
 
 mod invocation;
+mod metadata;
 mod sse;
 mod tasks;
 
@@ -197,6 +198,7 @@ pub struct ControlClient {
     http: reqwest::Client,
     config: ClientConfig,
     credential: BearerCredential,
+    daemon_identity: Option<String>,
 }
 
 impl fmt::Debug for ControlClient {
@@ -228,7 +230,35 @@ impl ControlClient {
             http,
             config,
             credential,
+            daemon_identity: None,
         })
+    }
+
+    /// Binds every subsequent request to a daemon identity learned through authenticated bootstrap.
+    ///
+    /// Keep the identity with the endpoint across reconnects. A display name never substitutes
+    /// for this pin; first use still trusts the supplied endpoint and transport policy.
+    ///
+    /// # Errors
+    /// Refuses invalid header text or changing a previously bound identity. Create a fresh client
+    /// only after deliberately accepting a different daemon.
+    pub fn with_daemon_identity(mut self, identity: &str) -> Result<Self, ClientError> {
+        if identity.is_empty()
+            || identity.len() > 256
+            || !identity.is_ascii()
+            || identity.bytes().any(|byte| byte.is_ascii_control())
+            || self
+                .daemon_identity
+                .as_deref()
+                .is_some_and(|pin| pin != identity)
+        {
+            return Err(ClientError::Configuration(
+                "daemon identity is invalid or differs from this client's existing connection"
+                    .to_owned(),
+            ));
+        }
+        self.daemon_identity = Some(identity.to_owned());
+        Ok(self)
     }
 
     /// Confirms that the daemon uses the same current protocol version.
@@ -578,7 +608,7 @@ impl ControlClient {
     }
 
     fn authorized(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        builder
+        let builder = builder
             .bearer_auth(self.credential.expose())
             .header(header::ACCEPT, "application/json")
             .header(
@@ -588,7 +618,11 @@ impl ControlClient {
                     ProtocolVersion::CURRENT.major,
                     ProtocolVersion::CURRENT.minor
                 ),
-            )
+            );
+        match &self.daemon_identity {
+            Some(identity) => builder.header("x-milkdrift-daemon", identity),
+            None => builder,
+        }
     }
 
     fn url(&self, path: &str) -> Result<Url, ClientError> {
@@ -672,9 +706,7 @@ fn redacted_transport(error: reqwest::Error) -> ClientError {
 }
 
 fn path_segment(value: &str) -> Result<String, ClientError> {
-    if value.is_empty()
-        || matches!(value, "." | "..")
-        || value.len() > 256
+    if value.len() > 256
         || !value.is_ascii()
         || !value.bytes().all(|byte| {
             byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':' | b'/' | b'%')
@@ -684,10 +716,19 @@ fn path_segment(value: &str) -> Result<String, ClientError> {
             "resource identity is not a safe path segment".to_owned(),
         ));
     }
+    encoded_path_segment(value)
+}
+
+fn encoded_path_segment(value: &str) -> Result<String, ClientError> {
+    if value.is_empty() || matches!(value, "." | "..") {
+        return Err(ClientError::Configuration(
+            "resource identity cannot be an empty or standalone dot segment".to_owned(),
+        ));
+    }
     // Push the raw identity as one segment. In particular a slash is data and
     // a literal percent sequence must survive the server's single decoding pass.
     // Standalone dot segments cannot be carried by WHATWG URLs; domain identities
-    // already require an initial alphanumeric character and never admit those.
+    // exclude those values before this encoder is used.
     let mut encoded = Url::parse("http://localhost/")
         .map_err(|_| ClientError::Configuration("invalid identity encoder base".into()))?;
     encoded

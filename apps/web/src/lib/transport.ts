@@ -108,7 +108,7 @@ export class DaemonClient {
       });
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') throw error;
-      if (error instanceof Error && error.name === 'TimeoutError') throw new Error('The daemon did not reply within 30 seconds. You can reconnect or look up an uncertain submission; the task may still have been accepted.', { cause: error });
+      if (error instanceof Error && error.name === 'TimeoutError') throw new Error('The daemon did not reply within 30 seconds. If you submitted a change, look up its receipt or replay the exact request; it may already have been accepted.', { cause: error });
       throw new Error('The daemon could not be reached. Check its address, HTTPS certificate and allowed browser origin. A submitted request may still have been accepted.', { cause: error });
     }
     if (!response.ok) {

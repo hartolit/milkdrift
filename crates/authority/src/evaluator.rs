@@ -320,6 +320,7 @@ fn operation_uses_workflow_scope(operation: crate::AuthorityOperation) -> bool {
             | crate::AuthorityOperation::InspectAudit
             | crate::AuthorityOperation::InspectConfiguration
             | crate::AuthorityOperation::ReloadConfiguration
+            | crate::AuthorityOperation::RenameDaemon
             | crate::AuthorityOperation::DrainDaemon
             | crate::AuthorityOperation::ShutdownDaemon
     )

@@ -30,8 +30,9 @@ impl RedbStore {
     /// Opens or creates a durable local store from explicit bounds and hooks.
     ///
     /// Validates the owned paths and exact schema, checks startup time against the
-    /// watermark, and restores the configured security audit retention bound. Older/future
-    /// schemas and unsafe paths fail; this operation performs no storage migration.
+    /// watermark, and restores the configured security audit retention bound. The exact
+    /// prompt-03 task format gains empty daemon metadata tables atomically; its existing
+    /// rows remain unchanged. Other older/future schemas and unsafe paths fail.
     /// It may initialize storage or trim audit records before returning, so an error does
     /// not imply an untouched directory. Reopening uses those same durable records.
     ///
@@ -60,6 +61,7 @@ impl RedbStore {
             initialize_schema(&database, config.faults.as_ref(), startup_observation)?;
             sync_owned_directory(&config.root)?;
         } else {
+            super::schema::adopt_daemon_metadata(&database, config.faults.as_ref())?;
             validate_schema(&database)?;
         }
 

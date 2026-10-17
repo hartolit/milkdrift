@@ -22,7 +22,7 @@ pub enum AuthorityPreset {
     Advisor,
     /// Edit future task definitions and request stop within exact scope.
     Supervisor,
-    /// Create and execute tasks and administer permitted hosts within explicit scope.
+    /// Create and execute tasks and administer permitted hosts and daemon names within explicit scope.
     Controller,
     /// Create and execute tasks under strict caller-supplied ceilings.
     Autonomous,
@@ -61,7 +61,7 @@ impl AuthorityPreset {
             Inspect, InspectCapabilityHealth, InspectDaemonHealth, InspectOwnAuthority,
             InspectPeer, InspectProviderProfile, InspectRun, InvokeCapability, ListCapabilities,
             NegotiateControlProtocol, PublishArtifact, ReadArtifactContent, ReadArtifactMetadata,
-            ReadCapabilityOutput, ReadReadiness, StartRun,
+            ReadCapabilityOutput, ReadReadiness, RenameDaemon, StartRun,
         };
         let reads = [
             Inspect,
@@ -110,6 +110,7 @@ impl AuthorityPreset {
                     PublishArtifact,
                     AdministerPeer,
                     AdministerCapabilities,
+                    RenameDaemon,
                 ])
                 .collect(),
             Self::Autonomous => reads

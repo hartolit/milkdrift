@@ -4,6 +4,7 @@ mod admin;
 mod artifact;
 mod bounded;
 mod clock;
+mod daemon;
 mod error;
 mod identity;
 mod native_paths;
@@ -33,6 +34,10 @@ pub use bounded::{
     BoundedDetail, MAX_ARTIFACT_CHUNK_BYTES, MAX_DETAIL_BYTES, MAX_PAGE_SIZE, PageSize,
 };
 pub use clock::{ClockWatermarkObservation, ClockWatermarkStore};
+pub use daemon::{
+    DaemonDisplayName, DaemonMetadata, DaemonMetadataStore, DaemonRename, DaemonRenameOutcome,
+    DaemonRenameReceipt, MAX_DAEMON_RENAME_RECEIPT_BYTES, MAX_DAEMON_RENAME_RECEIPTS,
+};
 pub use error::{PersistenceError, StorageFailureClass};
 pub use identity::{
     ArtifactPublicationId, AttemptId, EvidenceId, IntegrityDigest, LeaseId, NodeExecutionId,

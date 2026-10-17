@@ -343,6 +343,7 @@ fn configuration_document(
     Ok(DaemonConfig {
         schema_version: milkdrift_daemon::DAEMON_CONFIG_SCHEMA_VERSION,
         host_id: local_peer.to_owned(),
+        name: "Milkdrift".to_owned(),
         serving: ServingHostConfig {
             worker_threads: 2,
             maximum_global_active: 2,
@@ -375,7 +376,7 @@ fn configuration_document(
             credential_ref: "credential:operator".to_owned(),
             actor: format!("human:{local_peer}-operator"),
             grant_id: format!("grant:{local_peer}-operator"),
-            grant_revision: 1,
+            grant_revision: 2,
             revocation_generation: 0,
             preset: AuthorityPresetConfig::Controller,
             authority: operator_authority,

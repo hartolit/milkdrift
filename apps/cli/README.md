@@ -25,6 +25,9 @@ owns the JSON request shapes; the [Svelte client](../web/README.md) provides the
 | Review a complete future batch without submitting | `workflow edit WORKFLOW FILE --preview` |
 | Request cancellation | `workflow stop WORKFLOW TASK`; inspect the resulting state to establish whether it stopped |
 | Inspect the installation | `daemon readiness`, `health`, `authority`, `capability`, `provider` |
+| Read the shared daemon name and its generation | `daemon name` |
+| Rename the daemon for every client | `daemon rename NAME --expected-generation N --request-id ID` |
+| Recover an accepted rename | `daemon rename-receipt REQUEST_ID` |
 | Use an independent execution host | `invocation prepare`, `start`, `lookup`, `show`, `observe`, `cancel` |
 | Retrieve immutable artifacts | `artifact metadata`, `artifact get ARTIFACT --output NEW_FILE` |
 | Operate configured infrastructure | `peer` and `resource` command families |
@@ -33,6 +36,18 @@ Use family `--help` for exact arguments. Started definitions are immutable. An e
 missing input, add work, revise an unstarted task, request a stop, or explicitly adopt a successful
 correction. It cannot change what an earlier task executed. Queued work has no start timestamp;
 `uncertain` means a possible external effect lacks settlement evidence.
+
+The daemon owns its display name. Read `daemon name`, then use the returned generation in
+`daemon rename`; the separate configuration permission is required even when the actor can edit
+workflows. The CLI authenticates to read the daemon identity and binds the rename and receipt request
+to that identity. Duplicate display names are allowed, so continue selecting the intended endpoint.
+A rename affects other clients and persists when the daemon restarts. The operator's configured name
+seeds absent metadata and does not overwrite a saved rename.
+
+Keep the request identity, name and expected generation after an interrupted rename. Use
+`daemon rename-receipt` or repeat those exact arguments. The CLI never replaces a stale generation
+with the current one, and it never automatically retries a rename. A later rename can supersede the
+name recorded in an earlier receipt; read `daemon name` for the current value.
 
 Use `workflow edit WORKFLOW changes.json --preview` before submitting a batch. It displays the
 exact request together with the current workflow generation and each guarded task's version and state.

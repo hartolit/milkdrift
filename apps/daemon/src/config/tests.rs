@@ -9,6 +9,26 @@ fn fixture_document() -> Result<DaemonConfig, Box<dyn std::error::Error>> {
 }
 
 #[test]
+fn shared_name_seed_defaults_and_uses_the_same_validation_as_rename()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut config = fixture_document()?;
+    assert_eq!(config.name, "Milkdrift");
+    config.name = "  Studio 🌒  ".into();
+    let base = fixture_path()
+        .parent()
+        .ok_or("fixture parent absent")?
+        .to_owned();
+    assert_eq!(config.clone().validate(&base)?.name.as_str(), "Studio 🌒");
+    for name in [String::new(), " ".into(), "Studio\n".into(), "x".repeat(81)] {
+        config.name = name;
+        assert!(config.clone().validate(&base).is_err());
+    }
+    config.name = "🌒".repeat(80);
+    assert!(config.validate(&base).is_ok());
+    Ok(())
+}
+
+#[test]
 fn maintained_operator_configuration_uses_the_production_reader()
 -> Result<(), Box<dyn std::error::Error>> {
     let path =
@@ -345,6 +365,7 @@ fn non_loopback_plaintext_is_rejected_before_storage() -> Result<(), Box<dyn std
         schema_version: DAEMON_CONFIG_SCHEMA_VERSION,
         role: milkdrift_control_protocol::HostRole::WorkflowEnabled,
         host_id: "host:local".to_owned(),
+        name: "Milkdrift".to_owned(),
         serving: Default::default(),
         data_root: directory.path().join("data"),
         bind: "0.0.0.0:9734".parse()?,
@@ -356,7 +377,7 @@ fn non_loopback_plaintext_is_rejected_before_storage() -> Result<(), Box<dyn std
             credential_ref: "credential:operator".to_owned(),
             actor: "human:operator".to_owned(),
             grant_id: "grant:operator".to_owned(),
-            grant_revision: 1,
+            grant_revision: 2,
             revocation_generation: 0,
             preset: AuthorityPresetConfig::Controller,
             authority: ActorGrantConfig::dangerous_administrator(),

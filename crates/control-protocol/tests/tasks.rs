@@ -11,6 +11,9 @@ fn browser_session_fixture_decodes_and_reencodes_exactly() -> Result<(), Box<dyn
     let envelope: ResponseEnvelope<TaskSessionDto> = decode_json(bytes)?;
     envelope.protocol.negotiate()?;
     assert_eq!(envelope.value.daemon_id, "fixture-daemon-a");
+    assert_eq!(envelope.value.daemon_name, "Studio A");
+    assert_eq!(envelope.value.daemon_name_generation, 1);
+    assert!(envelope.value.can_rename_daemon);
     assert_eq!(envelope.value.limits.concurrent_tasks, 4);
     let expected: serde_json::Value = serde_json::from_slice(bytes)?;
     let actual: serde_json::Value = serde_json::from_slice(&encode_json(&envelope)?)?;
@@ -24,6 +27,30 @@ fn task_transport_rejects_duplicate_and_unknown_request_fields() {
     assert!(decode_json::<CreateWorkflowRequest>(unknown).is_err());
     let duplicate = br#"{"request_id":"one","request_id":"two","title":"Report","description":"","tasks":[],"inputs":{},"finish_when_settled":true,"limits":null}"#;
     assert!(decode_json::<CreateWorkflowRequest>(duplicate).is_err());
+}
+
+#[test]
+fn session_name_fields_require_the_current_coordinated_protocol()
+-> Result<(), Box<dyn std::error::Error>> {
+    assert!(matches!(
+        milkdrift_control_protocol::ProtocolVersion { major: 3, minor: 1 }.negotiate(),
+        Err(milkdrift_control_protocol::ProtocolError::UnsupportedMinor { .. })
+    ));
+    let fixture: serde_json::Value =
+        serde_json::from_slice(include_bytes!("fixtures/task-session.json"))?;
+    for field in ["daemon_name", "daemon_name_generation", "can_rename_daemon"] {
+        let mut missing = fixture.clone();
+        missing
+            .get_mut("value")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or("fixture session missing")?
+            .remove(field);
+        assert!(
+            decode_json::<ResponseEnvelope<TaskSessionDto>>(&serde_json::to_vec(&missing)?)
+                .is_err()
+        );
+    }
+    Ok(())
 }
 
 #[test]

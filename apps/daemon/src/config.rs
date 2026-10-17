@@ -56,6 +56,7 @@ const CONFIG_DIGEST_LIMITS: JsonLimits = JsonLimits {
 pub struct DaemonPlan {
     role: milkdrift_control_protocol::HostRole,
     host_id: String,
+    name: milkdrift_persistence::DaemonDisplayName,
     serving: ServingHostConfig,
     bind: SocketAddr,
     storage: StoragePlan,
@@ -83,6 +84,7 @@ pub(crate) struct AuthenticationPlan {
 pub(crate) struct DaemonPlanParts {
     pub(crate) role: milkdrift_control_protocol::HostRole,
     pub(crate) host_id: String,
+    pub(crate) name: milkdrift_persistence::DaemonDisplayName,
     pub(crate) serving: ServingHostConfig,
     pub(crate) storage: StoragePlan,
     pub(crate) authentication: AuthenticationPlan,
@@ -115,6 +117,7 @@ impl DaemonPlan {
         DaemonPlanParts {
             role: self.role,
             host_id: self.host_id,
+            name: self.name,
             serving: self.serving,
             storage: self.storage,
             authentication: self.authentication,

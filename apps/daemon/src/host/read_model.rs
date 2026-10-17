@@ -151,7 +151,9 @@ pub(super) fn public_persistence(error: PersistenceError) -> PublicFailure {
             }
             failure
         }
-        PersistenceError::WorkflowIdempotencyConflict { .. }
+        PersistenceError::DaemonGenerationConflict { .. }
+        | PersistenceError::DaemonIdempotencyConflict { .. }
+        | PersistenceError::WorkflowIdempotencyConflict { .. }
         | PersistenceError::ImmutableConflict { .. }
         | PersistenceError::WorkspaceUsageConflict { .. } => conflict(&bounded(&error.to_string())),
         PersistenceError::NotFound { .. } => not_found(),

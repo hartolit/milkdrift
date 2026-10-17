@@ -15,10 +15,12 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use thiserror::Error;
 
+mod metadata;
 mod read;
 /// Ordinary task commands and projections used by every public client.
 pub mod tasks;
 mod upload;
+pub use metadata::{DaemonMetadataDto, RenameDaemonReceipt, RenameDaemonRequest};
 pub use read::{
     ArtifactMetadataRead, AuthorityRead, CapabilityOperationRead, CapabilityRead, DaemonState,
     HealthRead, HostRole, Observation, ObservationEnvelope, PeerExecutionHealthRead, PeerRead,
@@ -28,7 +30,7 @@ pub use upload::{InputUploadRequest, MAX_INPUT_UPLOAD_BYTES};
 /// Supported control protocol major version.
 const PROTOCOL_MAJOR: u16 = 3;
 /// Supported control protocol minor version.
-const PROTOCOL_MINOR: u16 = 1;
+const PROTOCOL_MINOR: u16 = 2;
 const AUTHENTICATED_CURSOR_SCHEMA_VERSION: u8 = 2;
 /// Maximum JSON request or response envelope size.
 pub const MAX_DOCUMENT_BYTES: usize = 1_310_720;
@@ -147,6 +149,8 @@ pub enum ErrorCode {
     InvalidInput,
     /// An optimistic guard or idempotency identity conflicted.
     Conflict,
+    /// The endpoint serves a different daemon than the client's saved identity.
+    DaemonIdentityMismatch,
     /// The requested object was not found.
     NotFound,
     /// A bounded queue or output limit was exceeded.
@@ -175,7 +179,7 @@ impl ErrorCode {
             Self::Unauthenticated => 401,
             Self::Unauthorized => 403,
             Self::InvalidInput => 400,
-            Self::Conflict | Self::Uncertain => 409,
+            Self::Conflict | Self::DaemonIdentityMismatch | Self::Uncertain => 409,
             Self::NotFound => 404,
             Self::Overload => 429,
             Self::Unavailable => 503,

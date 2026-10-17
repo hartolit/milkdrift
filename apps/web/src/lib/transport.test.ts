@@ -22,6 +22,21 @@ describe('authenticated observation transport', () => {
     expect(fetchMock.mock.calls.map(([, init]) => new Headers(init?.headers).get('Authorization'))).toEqual(['Bearer first', 'Bearer second']);
   });
 
+  it('binds ordinary reads and mutations to the learned daemon and forbids credential redirects', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({ protocol: PROTOCOL, value: {} })));
+    const client = new DaemonClient('http://127.0.0.1:10001', 'private-value');
+    await client.request('/v1/session');
+    client.bindIdentity('learned-daemon');
+    await client.request('/v1/workflows');
+    await client.request('/v1/daemon/rename', { request_id: 'exact-request', expected_generation: 1, name: 'Studio' });
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).has('x-milkdrift-daemon')).toBe(false);
+    for (const [, init] of fetchMock.mock.calls.slice(1)) {
+      expect(new Headers(init?.headers).get('x-milkdrift-daemon')).toBe('learned-daemon');
+      expect(init?.redirect).toBe('error');
+      expect(init?.credentials).toBe('omit');
+    }
+  });
+
   it('binds SSE cursors and daemon identity in authenticated headers', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('event: workflow_changed\nid: cursor-b\ndata: {}\n\n'));
     const client = new DaemonClient('http://127.0.0.1:10001', 'private-value');

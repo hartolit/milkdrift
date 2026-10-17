@@ -2,9 +2,22 @@
 
 Connect this standalone Svelte client to a Milkdrift daemon to submit a task, watch its actual
 execution and return to its retained result. The daemon owns admission, execution and history.
-The browser can close while work continues. A fresh browser needs the daemon URL, installation
-identity and scoped bearer credential; it discovers permitted workflows without a recovery file
-or a previously known workflow ID.
+The browser can close while work continues. A fresh browser needs the daemon URL and scoped bearer
+credential; it learns the daemon's name and identity from its authenticated session and discovers
+permitted workflows without a recovery file or a previously known workflow ID.
+
+The daemon owns its name. **Daemon settings** lets an authorized administrator rename it for every
+client; readers without that permission see the name without a rename action. Concurrent edits
+retain the draft for a new decision. A lost reply offers **Find rename receipt** or **Replay exact
+rename**, preserving the original request. Connected clients refresh names through the existing
+bounded observation stream, even when workflow discovery is unavailable or has no results.
+
+This browser saves the endpoint, learned identity and last observed name, never the credential.
+Disconnected names are explicitly cached. Older profiles retain their endpoint, identity pin and
+local selection ID; their former nickname is replaced by the daemon's name on authentication.
+If a saved address points to a different daemon, reconnect stops before loading work. Check the
+address, deliberately forget the saved connection, then connect afresh. **Connection details**
+explains the stable identity; it identifies the daemon, not a device, and is not a setup field.
 
 The task form supplies instructions, a named `brief` input and an optional captured UTF-8 `file`
 input. Captured files are bounded by the connected daemon's advertised limit, currently 16 KiB.
@@ -73,14 +86,14 @@ origin list disables browser access. The daemon's [README](../daemon/README.md) 
 account setup. Use a new explicitly selected development store for this sprint, preserving old
 stores and running services.
 
-Choose **Connect a daemon**, enter a connection name, daemon origin, installation identity and
-credential. The client checks the identity returned by the authenticated session and sends that
-identity on subsequent task requests. Credentials stay in memory. Disconnect aborts requests and
+Choose **Connect a daemon**, enter the daemon origin and
+credential. The client learns the authenticated daemon identity, checks the saved pin on reconnect
+and sends that identity on subsequent requests. Credentials stay in memory. Disconnect aborts requests and
 observation streams, clears the credential and removes that connection's data. Browser storage
-contains only connection names, origins and installation identities. A second connection has its
+contains only cached daemon names, origins and learned identity pins. A second connection has its
 own actor, requests, cursor, search and selected workflow.
-The client retains at most 16 named connections. **Forget** disconnects a connection and removes
-its saved non-secret settings, so another connection can be added without dropping existing names.
+The client retains at most 16 connections. **Forget** disconnects a connection and removes
+its saved non-secret settings, so another connection can be added without dropping existing connections.
 
 If a submission reply is lost, use **Find submission receipt** or **Replay exact submission**.
 The current form retains the exact request while it is open. A confirmed receipt opens its workflow

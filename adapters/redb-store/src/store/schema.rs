@@ -14,8 +14,13 @@ use milkdrift_persistence::{PersistenceError, TimestampMillis};
 use redb::{Database, ReadableTable, ReadableTableMetadata};
 
 pub(crate) fn validate_format(database: &Database) -> Result<(), PersistenceError> {
+    format_for_open(database, false).map(|_| ())
+}
+
+fn format_for_open(database: &Database, allow_previous: bool) -> Result<bool, PersistenceError> {
     let read = database.begin_read().map_err(error::redb)?;
     let table = read.open_table(METADATA).map_err(error::redb)?;
+    let mut previous = false;
     for (key, supported, document) in [
         (SCHEMA_VERSION_KEY, STORAGE_SCHEMA_VERSION, "storage"),
         (
@@ -29,7 +34,9 @@ pub(crate) fn validate_format(database: &Database) -> Result<(), PersistenceErro
             .map_err(error::redb)?
             .ok_or_else(|| error::corruption("storage format marker is missing"))?
             .value();
-        if found != supported {
+        if key == SCHEMA_VERSION_KEY && allow_previous && found == 19 {
+            previous = true;
+        } else if found != supported {
             return Err(PersistenceError::UnsupportedVersion {
                 document,
                 found: u32::try_from(found).unwrap_or(u32::MAX),
@@ -38,7 +45,43 @@ pub(crate) fn validate_format(database: &Database) -> Result<(), PersistenceErro
             });
         }
     }
-    crate::schema::validate_tables(&read)
+    if previous {
+        crate::schema::validate_previous_tables(&read)?;
+    } else {
+        crate::schema::validate_tables(&read)?;
+    }
+    Ok(previous)
+}
+
+/// Preflight the exact current or prompt-03 format before opening the source for writing.
+pub(crate) fn validate_for_open(database: &Database) -> Result<bool, PersistenceError> {
+    let previous = format_for_open(database, true)?;
+    validate_shared_state(database)?;
+    if !previous {
+        crate::daemon::validate(&database.begin_read().map_err(error::redb)?)?;
+    }
+    Ok(previous)
+}
+
+/// Only schema 19/internal 22 is adoptable. Existing tables and row bytes are untouched;
+/// the two new empty families and physical marker become visible in one transaction.
+pub(crate) fn adopt_daemon_metadata(
+    database: &Database,
+    faults: &dyn FaultInjector,
+) -> Result<(), PersistenceError> {
+    if !validate_for_open(database)? {
+        return Ok(());
+    }
+    let write = database.begin_write().map_err(error::redb)?;
+    crate::schema::initialize_daemon_tables(&write)?;
+    write
+        .open_table(METADATA)
+        .map_err(error::redb)?
+        .insert(SCHEMA_VERSION_KEY, STORAGE_SCHEMA_VERSION)
+        .map_err(error::redb)?;
+    faults.check(crate::fault::FaultPoint::BeforeDaemonSchemaAdoptionCommit)?;
+    write.commit().map_err(error::redb)?;
+    faults.check(crate::fault::FaultPoint::AfterDaemonSchemaAdoptionCommit)
 }
 
 pub(crate) fn initialize_schema(
@@ -91,6 +134,11 @@ pub(crate) fn initialize_schema(
 
 pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceError> {
     validate_format(database)?;
+    validate_shared_state(database)?;
+    crate::daemon::validate(&database.begin_read().map_err(error::redb)?)
+}
+
+fn validate_shared_state(database: &Database) -> Result<(), PersistenceError> {
     let read = database.begin_read().map_err(error::redb)?;
     let metadata = read.open_table(METADATA).map_err(error::redb)?;
     for key in [

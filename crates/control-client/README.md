@@ -10,7 +10,11 @@ The daemon maps the credential to an actor and grant; each operation checks the 
 
 ## Ordinary tasks
 
-`task_session` reports the installation identity, current actor, effective limits and task choices.
+`task_session` reports the installation identity, shared daemon name and name generation, current
+actor, rename permission, effective limits and task choices. After first authentication, use
+`with_daemon_identity` to bind subsequent requests to the learned identity. Retain that pin with
+the endpoint across reconnects; do not silently replace it when the endpoint serves another daemon.
+The name is presentation metadata and never replaces the stable identity.
 `upload_task_input` captures UTF-8 file content; `create_workflow` submits instructions and named
 inputs. Acceptance returns daemon-assigned identities and an alias map. A file input identifies
 captured bytes, not a path that can later change under the worker.
@@ -26,6 +30,13 @@ corrections are separate future tasks. `workflow_receipt` recovers exact durable
 a reply is lost. Mutations do not retry automatically. Replaying the same exact request returns
 its acceptance; changing a request under its old ID conflicts. A fresh client can authenticate and
 rediscover work without a saved recovery file.
+
+`daemon_metadata` reads the current shared name and this actor's separate rename permission.
+`rename_daemon` sends one generation-guarded `RenameDaemonRequest` through the same daemon command
+as the GUI. `daemon_rename_receipt` recovers the actor-scoped accepted result after a lost reply.
+Preserve the whole request for exact replay; changing its name or generation under the same identity
+conflicts. Current metadata and a historical receipt can have different generations after another
+client renames the daemon. A rename requires daemon configuration authority, not workflow editing.
 
 Other languages use the same [HTTP API](../../docs/reference/control-api.md). The
 [independent JSON integration test](../../apps/daemon/tests/control_plane/independent_client.rs)

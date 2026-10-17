@@ -24,7 +24,10 @@ fn default_limit() -> u16 {
     50
 }
 
-fn expected_daemon(headers: &HeaderMap, request_id: &str) -> Result<Option<String>, ApiError> {
+pub(super) fn expected_daemon(
+    headers: &HeaderMap,
+    request_id: &str,
+) -> Result<Option<String>, ApiError> {
     headers
         .get("x-milkdrift-daemon")
         .map(|value| value.to_str().map(str::to_owned))
@@ -122,7 +125,7 @@ pub(super) async fn receipt(
 }
 // Canonicalize the public request before defaults, aliases or uploads are resolved.
 // Receipt identity must distinguish omitted fields and different uploaded identities.
-fn canonical_request(body: &[u8], operation: &str) -> Result<Vec<u8>, ApiError> {
+pub(super) fn canonical_request(body: &[u8], operation: &str) -> Result<Vec<u8>, ApiError> {
     let value: serde_json::Value =
         decode_json(body).map_err(|error| protocol_error(error, operation.into()))?;
     milkdrift_control_protocol::encode_json(&value)

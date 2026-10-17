@@ -40,10 +40,14 @@ impl Owner {
                     })
             })
             .collect();
+        let metadata = self.daemon_metadata(session)?;
         Ok(TaskSessionDto {
             input_limit_bytes: u32::try_from(milkdrift_blueprint::MAX_TASK_TEXT_BYTES)
                 .map_err(failure)?,
             daemon_id: self.host_id.to_string(),
+            daemon_name: metadata.name,
+            daemon_name_generation: metadata.generation,
+            can_rename_daemon: metadata.can_rename,
             actor_id: session.actor.to_string(),
             limits: mapping::limits(&milkdrift_blueprint::WorkflowLimits::default()),
             capabilities,

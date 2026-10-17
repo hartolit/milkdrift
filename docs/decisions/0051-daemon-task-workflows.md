@@ -1,8 +1,8 @@
 # 0051 — Daemon-owned tasks and locally expanded methods
 
 **Standing:** selected engineering design, 2026-10-12, with the October 17 connection correction
-below selected after partial user review. Implementation through prompt 03 is recorded in status;
-the connection correction and later phases remain unimplemented and require their own assignments.
+below selected after partial user review. Implementation through prompt 03 and the assigned 02a
+connection correction is recorded in status; the visual correction and later phases require their own assignments.
 [Vision](../product/vision.md) owns the requirements;
 [status](../product/status.md) owns implemented facts. The
 [implementation sprint](../development/virtual-office/daemon-workflows-implementation/README.md)
@@ -193,7 +193,7 @@ available in connection details and is carried on subsequent requests without ma
 
 First-use trust rests on the operator-supplied endpoint and the transport/authentication rules below.
 A returned installation ID is not a certificate or an independent verification of server identity.
-The current initial session already sends the credential before comparing the manually entered ID;
+The original initial session already sent the credential before comparing the manually entered ID;
 automating that comparison does not introduce a stronger cryptographic claim.
 
 One durable daemon metadata record owns its display name and generation. Restricted operator
@@ -306,6 +306,14 @@ schema 19. Earlier task documents lack model admission linkage, frozen tool poli
 generations; the preceding review also added duration reservations and accounting watermarks.
 Readers refuse earlier formats without mutation rather than infer missing historical facts.
 Use a fresh development root for this revision and retain the old binary with its existing stores.
+
+The 02a name correction advances physical schema to 20 while keeping internal format 22. Its
+atomic adoption accepts only the exact preceding 19/22 store, adds metadata and rename receipt
+tables, and preserves workflow and receipt bytes. It cannot infer facts missing from older formats.
+Names seed only when absent. Adding `RenameDaemon` to Controller changes that preset's grant digest;
+frozen workflow authority is not rewritten to match it. Operators must finish old work using its
+preserved executable/configuration or accept prospective authorization refusal under the new grant.
+The [daemon guide](../operations/daemon.md) explains the practical upgrade sequence.
 
 The first cut costs more than a GUI wrapper: ordinary workflow representation and obsolete consumers
 must change together. Connect Svelte to a useful real task before completing that cleanup, retain the

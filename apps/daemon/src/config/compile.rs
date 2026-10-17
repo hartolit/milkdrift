@@ -144,6 +144,9 @@ impl DaemonConfig {
                 .map_err(|error| ConfigError::Invalid(error.to_string()))?;
         }
         validate_safe_identity("host_id", &self.host_id)?;
+        let name = milkdrift_persistence::DaemonDisplayName::new(self.name.clone())
+            .map_err(|error| ConfigError::Invalid(error.to_string()))?;
+        self.name = name.as_str().to_owned();
         validate_serving(&self.serving)?;
         validate_peers(&self.peers, &self.host_id, &self.secret_sources)?;
         let redacted_toml = redacted_toml(&redacted_value(&self)?)?;
@@ -172,6 +175,7 @@ impl DaemonConfig {
         Ok(DaemonPlan {
             role: self.role,
             host_id: self.host_id,
+            name,
             serving: self.serving,
             bind: self.bind,
             storage: StoragePlan {

@@ -402,7 +402,7 @@ fn configuration(
             credential_ref: credential.to_owned(),
             actor: actor.to_owned(),
             grant_id: grant.to_owned(),
-            grant_revision: 1,
+            grant_revision: 2,
             revocation_generation: 0,
             preset: AuthorityPresetConfig::Controller,
             authority: explicit_grant(
@@ -441,6 +441,7 @@ fn configuration(
         schema_version: milkdrift_daemon::DAEMON_CONFIG_SCHEMA_VERSION,
         role: milkdrift_control_protocol::HostRole::WorkflowEnabled,
         host_id: "host:local".to_owned(),
+        name: "Milkdrift".to_owned(),
         serving: Default::default(),
         data_root: session_root.join("data"),
         bind: reserve_endpoint().map_err(|error| error.to_string())?,

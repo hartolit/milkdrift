@@ -1,9 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { endpointUrl, loadProfiles, saveProfiles } from './connections';
 
 describe('connection profiles', () => {
+  it('still allows connection setup when the browser denies access to saved storage', () => {
+    const blocked = vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => { throw new Error('Storage access denied'); });
+    try { expect(loadProfiles()).toEqual([]); }
+    finally { blocked.mockRestore(); }
+  });
+
   it('saves only named non-secret settings', () => {
-    const profile = { id: 'a', label: 'Studio', endpoint: 'https://studio.example', daemonId: 'one', token: 'do-not-save' };
+    const profile = { id: 'a', cachedName: 'Studio', endpoint: 'https://studio.example', daemonId: 'one', token: 'do-not-save' };
     saveProfiles([profile]);
     expect(JSON.stringify(loadProfiles())).not.toContain('do-not-save');
     expect(window.localStorage.getItem('milkdrift.connections.v1')).not.toContain('token');
@@ -19,7 +25,14 @@ describe('connection profiles', () => {
   });
 
   it('refuses saved-profile overflow without silently dropping a connection', () => {
-    const profiles = Array.from({ length: 17 }, (_, index) => ({ id: String(index), label: `Daemon ${index}`, endpoint: 'https://studio.example', daemonId: String(index) }));
+    const profiles = Array.from({ length: 17 }, (_, index) => ({ id: String(index), cachedName: `Daemon ${index}`, endpoint: 'https://studio.example', daemonId: String(index) }));
     expect(() => saveProfiles(profiles)).toThrow('At most 16');
+  });
+
+  it('adopts an old local label only as a cached name while retaining its stable pin and selection id', () => {
+    window.localStorage.setItem('milkdrift.connections.v1', JSON.stringify([{ id: 'selected-before', label: 'Old nickname', endpoint: 'https://studio.example', daemonId: 'stable-pin' }]));
+    expect(loadProfiles()).toEqual([{ id: 'selected-before', cachedName: 'Old nickname', endpoint: 'https://studio.example', daemonId: 'stable-pin' }]);
+    saveProfiles(loadProfiles());
+    expect(window.localStorage.getItem('milkdrift.connections.v1')).not.toContain('label');
   });
 });

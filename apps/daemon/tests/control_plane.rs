@@ -2,6 +2,8 @@
 
 #[path = "control_plane/binary.rs"]
 mod binary;
+#[path = "control_plane/controller_upgrade.rs"]
+mod controller_upgrade;
 #[path = "control_plane/diagnostics.rs"]
 mod diagnostics;
 #[path = "control_plane/direct.rs"]
@@ -10,6 +12,8 @@ mod direct;
 mod direct_preparation;
 #[path = "control_plane/independent_client.rs"]
 mod independent_client;
+#[path = "control_plane/metadata.rs"]
+mod metadata;
 #[path = "control_plane/model.rs"]
 mod model;
 #[path = "control_plane/operations.rs"]

@@ -36,7 +36,7 @@ an alternate graph scheduler.
 | `authority` | Scoped grants, resource facts and current authorization decisions. |
 | `control` | Shared authenticated admission of create and prospective edit commands. |
 | `runtime` | Task readiness, frozen starts, entry, reports, cancellation, completion and recovery. |
-| `persistence` | Atomic workflow snapshots/receipts, artifacts, native claims, managed and peer storage ports. |
+| `persistence` | Atomic workflow and daemon-name receipts, artifacts, native claims, managed and peer storage ports. |
 | `redb-store` | Durable transactions, bounded accounting, integrity and fresh-format refusal. |
 | `capability` and `workspace` | External operation contracts, immutable artifacts and causal identities. |
 | `capability-host` | Selected generation permits, preparation, execution lifetime, materialization and resource claims. |
@@ -137,10 +137,38 @@ widen a later request's authority.
 
 Browser origins are exact configuration entries. Bearer credentials remain in memory; neither
 cookies nor URL tokens provide browser authentication. The standalone static client checks daemon
-identity and separates credentials, selection and cached results for each named connection.
+identity and separates credentials, selection and cached results for each connection.
 Non-loopback access requires a browser-trusted HTTPS endpoint; loopback HTTP is the development
 exception. TLS termination and origin configuration are deployment responsibilities, not workflow
 semantics.
+
+## Daemon connections and names
+
+A first browser connection needs an endpoint and credential. Authenticated session bootstrap returns
+the daemon's stable identity and shared name; the client saves the identity with the endpoint and
+binds subsequent requests to it. Reconnect checks the saved identity before loading work. A different
+installation at the address ends ordinary use and requires deliberately forgetting that connection
+before connecting afresh. Discovery is first-use endpoint trust under the existing transport policy,
+not a separate identity-verification service. Native/JSON callers may supply the same identity header;
+the server continues to accept unpinned callers. A name neither proves identity nor grants authority.
+
+The daemon's private metadata module runs under the existing Owner queue and authorization path.
+`DaemonMetadataStore` is its narrow persistence port; redb owns atomic name, generation and exact
+rename-receipt storage. `DaemonDisplayName` owns normalization and validation. A configured name,
+or `Milkdrift` when omitted, seeds absent metadata once. Later configuration changes cannot undo an
+accepted rename. A rename requires Controller's separate `RenameDaemon` operation and configuration
+scope, independently of workflow editing, in both daemon roles. Metadata never lives in a workflow.
+
+CLI and Svelte use the same generation-guarded rename command and actor-scoped recovery receipt.
+Receipt lookup precedes stale-generation and capacity rejection; changed canonical requests conflict.
+The bounded receipt family refuses new names at capacity while preserving current reads and exact
+replay. The [control API](reference/control-api.md#shared-daemon-name) owns the public fields and bounds.
+
+The existing two-second invalidation stream coalesces session metadata refresh with workflow reads,
+including clients with no workflows. Checked identity and name generations reject obsolete responses;
+disconnect clears active state. Names stored in browser profiles are explicitly cached observations.
+Legacy profiles preserve their endpoint, identity pin and selection ID, replacing local labels with
+the returned name after authentication. Cache failures do not replace current in-memory metadata.
 
 ## History, capacity and recovery
 
@@ -168,8 +196,13 @@ shutdown before workers drain, cancel or retain uncertainty under the configured
 uses one durable high-water owner for request and worker paths, avoiding clock rollback and owner
 queue lock inversion.
 
-Unsupported configuration, protocol and store formats are refused explicitly. Old databases are
-checked before writes; adoption requires a new selected empty root. Do not stop existing services,
-reset a store or repoint an existing installation merely to try the new task client. See
+Unsupported configuration, protocol and store formats are refused explicitly. The current reader
+can adopt physical schema 19 only with internal document format 22 and its exact valid table set.
+One transaction adds the daemon metadata tables and changes the physical marker to 20 without
+rewriting workflow, receipt or installation-identity rows. Earlier graph/task formats still require
+a separate fresh root; this narrow addition does not restore their readers or change frozen grants.
+Daemon configuration stays at version 14 because the optional name seed preserves existing reads;
+control protocol 3.2 requires coordinated client upgrades. Do not stop existing services, reset a
+store or repoint an existing installation merely to try the new task client. See
 [operation](operations/daemon.md), [authority](operations/authority.md) and the
 [public API](reference/control-api.md) for configuration and transport details.

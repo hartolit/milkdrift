@@ -104,6 +104,8 @@ pub enum AuthorityOperation {
     InspectConfiguration,
     /// Reload validated daemon configuration.
     ReloadConfiguration,
+    /// Change the daemon's shared display name under configuration scope.
+    RenameDaemon,
     /// Begin an orderly daemon drain.
     DrainDaemon,
     /// Shut down the daemon owner.

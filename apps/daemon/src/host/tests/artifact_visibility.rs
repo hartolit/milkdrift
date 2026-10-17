@@ -188,7 +188,7 @@ fn request() -> TestResult<milkdrift_control_protocol::tasks::CreateWorkflowRequ
         "request_id":"visibility-create", "title":"Receipt visibility", "description":"",
         "tasks":[{"alias":"future","definition":{
             "title":"Future work","description":"","instructions":"No entry without supplied text",
-            "capability":{"id":"unconfigured","operation":"model.generate"},
+            "capability":{"id":"visibility-model","operation":"model.generate"},
             "inputs":{"brief":{"kind":"supplied","name":"brief","optional":false}},
             "dependencies":[],"required":true,"corrective_of":null,"paths":[]
         }}],"inputs":{},"finish_when_settled":false,"limits":null
@@ -198,13 +198,37 @@ fn request() -> TestResult<milkdrift_control_protocol::tasks::CreateWorkflowRequ
 #[tokio::test]
 async fn retained_task_reply_rechecks_revocation_and_expiry_without_editing_receipt() -> TestResult
 {
-    let (root, initial) = queue_test_host()?;
-    initial.shutdown().await?;
+    let root = tempfile::tempdir()?;
+    let token = root.path().join("operator.token");
+    fs::write(&token, "queue-test-token")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(&token, fs::Permissions::from_mode(0o600))?;
+    }
     let clock = Arc::new(ControlledDaemonClock::new(100));
-    let host = DaemonHost::start_with_clock(
-        owner_test_config(root.path(), &root.path().join("operator.token"), 32)?,
-        clock.clone(),
+    let profile = root.path().join("visibility-model.json");
+    fs::write(
+        &profile,
+        super::unavailable_models::profile("127.0.0.1:9".parse()?)?.to_canonical_json()?,
     )?;
+    let mut config = owner_test_document(root.path(), &root.path().join("operator.token"), 32, 100);
+    config
+        .adapters
+        .model_profiles
+        .push(crate::ModelProfileConfig {
+            capability_id: "visibility-model".into(),
+            profile,
+        });
+    let actor = config.actors.first_mut().ok_or("actor absent")?;
+    actor.authority.valid_until = milkdrift_authority::BoundaryTimeMillis::new(101);
+    actor.authority.resources.network = milkdrift_authority::NetworkScope::new(
+        std::collections::BTreeSet::from([milkdrift_authority::NetworkProfileRef::new(
+            "writing-profile",
+        )?]),
+        std::collections::BTreeSet::from(["127.0.0.1:9".to_owned()]),
+    )?;
+    let host = DaemonHost::start_with_clock(config.validate(root.path())?, clock.clone())?;
     let mut session = host
         .auth
         .authenticate(b"queue-test-token")
@@ -212,7 +236,6 @@ async fn retained_task_reply_rechecks_revocation_and_expiry_without_editing_rece
     let (session, before) = host
         .dispatch(false, move |owner| {
             let check = || -> TestResult<_> {
-                narrow(owner, &mut session, false)?;
                 let request = request()?;
                 let canonical = serde_json::to_vec(&serde_json::to_value(&request)?)?;
                 owner

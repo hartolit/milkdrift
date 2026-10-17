@@ -26,6 +26,7 @@ mod clock;
 mod health;
 mod maintenance;
 mod managed;
+mod metadata;
 mod peer_store;
 mod peers;
 mod queue;
@@ -36,6 +37,7 @@ mod startup;
 mod storage_ports;
 mod tasks;
 mod uploads;
+pub(crate) use metadata::DaemonMetadataRequest;
 pub(crate) use tasks::TaskRequest;
 
 use clock::DurableClock;

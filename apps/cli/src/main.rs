@@ -253,6 +253,21 @@ enum InvocationCommand {
 
 #[derive(Subcommand)]
 enum DaemonCommand {
+    /// Read this daemon's shared name, generation and rename permission.
+    Name,
+    /// Rename this daemon for every client using an observed generation and exact request identity.
+    Rename {
+        /// Proposed shared name. The daemon validates and trims it.
+        name: String,
+        /// Previously observed name generation from daemon name.
+        #[arg(long)]
+        expected_generation: u64,
+        /// Preserve this identity and every argument if the response is lost.
+        #[arg(long)]
+        request_id: String,
+    },
+    /// Recover this actor's accepted rename after a lost reply.
+    RenameReceipt { request_id: String },
     /// Read liveness state.
     Health(StreamArgs),
     /// Require readiness after recovery/adapters.

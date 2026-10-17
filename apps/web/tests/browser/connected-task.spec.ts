@@ -21,11 +21,9 @@ const path = process.env.MILKDRIFT_BROWSER_CONFIG;
 if (!path) throw new Error('Set MILKDRIFT_BROWSER_CONFIG to the private browser.json produced by the Rust connected-task evidence harness.');
 const config = JSON.parse(readFileSync(path, 'utf8')) as BrowserFixture;
 
-async function connect(page: Page, daemon: DaemonFixture, name: string) {
+async function connect(page: Page, daemon: DaemonFixture) {
   await page.getByRole('button', { name: 'Add daemon connection' }).click();
-  await page.getByLabel('Connection name').fill(name);
   await page.getByLabel('Daemon URL').fill(daemon.url);
-  await page.getByLabel('Installation identity').fill(daemon.identity);
   await page.getByLabel('Bearer credential').fill(daemon.token);
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Your workflows', exact: true })).toBeVisible();
@@ -54,7 +52,7 @@ test('a real uploaded project produces discoverable input-dependent results afte
   const first = await browser.newContext();
   const initial = await first.newPage();
   await initial.goto('/');
-  await connect(initial, config.a, 'Studio A');
+  await connect(initial, config.a);
   await submit(initial, title, config.input_a);
   await expect(initial.getByLabel('Task dependency timeline').getByText('Running', { exact: true })).toBeVisible();
   await first.close();
@@ -63,7 +61,7 @@ test('a real uploaded project produces discoverable input-dependent results afte
   const page = await fresh.newPage();
   await page.goto('/');
   expect(await page.evaluate(() => window.localStorage.length)).toBe(0);
-  await connect(page, config.a, 'Studio A');
+  await connect(page, config.a);
   await page.getByRole('button', { name: new RegExp(title) }).click();
   const output = page.getByTestId('result-output');
   await expect(output).toBeVisible({ timeout: 30000 });
@@ -83,9 +81,10 @@ test('a real uploaded project produces discoverable input-dependent results afte
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('button', { name: 'List', exact: true }).click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  expect(await page.locator('.task-list button').first().evaluate((element) => element.querySelector('.badge')!.getBoundingClientRect().right <= element.getBoundingClientRect().right)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath('phone-result.png'), fullPage: true });
 
-  await connect(page, config.b, 'Studio B');
+  await connect(page, config.b);
   await page.getByRole('searchbox').fill(title);
   await page.getByRole('button', { name: 'Search', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'No matching workflows', exact: true })).toBeVisible();
@@ -101,7 +100,7 @@ test('a real uploaded project produces discoverable input-dependent results afte
 test('a queued missing-input task can be edited and repaired through the same inspector', async ({ page }) => {
   const title = `Queued Cargo analysis ${Date.now()}`;
   await page.goto('/');
-  await connect(page, config.a, 'Repair studio');
+  await connect(page, config.a);
   await submit(page, title, config.input_b, true);
   await expect(page.getByLabel('Task dependency timeline').getByText('Queued', { exact: true })).toBeVisible();
   await expect(page.getByText('Not started', { exact: true }).first()).toBeVisible();
@@ -131,7 +130,7 @@ test('a queued missing-input task can be edited and repaired through the same in
 
 test('queued cancellation permits linked replacement without inventing original execution times', async ({ page }) => {
   await page.goto('/');
-  await connect(page, config.a, 'Stop studio');
+  await connect(page, config.a);
   await submit(page, `Queued stop ${Date.now()}`, config.input_a, true);
   await expect(page.getByLabel('Task dependency timeline')).toContainText('missing supplied input brief');
   await page.getByRole('button', { name: 'Request stop', exact: true }).click();
@@ -160,7 +159,7 @@ test('queued cancellation permits linked replacement without inventing original 
 
 test('a reviewed future batch atomically revises a queued task and supplies its missing input', async ({ page }, testInfo) => {
   await page.goto('/');
-  await connect(page, config.a, 'Batch studio');
+  await connect(page, config.a);
   await submit(page, `Reviewed batch ${Date.now()}`, config.input_b, true);
   await expect(page.getByLabel('Task dependency timeline')).toContainText('missing supplied input brief');
   const taskId = await page.getByTestId('task-id').innerText();
@@ -200,7 +199,7 @@ test('a reviewed future batch atomically revises a queued task and supplies its 
 
 test('a cyclic future batch is refused without changing accepted work or losing its draft', async ({ page }) => {
   await page.goto('/');
-  await connect(page, config.a, 'Refusal studio');
+  await connect(page, config.a);
   await submit(page, `Refused batch ${Date.now()}`, config.input_b, true);
   await expect(page.getByLabel('Task dependency timeline')).toContainText('missing supplied input brief');
   const taskId = await page.getByTestId('task-id').innerText();
@@ -225,7 +224,7 @@ test('a cyclic future batch is refused without changing accepted work or losing 
 
 test('a lost accepted reply is recovered by the public receipt without resubmission', async ({ page }) => {
   await page.goto('/');
-  await connect(page, config.a, 'Recovery studio');
+  await connect(page, config.a);
   const title = `Lost reply ${Date.now()}`;
   await fillTask(page, title, config.input_a);
   let submitted = 0;
@@ -247,9 +246,7 @@ test('a lost accepted reply is recovered by the public receipt without resubmiss
 test('an unreachable daemon leaves a retryable connection form with no retained credential', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Connect a daemon', exact: true }).click();
-  await page.getByLabel('Connection name').fill('Unavailable');
   await page.getByLabel('Daemon URL').fill('http://127.0.0.1:1');
-  await page.getByLabel('Installation identity').fill('host:unavailable');
   await page.getByLabel('Bearer credential').fill('non-secret-unreachable-test');
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('could not be reached');
@@ -260,7 +257,7 @@ test('an unreachable daemon leaves a retryable connection form with no retained 
 test('the configured controlled model receives the same brief and captured file through the daemon', async ({ page }) => {
   test.skip(!config.model_capability, 'The Rust harness must provide the controlled model capability.');
   await page.goto('/');
-  await connect(page, config.a, 'Model studio');
+  await connect(page, config.a);
   const title = `Controlled model analysis ${Date.now()}`;
   await fillTask(page, title, config.input_b);
   await page.getByLabel('Capability', { exact: true }).selectOption({ label: `${config.model_capability} · model.generate` });
@@ -276,7 +273,7 @@ test('the daemon admits model-authored parallel research and correction without 
   if (!config.planning_capability) throw new Error('The Rust prompt-03 fixture must provide planning_capability for automatic-work evidence.');
   test.setTimeout(120000);
   await page.goto('/');
-  await connect(page, config.a, 'Animation studio');
+  await connect(page, config.a);
   let continuations = 0;
   page.on('request', (request) => { if (request.method() === 'POST' && request.url().endsWith('/changes')) continuations++; });
   const title = `Automatic animation research ${Date.now()}`;
@@ -331,29 +328,124 @@ test('the daemon admits model-authored parallel research and correction without 
 
 test('keyboard access and identity refusal are visible on a phone layout', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(({ endpoint }) => {
+    window.localStorage.setItem('milkdrift.connections.v1', JSON.stringify([{ id: 'old-profile', label: 'Old studio', endpoint, daemonId: 'not-the-configured-installation' }]));
+  }, { endpoint: config.a.url });
   await page.goto('/');
   await page.keyboard.press('Tab');
   await expect(page.getByRole('link', { name: 'Skip to workspace' })).toBeFocused();
-  await page.getByRole('button', { name: 'Connect a daemon', exact: true }).click();
-  await page.getByLabel('Connection name').fill('Wrong identity');
-  await page.getByLabel('Daemon URL').fill(config.a.url);
-  await page.getByLabel('Installation identity').fill('not-the-configured-installation');
+  await page.getByRole('button', { name: /^Old studio/ }).click();
   await page.getByLabel('Bearer credential').fill(config.a.token);
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await expect(page.getByRole('alert')).toContainText('Installation identity does not match');
+  await expect(page.getByRole('alert')).toContainText('different daemon');
+  await expect(page.getByRole('heading', { name: 'Your workflows' })).toHaveCount(0);
+  expect(await page.evaluate(() => JSON.parse(window.localStorage.getItem('milkdrift.connections.v1')!)[0].daemonId)).toBe('not-the-configured-installation');
   await expect(page.getByLabel('Bearer credential')).toHaveValue('');
+  await page.getByRole('button', { name: 'Forget Old studio connection' }).click();
+  await connect(page, config.a);
+  await expect(page.getByRole('button', { name: /^Studio A/ })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
 test('a browser at an unconfigured origin receives a useful connection refusal', async ({ page }) => {
   await page.goto('http://127.0.0.1:4174');
   await page.getByRole('button', { name: 'Connect a daemon', exact: true }).click();
-  await page.getByLabel('Connection name').fill('Denied origin');
   await page.getByLabel('Daemon URL').fill(config.a.url);
-  await page.getByLabel('Installation identity').fill(config.a.identity);
   await page.getByLabel('Bearer credential').fill(config.a.token);
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('allowed browser origin');
   await expect(page.getByLabel('Bearer credential')).toHaveValue('');
   await expect(page.getByRole('heading', { name: 'Your workflows', exact: true })).toHaveCount(0);
+});
+
+test('independent clients share a recovered rename and distinguish duplicate names by daemon address', async ({ browser }, testInfo) => {
+  const controller = await browser.newContext();
+  const observer = await browser.newContext();
+  const first = await controller.newPage();
+  const second = await observer.newPage();
+  await first.goto('/');
+  await second.goto('/');
+  await connect(first, config.a);
+  await connect(second, config.a);
+  await second.getByRole('searchbox').fill(`No workflow matches this ${Date.now()}`);
+  await second.getByRole('button', { name: 'Search', exact: true }).click();
+  await expect(second.getByRole('heading', { name: 'No matching workflows' })).toBeVisible();
+  await connect(first, config.b);
+  await first.getByRole('button', { name: /^Studio A/ }).click();
+  await first.getByRole('button', { name: 'Daemon settings', exact: true }).click();
+  await expect(first.getByLabel('Daemon name')).toHaveValue('Studio A');
+  let submitted = 0;
+  await first.route('**/v1/daemon/rename', async (route) => {
+    submitted++;
+    const response = await route.fetch();
+    expect(response.ok()).toBe(true);
+    await route.abort('failed');
+  });
+  try {
+    await first.getByLabel('Daemon name').fill('Studio B');
+    await first.getByRole('button', { name: 'Save daemon name', exact: true }).click();
+    await expect(first.getByRole('button', { name: 'Find rename receipt' })).toBeVisible();
+    await first.getByRole('button', { name: 'Back to work' }).click();
+    await first.getByRole('button', { name: 'Daemon settings', exact: true }).click();
+    await expect(first.getByRole('button', { name: 'Find rename receipt' })).toBeVisible();
+    await expect(second.getByRole('button', { name: /^Studio B/ })).toBeVisible();
+    await first.getByRole('button', { name: 'Find rename receipt' }).click();
+    await expect(first.getByRole('status')).toContainText('Name saved on this daemon');
+    await expect(first.getByRole('button', { name: 'Save daemon name', exact: true })).toBeEnabled();
+    expect(submitted).toBe(1);
+    const duplicates = first.getByRole('button', { name: /^Studio B/ });
+    await expect(duplicates).toHaveCount(2);
+    await expect(duplicates.filter({ hasText: config.a.url })).toBeVisible();
+    await expect(duplicates.filter({ hasText: config.b.url })).toBeVisible();
+    await first.screenshot({ path: testInfo.outputPath('shared-name-desktop.png'), fullPage: true });
+    await first.setViewportSize({ width: 390, height: 844 });
+    await expect(duplicates.filter({ hasText: config.a.url })).toContainText(config.a.url);
+    await expect(duplicates.filter({ hasText: config.b.url })).toContainText(config.b.url);
+    expect(await first.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await first.screenshot({ path: testInfo.outputPath('shared-name-phone.png'), fullPage: true });
+    await second.reload();
+    await expect(second.getByRole('button', { name: /^Studio B/ })).toContainText('Cached name');
+    await second.getByRole('button', { name: /^Studio B/ }).click();
+    await second.getByLabel('Bearer credential').fill(config.a.token);
+    await second.getByRole('button', { name: 'Connect', exact: true }).click();
+    await expect(second.getByRole('heading', { name: 'Your workflows' })).toBeVisible();
+    await expect(second.getByRole('button', { name: /^Studio B/ })).toContainText('Connected');
+    const fresh = await browser.newContext();
+    try {
+      const freshPage = await fresh.newPage();
+      await freshPage.goto('/');
+      await connect(freshPage, config.a);
+      await expect(freshPage.getByRole('button', { name: /^Studio B/ })).toBeVisible();
+    } finally { await fresh.close(); }
+    const profiles = await first.evaluate(() => JSON.parse(window.localStorage.getItem('milkdrift.connections.v1')!));
+    expect(profiles.map((profile: { daemonId: string }) => profile.daemonId)).toEqual([config.a.identity, config.b.identity]);
+    expect(JSON.stringify(profiles).includes(config.a.token)).toBe(false);
+    expect(JSON.stringify(profiles).includes(config.b.token)).toBe(false);
+  } finally {
+    await first.unroute('**/v1/daemon/rename');
+    // Leave the shared review fixture with its seeded human-readable name.
+    if (await first.getByRole('button', { name: 'Find rename receipt' }).count()) {
+      await first.getByRole('button', { name: 'Find rename receipt' }).click();
+    }
+    await first.getByLabel('Daemon name').fill('Studio A');
+    await first.getByRole('button', { name: 'Save daemon name', exact: true }).click();
+    await expect(first.getByRole('button', { name: /^Studio A/ })).toBeVisible();
+    await controller.close();
+    await observer.close();
+  }
+});
+
+test('a bad credential cannot install a saved profile or expose daemon work', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Connect a daemon', exact: true }).click();
+  await page.getByLabel('Daemon URL').fill(config.a.url);
+  await page.getByLabel('Bearer credential').fill('deliberately-invalid-browser-credential');
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await expect(page.getByRole('alert')).toBeVisible();
+  await expect(page.getByLabel('Bearer credential')).toHaveValue('');
+  await expect(page.getByRole('heading', { name: 'Your workflows' })).toHaveCount(0);
+  expect(await page.evaluate(() => window.localStorage.getItem('milkdrift.connections.v1'))).toBeNull();
+  await page.getByLabel('Bearer credential').fill(config.a.token);
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Your workflows' })).toBeVisible();
 });

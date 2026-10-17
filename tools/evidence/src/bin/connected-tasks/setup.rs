@@ -63,6 +63,13 @@ pub(super) fn configure(
         json!(directory.join("data")),
     )?;
     set(&mut configuration, "/bind", json!(endpoint.to_string()))?;
+    configuration
+        .as_object_mut()
+        .ok_or("configuration is not an object")?
+        .insert(
+            "name".into(),
+            json!(format!("Studio {}", name.to_uppercase())),
+        );
     set(
         &mut configuration,
         "/host_id",
@@ -99,6 +106,11 @@ pub(super) fn configure(
         &mut configuration,
         "/actors/0/authority/resources/workflow_run",
         json!({"type":"any"}),
+    )?;
+    set(
+        &mut configuration,
+        "/actors/0/authority/resources/daemon/configuration",
+        json!(true),
     )?;
     set(
         &mut configuration,
