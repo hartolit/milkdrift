@@ -1,7 +1,9 @@
 # 02b — Apply the visual direction and real Milkdrift brand
 
-**Prepared, not assigned.** Prerequisite: [02a](02a-daemon-connection-identity.md) is implemented and
-passes focused checks. The user strongly rejected the current visual design during the partial
+**Assigned October 17; implemented locally, actual user review pending.** Prerequisite:
+[02a](02a-daemon-connection-identity.md) is implemented and passes focused checks. The
+[handoff](handoff.md) records verification and the remaining user review. The user strongly rejected
+the original visual design during the partial
 [02 review](handoff.md#actual-user-review-and-corrections) and supplied the reference below. This
 assignment repairs the maintained production Svelte client before more feature surfaces are added.
 It does not authorize 04 or revive the superseded frontend program.

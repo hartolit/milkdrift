@@ -12,7 +12,8 @@ The [whiteboard](whiteboard/README.md) retains broader issues and discussions ac
 [Daemon workflows implementation](daemon-workflows-implementation/README.md) has completed prompt 03
 locally, with the early user review in progress. The user's connection and visual feedback produced
 corrective prompts 02a/02b before further feature work. Assigned 02a implements shared names and
-simpler setup, with the user's recheck pending. The visual correction 02b and 04–07 remain
+simpler setup. Assigned 02b applies the supplied visual direction and real logo. Their user rechecks
+and the substantive early journey remain open; 04–07 remain
 unassigned. Its [handoff](daemon-workflows-implementation/handoff.md) records tested checkpoints,
 actual review observations and how to resume; the sprint README owns the next assignment.
 

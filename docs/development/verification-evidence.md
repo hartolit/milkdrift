@@ -12,8 +12,69 @@ retains the environment, source material, finding owners and resume procedure.
 
 Useful task output, close/reconnect, daemon switching, missing-input repair, failure and stop
 understanding have not yet been reviewed by this user. Browser engine and physical-phone use were
-not established. The assigned 02a implementation has focused evidence below; its user recheck and
-the unassigned 02b visual correction remain open.
+not established. The assigned 02a and 02b implementations have focused evidence below; their user
+rechecks remain open.
+
+## Prompt 02b visual design verification
+
+Implementation checkpoint `90ce1ff` applies the supplied dark reference to the maintained Svelte client,
+including navigation, connection/settings, authoring, dependency timeline/list, inspector and batch
+editing. The exact supplied SVG is served from `apps/web/public/milkdrift-logo.svg`; its SHA-256 and
+the source asset both equal `abc0d1d6cf7b5c9f09efe2a263c0463906eb9f49caa8491aaa2959634cb76ea5`.
+No backend protocol, task semantics, stores or dependency versions changed. These October 17 local
+Linux checks use the existing Node/frontend dependencies and controlled Rust daemon fixture.
+
+`npm --prefix apps/web run check`, `run lint`, `run test:unit` and `run build` pass. The unit run has
+67 cases across 12 files. Logs are `target/prompt02b-web-{check,lint,unit,build}-final.log`.
+Added cases cover inspector draft retention, Escape/focus return, same-task reselection, batch
+entry/exit focus, preserving a corrective-link input while clearing it, form grouping and staged
+draft retention across preview. The final production assets are `index-DqbC89gH.css` and
+`index-BOsxZi1E.js`.
+
+With `MILKDRIFT_BROWSER_CONFIG=/tmp/milkdrift-prompt02b-browser-20261017-b/browser.json`, the complete
+production Chromium suite passes all 16 cases in `target/prompt02b-web-browser-final.log`. The new
+cases exercise branded empty/discovery/settings views, long-title inspector draft/focus behavior
+and a failed supplied manifest with retained blocked workflow. Existing tests continue to exercise
+input-dependent results after client closure, missing-input repair, cancellation/correction, complete
+batches, rejected cycles, exact lost-reply recovery, model-created parallel work and shared naming.
+Narrow navigation, an 80-character unbroken daemon name and result collapse/reopen are also exercised.
+
+The first run exposed stale upload/status selectors and a keyboard test that tried to click beneath
+its focused skip link; these were corrected without removing the underlying assertions. Render
+review caught CSS import order overriding component panels, status labels shrinking inside words,
+and a corrective-link disclosure coupled to its field value. The final five affected result,
+inspector, failed-input, batch and model-workflow cases pass again in
+`target/prompt02b-web-browser-render.log`. The status-label check verifies one rendered text line.
+The automatic case also passes in `target/prompt02b-web-browser-parallel.log` after adding a check
+for at least two real Running tasks and two execution bars with no recorded end. Its inspected
+`running-parallel-desktop.png` under `target/prompt02b-browser-parallel-results/` shows three
+simultaneous research tasks and queued composition.
+
+Desktop and 390-pixel screenshots were inspected under `target/prompt02b-browser-final-results/`
+and `target/prompt02b-browser-render-results/`. They cover empty/populated work, authoring, settings,
+long titles/names, failed/blocked work, retained results and batch preview. The inspector stacks on
+narrow screens and preserves an edit through Escape/reopen. The real browser checks visible focus,
+keyboard scrolling through long content, reduced motion and 200% root-text enlargement without
+document overflow. This is enlarged-text evidence, not a separate browser-zoom or screen-reader
+qualification. Sampled palette calculations give text contrast of 7.44:1 or greater for muted/body,
+primary actions, selected navigation and task state labels; this is not a full accessibility audit.
+
+A separate browser inspection submitted a real Cargo report, observed Running and used the
+maintained Rust `connected-tasks control --root /tmp/milkdrift-prompt02b-browser-20261017-b crash-a`
+operation. Desktop and narrow renders retain **Uncertain**, the restart reason and **No settlement
+recorded**. The first inspection's five-second stop assertion expired; a fresh
+authenticated client then confirmed **Uncertain · stop requested**, a disabled repeat-stop button
+and no settlement. The daemon reports that no exact capability generation owns the cancellation;
+the UI does not claim the process stopped. Screenshots and the final assertion result are under
+`target/prompt02b-uncertain-render/`, including `result.json`. Fault orchestration remained in Rust;
+the temporary frontend driver only operated and inspected the production client. This is evidence
+for the displayed uncertain state, not a general crash-recovery or effect-containment qualification.
+
+`cargo test -p milkdrift-evidence --test repository_contracts --all-features documentation::` passes
+all eight documentation contracts in `target/prompt02b-doc-contracts.log`. Diff checks pass.
+Prompt 07 remains the integrated gate. No hosted CI, deployed HTTPS, physical-phone, real-model
+quality or actual-user visual acceptance is claimed. The original user-review stores remain intact;
+browser/fault evidence uses separate named fixture roots.
 
 ## Prompt 02a shared daemon naming verification
 

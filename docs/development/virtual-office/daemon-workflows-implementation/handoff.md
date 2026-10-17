@@ -8,8 +8,9 @@ complete batch, limits, wait decisions, frozen inputs and cause of follow-up wor
 The user authorized proceeding with actual prompt-02 review still pending. That review has now
 begun and produced the corrections below. Agent browser checks do not complete it. Subsequently
 assigned 02a implements address/credential connection, learned identity pins and a shared daemon
-name with authorized rename and exact recovery. Its user recheck remains pending. The prepared
-visual correction 02b and prompts 04–07 remain unassigned.
+name with authorized rename and exact recovery. Subsequently assigned 02b applies the supplied dark
+visual direction and exact logo across the maintained client. Their user rechecks remain pending;
+prompts 04–07 remain unassigned.
 Prompt 07 owns the integrated full-system gate. No push, history rewrite, external service change or
 paid model use occurred.
 
@@ -36,7 +37,7 @@ owns A-to-B execution-host relationships, a separate boundary.
 | Finding | Owner and acceptance |
 | --- | --- |
 | Setup requires users to invent a local name and supply a technical identity. | [02a](02a-daemon-connection-identity.md) implemented address/credential setup, learned identity pin, durable shared name and authorized rename across clients/restart; the user's recheck is pending. |
-| Current appearance is rejected and the supplied brand is absent. | [02b](02b-visual-design-and-brand.md): dark workspace, compact navigation, real logo and desktop inspector using current task semantics; user reviews the working result. |
+| Original appearance is rejected and the supplied brand is absent. | [02b](02b-visual-design-and-brand.md) implements the dark workspace, compact navigation, real logo and desktop inspector using current task semantics; the user's review of the working result is pending. |
 | User review has only reached connection. | Resume [02](02-early-user-review.md) after the corrections: useful input-dependent work, results, client closure/reconnect, daemon switching, missing-input repair, failure and stop understanding remain open. |
 
 The [retained mockup](assets/milkdrift-ui-sample.png) is byte-identical to the user's
@@ -44,15 +45,30 @@ The [retained mockup](assets/milkdrift-ui-sample.png) is byte-identical to the u
 `6e4eaaf841727207fc1e3f92d3c11506ae1693d1ee73f76c9cfb969c0505f575`.
 It is source design material, not a screenshot of the implemented app or an acceptance result.
 The supplied [logo](../milkdrift-remedial-planning-v3/assets/milkdrift-logo.svg) remains the brand
-source; 02b establishes its maintained production location. The mockup's old controls do not
+source; 02b copies it unchanged into `apps/web/public/milkdrift-logo.svg`. Both copies have SHA-256
+`abc0d1d6cf7b5c9f09efe2a263c0463906eb9f49caa8491aaa2959634cb76ea5`.
+The mockup's old controls do not
 authorize features. The original corrective planning changed no executable code; the subsequently
-assigned 02a now changes connection and naming behavior. Visual implementation remains 02b.
+assigned 02a changes connection and naming behavior, and 02b changes the client presentation.
 
-Next sequence: assign 02b, finish the actual 02 review including the naming recheck, then separately assign 04.
+Next sequence: finish the actual 02 review including naming and visual rechecks, then separately assign 04.
 Preserve the completed 03 work and 04–07 numbering. Prompt 07 remains the sole integrated gate;
 this partial feedback is not user acceptance of the journey or the proposed corrections.
 
 ## Tested checkpoints and evidence
+
+The 02b implementation checkpoint is `90ce1ff`. It replaces the pale theme and literal brand mark,
+groups instructions/context/execution, adds responsive daemon navigation and a desktop side inspector,
+and preserves drafts and keyboard focus when inspectors or batch editors open and close. The
+[02b verification evidence](../../verification-evidence.md#prompt-02b-visual-design-verification)
+records frontend check/lint, 67 unit cases, production build, all 16 browser cases, five final render
+reruns, the live parallel-work check and eight documentation contracts. Screenshots under
+`target/prompt02b-browser-final-results/`, `target/prompt02b-browser-render-results/` and
+`target/prompt02b-browser-parallel-results/` were inspected at desktop and narrow widths, including
+enlarged text, long content and failure. `target/prompt02b-uncertain-render/` retains an actual
+interrupted-daemon render and a fresh-client check that a stop request remains uncertain. The
+automated fixture daemons were then stopped; their roots and evidence remain preserved. No actual
+user approval is inferred from these checks.
 
 The 02a implementation checkpoint is `c4d7f39`. It includes the storage port/adoption, authority and
 shared API, native client/CLI, Svelte setup/settings, recovery fixes and current owner documentation.
@@ -96,6 +112,9 @@ The latest bounded fixture root is:
 `/tmp/milkdrift-prompt02a-user-review-20261017-b/`
 
 It was started for the 02a recheck with immutable daemon/fixture copies and a four-hour lifetime.
+The 02b handoff keeps these same user-review endpoints and stores, serving the rebuilt production
+client at `http://127.0.0.1:4173/`. Its separate automated and interrupted-task fixtures do not modify
+this review root.
 It is separate from the automated browser fixture and the previous user-review root, which was preserved. This new root
 may disappear at host reboot; verify readiness rather than assuming it still runs. Its `ready.json`
 records endpoints and process paths; `browser.json` is private. Start the independent production
@@ -163,4 +182,23 @@ workflow and receipt bytes but does not change frozen execution authority. The e
 preset can deny unfinished old work before its next entry; follow the [upgrade guidance](../../../operations/daemon.md)
 and keep matching old binaries/configuration for work that must finish under its original grant.
 Earlier failed roots, prior evidence stores and preservation Git refs remain intact. The handoff
-leaves prompt 02 open and is ready for an explicit prompt-02b assignment.
+leaves prompt 02 open and stops before prompt 04.
+
+## Resume the visual and task review
+
+Reload the production preview to load the rebuilt client. Review the dark rail, warm text, supplied
+logo, compact workflow header and side inspector against the visual direction. The mockup's obsolete
+canvas, revision controls and event table are not present. The ordinary task timeline and public
+daemon actions retain their meaning. The [frontend README](../../../../apps/web/README.md#maintain-and-verify)
+owns shared style/component conventions for the later feature assignments.
+
+After the naming recheck above, submit a task with your own brief and a Cargo manifest through
+**Task instructions** and **Supplied context**. Check its result, close the client while another task
+runs, reconnect and find that work again. Switch to Studio B and back. Leave **Supply brief now**
+unchecked for a queued task, then use its inspector to supply the missing input. Check whether failed,
+uncertain and stop-requested work communicate what actually happened. **Hide inspector** keeps
+selection and edit drafts; on narrow screens **Daemon navigation** opens the daemon rail.
+
+Record the user's own actions and objections here when supplied. Passing agent checks does not
+settle visual preference or complete this substantive review. No additional actual-user acceptance
+has been reported since the original Studio A connection and corrective feedback.
