@@ -92,6 +92,31 @@ async fn controlled_model_receives_selected_text_and_uploaded_file_and_retains_i
         "{result:?}"
     );
     assert!(result.text.contains("true"));
+    assert!(
+        result.text.starts_with("{\"captured_file\":true,"),
+        "the final answer must precede canonical provider metadata: {}",
+        result.text
+    );
+    let complete = reqwest::Client::new()
+        .get(daemon.endpoint.join(&format!(
+            "v1/workflows/{}/tasks/{task}/result/content",
+            accepted.workflow_id
+        ))?)
+        .bearer_auth(CONTROLLER_TOKEN)
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+    assert!(complete.starts_with("{\"captured_file\":true,"));
+    assert!(
+        complete.contains("schema_version"),
+        "canonical response remains in the complete result"
+    );
+    assert_eq!(
+        result.digest,
+        format!("b3_{}", blake3::hash(complete.as_bytes()))
+    );
     let captured = model
         .requests
         .lock()

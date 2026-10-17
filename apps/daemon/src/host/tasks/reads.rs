@@ -485,7 +485,20 @@ impl Owner {
         let mut bytes = Vec::new();
         let maximum =
             2_097_152usize.saturating_add(result.terminal.outputs().len().saturating_sub(1));
-        for output in result.terminal.outputs().iter().filter(|output| {
+        // A model's answer is the first readable content; canonical response and tool evidence
+        // remain in the complete download, in their retained order after that named output.
+        let answer = result
+            .outputs
+            .get("final_text")
+            .filter(|answer| result.terminal.outputs().contains(answer));
+        let outputs = answer.into_iter().chain(
+            result
+                .terminal
+                .outputs()
+                .iter()
+                .filter(|output| Some(*output) != answer),
+        );
+        for output in outputs.filter(|output| {
             output
                 .media_type()
                 .is_some_and(|media| media.starts_with("text/") || media.contains("json"))

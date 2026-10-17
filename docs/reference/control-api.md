@@ -162,6 +162,9 @@ bounded. Refetch from the beginning after edits when a consistent current view m
 
 A selected task contains its definition and frozen input provenance. Frozen text and combined
 result text have explicitly labelled 16 KiB previews; their digests refer to complete content.
+When a model publishes named `final_text`, the result preview and complete text download put that
+answer first, followed by the remaining textual artifacts in retained order. Canonical response and
+tool evidence remain available; clients do not parse provider JSON to extract a different answer.
 `result_restricted` preserves permitted task-state inspection while indicating inaccessible output.
 The explicit result route still refuses unauthorized output reads. Captured inputs also recheck
 current artifact permissions; restricted previews and digests are withheld. Non-UTF-8 declared text
