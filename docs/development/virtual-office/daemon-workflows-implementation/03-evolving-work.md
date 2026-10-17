@@ -1,6 +1,8 @@
 # 03 — Evolving tasks, parallel research and correction
 
-**Prepared, not assigned.** Prerequisite: completed early user review/repair in 02. Extend the same
+**Completed locally October 17; see the [handoff](handoff.md) for tested checkpoints and evidence.**
+The user explicitly authorized proceeding with 03 while the actual early
+user review in 02 remains pending as an evidence gap. Extend the same
 production task engine, public protocol, CLI and Svelte. Deliver the planning → parallel research →
 composition → corrective work portion of [the journey](journey.md), including failed research.
 

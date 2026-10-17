@@ -2,13 +2,12 @@
 
 The product account and technical choices are finished for the
 [daemon-workflows implementation sprint](../development/virtual-office/daemon-workflows-implementation/README.md).
-**Prompt 01 review corrections F01–F03 are complete locally**: current CI consumers, required-input
-absence and cumulative execution time pass their focused checks and the complete strict static gate.
-The corrected hosted rerun awaits publication; earlier quality run 227 failed on `e720bb9`.
-The connected checkpoints `37aa8c4` and `95a4dc5` remain preserved. Actual user review in 02 follows
-the corrected handoff.
-Prompts 02–07 remain unassigned; 07 owns the named final full-system
-test-and-repair gate. The superseded remedial P00–P09 is historical evidence only.
+**Prompt 03 is complete locally**: model-authored future batches, bounded tools, parallel research,
+correction and guarded human editing pass the assigned focused checks. The user's October 17
+instruction authorized proceeding while actual user review in 02 remains pending as an evidence gap.
+Earlier checkpoints and stores remain preserved; no corrected hosted run is claimed.
+Prompts 04–07 remain unassigned; 07 owns the named
+final full-system test-and-repair gate. The superseded remedial P00–P09 is historical evidence only.
 
 [Vision](vision.md) owns the intended experience, [ADR 0051](../decisions/0051-daemon-task-workflows.md)
 the selected design, and [status](status.md) the current implementation and its qualified evidence.

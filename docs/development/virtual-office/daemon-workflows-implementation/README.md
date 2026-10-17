@@ -1,11 +1,14 @@
 # Daemon workflows — implementation sprint
 
-**Prompt 01 review corrections complete locally; 02–07 unassigned.** The consumer/CI retirement,
+**Prompt 03 completed locally; actual user review in 02 remains pending.** The user explicitly instructed
+execution of 03 on October 17 and confirmed proceeding with the review left as an evidence gap.
+That instruction authorizes 03 and its tested local commits only; 04–07 remain unassigned.
+The consumer/CI retirement,
 required-input absence and cumulative-time defects pass focused regressions and the complete strict
 static gate at `c9e9809`. Publication and a corrected hosted run remain pending. Tested local
 checkpoints `37aa8c4` and `95a4dc5` remain preserved. The
-[handoff](handoff.md) gives exact local review instructions. Stop here for the actual user review
-in 02 after the corrected handoff; these repairs do not authorize a successor.
+[handoff](handoff.md) records the current local review instructions. Agent checks do not complete
+the actual user review in 02.
 The former remedial P00–P09 is superseded and must not be resumed.
 
 ## Outcome and design
@@ -35,8 +38,8 @@ Start from the current worktree, preserving newer work. The supplied reference i
 `750ebb26607c910ae96c6f6b0f0b3ea12228180c`; it is not a reset target. Branch
 `codex/milkdrift-pre-product-reset-2026-10-12` and annotated tag
 `milkdrift-pre-product-reset-2026-10-12` preserve `f821ce093742246390f17edc77252ceb75672f97`.
-Keep them and the prior v3 evidence/disagreements. [Planning handoff](handoff.md) records checks and
-review of this packet; it is not implementation evidence.
+Keep them and the prior v3 evidence/disagreements. The [handoff](handoff.md) identifies the current
+tested checkpoints and remaining review; the original planning packet remains available in Git.
 
 Implementation uses a new named development store. Bounded local inspection found no identified
 active Milkdrift daemon/user store, but retained 197 test/evidence stores under ignored `target`.
@@ -52,14 +55,14 @@ service permissions. Missing real-user/external prerequisites remain explicit ev
 
 ## Ordered assignments
 
-Prompt 01 is assigned to the current implementation team. Assigning one prompt authorizes its whole
+Prompt 03 has completed its focused acceptance. Assigning one prompt authorizes its whole
 responsibility and local coherent commits; it does not silently assign its successor.
 
 | Order | Full execution prompt | Prerequisite | Usable outcome |
 | --- | --- | --- | --- |
 | 01 | [Connected task and Svelte client](01-connected-task-and-svelte.md) | Explicit implementation instruction | Real task submission/output/discovery/reconnect, canonical fresh-store task path, affected legacy paths removed. |
 | 02 | [Early user review and repair](02-early-user-review.md) | 01 focused checks; actual user | A person completes the first journey; functional and usability findings are repaired. |
-| 03 | [Evolving work and parallel research](03-evolving-work.md) | 02 reviewed result | Ordinary model tasks admit parallel research, composition, correction and bounded continuation through the same commands as humans. |
+| 03 | [Evolving work and parallel research](03-evolving-work.md) | User authorized proceeding with 02 pending | Ordinary model tasks admit parallel research, composition, correction and bounded continuation through the same commands as humans. |
 | 04 | [Reusable methods](04-local-methods.md) | 03 | Current saved templates expand locally, with input repair, owner rights, import/export and exact interrupted recovery. |
 | 05 | [Remote tools and retention](05-remote-tools-and-retention.md) | 04 | Persistent connection administration, remote uncertainty/recovery and protected rolling retention across clients. |
 | 06 | [Combined user review and repair](06-combined-user-review.md) | 05; actual user | The full animation journey and different-project reuse work in production UI; consequential feedback is fixed. |
@@ -88,8 +91,8 @@ repeated workspace gates; they are not full-system acceptance. CI remains enable
 Do not defer a known phase defect to 07 or weaken CI, assertions, discovery or tests to fit the plan.
 
 Frontend checks introduced in 01 are `npm ci`, `npm run check`, `npm run lint`, `npm run test:unit`,
-`npm run build` and `npm run test:browser` from `apps/web`. These are planned package scripts, not
-commands available at this planning checkpoint. Use Svelte/TypeScript checks, accessibility and
+`npm run build` and `npm run test:browser` from `apps/web`. These are maintained package scripts.
+Use Svelte/TypeScript checks, accessibility and
 focused component tests plus Playwright for actual browser behavior. Node scripts are confined to
 frontend build/test work; Rust owns backend fixtures, daemon launch/fault harnesses and protocol
 code generation. A browser driver may click or assert UI, but never supply daemon scheduling/recovery.
@@ -108,10 +111,10 @@ scope when their prompt is explicitly assigned. Inference, new provider families
 remote workflow ownership, permanent knowledge systems and unrelated primitives remain excluded.
 Do not ask the user to choose routine implementation organization already settled by this packet.
 
-Exact next instruction:
+The next implementation assignment, only when explicitly requested, is:
 
-> Execute `docs/development/virtual-office/daemon-workflows-implementation/01-connected-task-and-svelte.md`.
+> Execute `docs/development/virtual-office/daemon-workflows-implementation/04-local-methods.md`.
 > You are authorized to implement that prompt end to end and make regular tested local commits.
 > Follow this sprint's focused-check schedule; prompt 07 owns final full-system acceptance.
-> Preserve existing stores, services and Git checkpoints. Stop at the prompt 01 handoff, ready for
-> the actual early user review in prompt 02; do not start later prompts automatically.
+> Preserve existing stores, services and Git checkpoints. Stop at the prompt 04 handoff; do not
+> start later prompts automatically. Actual prompt-02 review remains pending unless separately completed.

@@ -1,13 +1,12 @@
 # Status
 
 Milkdrift's current ordinary workflow path is a durable daemon-owned task collection exposed through
-the CLI, independent JSON requests and a standalone Svelte client. Prompt 01 of the
+the CLI, independent JSON requests and a standalone Svelte client. Prompt 03 of the
 [implementation sprint](../development/virtual-office/daemon-workflows-implementation/README.md)
-has completed its assigned review corrections locally: current CI consumers, required-input absence,
-and cumulative execution time. The corrected source passes the complete strict static gate and
-focused daemon, CLI and browser checks. Hosted quality run 227 failed on the earlier `e720bb9`;
-a hosted rerun awaits publication of the local corrections. Actual user review in prompt 02 remains
-pending, and these corrections do not authorize the remaining sprint.
+extends that path with model-authored future work, parallel research, correction and human batch
+editing. The user authorized proceeding while actual user review in prompt 02 remains pending.
+Prompt 04 is unassigned and prompt 07 retains the final integrated gate. Hosted quality run 227
+failed on the earlier `e720bb9`; no later hosted pass is claimed.
 
 ## Implemented now
 
@@ -22,10 +21,29 @@ scopes without an initial workflow ID. Compact workflow summaries and paged task
 large captured inputs/results out of discovery responses. Selected tasks expose frozen evidence,
 labelled text previews and complete bounded result downloads.
 
+Opted-in model tasks publish immutable structured responses. Admission refuses model action policies
+on other capability categories before accepting work. Control admits their typed batches
+through the same guarded transaction as human edits; response admission, exact receipt and allocated
+aliases survive restart. Invalid actions retain a bounded diagnostic and wait, or admit one ordinary
+feedback task when its explicit policy and remaining allowance permit. Result prose cannot execute
+commands. Successful corrections can be adopted for future consumers without changing failed history
+or already frozen inputs. Required outputs and explicit settled outcomes distinguish successful work
+from tolerated failure.
+
+The capability host runs a configured model with its selected file/process tools and bounded calls.
+Current authority and native path checks apply at tool entry. Workflow task, model-batch, execution
+time, rejection streak and corrective-lineage limits govern descendants; a human can change future
+limits without refunding spending. Completion requires an explicit finish condition and satisfied
+required work. Empty ready queues do not imply completion.
+
 The Svelte client provides named daemon connections, authentication/disconnection, discovery,
 search, supplied-file submission, task editing/repair, result inspection and an accessible
-left-to-right dependency timeline. Credentials stay in memory; connections have separate selection,
-settings and caches. Exact-origin CORS, authenticated fetch streams, identity checks and snapshot
+left-to-right dependency timeline. Its future-batch editor previews additions, revisions, removals,
+input supply, correction/rebinding, stop, wait, finish and limit changes together. Conflicts retain
+the draft for review; lost replies retain the exact request identity. Parallel lanes use actual start
+and end times, and selected follow-up tasks expose their source admission. Credentials stay in memory;
+connections have separate selection, settings and caches. Exact-origin CORS, authenticated fetch
+streams, identity checks and snapshot
 resynchronization belong to the production daemon/client path.
 
 The task scheduler uses existing external preparation, final-entry and effect-lifetime mechanisms.
@@ -38,9 +56,8 @@ stop requests, uncertainty and restart cannot refund unresolved work.
 
 ## Limitations now
 
-Automatic model-produced workflow changes, saved method templates/expansion, persistent connection
-administration and configurable rolling expiry are later assigned phases. The first client can
-submit and edit ordinary tasks; it does not implement those later product journeys. Current SSE
+Saved method templates/expansion, persistent connection administration and configurable rolling
+expiry remain later phases. Current SSE
 messages are bounded snapshot invalidation hints, not a replayable public task event journal.
 Search scans a finite window and returns an explicit continuation; it is not the advanced indexed
 inspection surface scheduled later in the sprint.
@@ -48,8 +65,8 @@ inspection surface scheduled later in the sprint.
 The current store format is a development cutover. Earlier graph, revision, proposal, controller,
 structured-child, prompt-sequence, workflow-publication and evaluated-learning product paths are
 retired. There is no migration or compatibility reader for those stores in the new executable.
-Internal document format 21 also refuses earlier task records lacking duration reservations and
-watermarks. Existing stores/services and Git preservation checkpoints remain intact. Generic managed
+Internal document format 22 refuses earlier task records lacking the current duration and model
+admission facts. Existing stores/services and Git preservation checkpoints remain intact. Generic managed
 lifecycle operations lack an enforced total deadline and therefore refuse bounded task/peer entry;
 their independent administrative owner remains available and tested.
 
@@ -58,32 +75,33 @@ controlled model test proves plumbing within its stated bounds; it does not esta
 quality, agent interoperability or paid-provider support. Linux process/managed evidence does not
 establish another platform's containment or service behavior. Phone-sized browser checks do not
 establish physical-phone or deployed HTTPS operation.
+Native model file tools currently require Linux; other platforms refuse that catalog. One model/tool
+task supports at most 16 tool calls, bounded UTF-8 file content and a finite provider request envelope.
 
 ## Current validation/evidence snapshot
 
-The first connected checkpoint, local commit `37aa8c4`, executed an actual trusted Rust process
-against uploaded Cargo manifests. A real browser submitted a task, disposed the entire client,
-reconnected with endpoint/credential only, discovered the task and displayed its retained report.
-Changing from the root manifest to the runtime manifest changed the reported package, targets and
-dependencies. CLI submission and exact replay used the same daemon owner. This establishes useful
-input-dependent work, separately from the controlled model fixture.
+The connected browser/CLI path executes a trusted Rust process against uploaded Cargo manifests,
+closes and reconnects the client, and discovers retained input-dependent results. A separate controlled
+model journey creates eight tasks from one planner through three accepted batches, proves overlapping
+research, preserves a failed result, adopts its correction and completes a rebound consumer. Binary
+restart and transaction fault tests cover different recovery boundaries; neither claims exactly-once
+external effects or real-model quality.
 
-The review correction passes all eight Chromium cases, frontend check/lint and 26 unit tests against
-the unchanged production Svelte build. Desktop and phone-sized renders were inspected. Focused
-checks include 26 durable runtime tests, 40 daemon library tests, 31 control-plane tests, two real
-peer-daemon tests, independent host/managed protections and all 30 repository contracts. Required
-absence and time-reservation regressions fail when their respective fixes are removed. The current
-CLI/public-client evidence and five external-evidence fixture tests pass; controlled fixtures remain
-non-qualifying. Default/all-feature capability and runtime API inventories were reviewed.
+Prompt 03 passes all 11 Chromium cases, frontend check/lint, 43 unit tests and production build.
+Desktop and 390-pixel phone-sized renders were inspected. Focused Rust suites cover the changed
+owners, including 46 durable runtime cases, eight production model-admission cases and all 31 daemon
+control-plane cases. The application/connected-task harness checks and 30 repository contracts pass.
+Default/all-feature API inventories for six changed libraries were reviewed. Affected-package
+Clippy/rustdoc and dependency audits pass; the audit prompted a Rustls patch update.
 
-Clean commit `c9e9809` passes all 33 strict static checks with zero findings, including workspace
-default/all-feature compilation, warning-denying Clippy/documentation and workflow/security scans.
-This is local evidence; no corrected hosted run is claimed.
+The earlier prompt-01 correction checkpoint `c9e9809` passed the complete strict static gate.
+Prompt 03 used its assigned focused checks; it does not claim that older full-gate result for the
+new source. No hosted rerun or actual user acceptance is claimed.
 
 [Current contract versions](../reference/versions.md) are checked against their owning constants.
 
 Executed checks and their environment limits belong in
 [verification evidence](../development/verification-evidence.md). The sprint
-[handoff](../development/virtual-office/daemon-workflows-implementation/handoff.md) records the tested
-prompt-01 commits and exact local review instructions. The full
+[handoff](../development/virtual-office/daemon-workflows-implementation/handoff.md) records the
+tested checkpoints and exact local review instructions. The full
 Rust/frontend gate remains the named prompt-07 assignment.

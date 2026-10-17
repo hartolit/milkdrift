@@ -1,5 +1,120 @@
 # Verification and operational evidence
 
+## Prompt 03 evolving task acceptance
+
+The October 17 focused assignment exercises automatic future work through the production daemon,
+configured provider mapping, capability host, CLI and Svelte. Actual user review in prompt 02 remains
+pending; the user authorized proceeding with that gap. Prompt 04 and the prompt-07 integrated gate
+were not executed. This is local Linux evidence, not a hosted CI result.
+
+Tested implementation checkpoints are `34564c9` (shared admission and bounded tool execution),
+`566fe72` (CLI preview and automatic binary journey), `ede0147` (readable retained model results),
+`0d9a774` (model-only action admission) and `2c94cad` (complete Svelte editing and repair).
+
+The actual-binary report is `target/daemon-workflows/prompt03-check-d/check.json`. The client creates
+one planner. Three accepted structured model batches leave eight tasks: three parallel research
+tasks, composition with an explicit failed outcome, a successful correction, review/adoption and a
+final consumer rebound to that correction. Actual start/end evidence proves overlap. Native file
+tools write and read separate research folders. Restart preserves accepted receipts and task IDs
+without another model request or client continuation batch. The fixture returns controlled responses;
+it never creates descendants or orders execution. This does not qualify real-model quality, paid
+providers or external agent interoperability.
+
+Focused Rust package suites and doctests passed for blueprint, authority, runtime, control,
+persistence, redb-store, capability-host, model-provider, control-protocol, control-client and CLI
+using the pinned 1.95.0 toolchain. Evidence spans `target/prompt03-boundaries-tests.log`,
+`target/prompt03-final-boundaries-tests.log` and `target/prompt03-control-final.log`. Later runs
+supersede the native fixture pagination, old-format expectation and pause-fixture ownership failures
+in earlier logs. Failed logs and named development roots remain intact.
+
+The final runtime/control rerun is `target/prompt03-model-only-actions-tests.log`, with 46 durable
+runtime cases and all eight production admission cases. It additionally proves that a process
+capability cannot enable model actions: create, add and revise refuse both repair-policy values
+without entering a process or accepting other changes from the same batch. Its warning-denying
+Clippy run is `target/prompt03-model-only-actions-clippy.log`. Checkpoint `0d9a774` contains this
+refinement; all 31 daemon control-plane cases also pass in
+`target/prompt03-model-only-actions-daemon.log`.
+
+| Boundary | Executed evidence |
+| --- | --- |
+| Runtime | 46 durable tests: response-output save, admission, feedback and child-entry faults before/after commit; exact replay after reopen; human/model conflict; required/optional/settled inputs; immutable failed history and typed correction; cumulative limits, rejection streaks, lineage stops and prospective resume; atomic non-model action-policy refusal. |
+| Control | Eight production model-admission tests plus existing authority suites. Real redb/artifact publication verifies structured-only parsing, atomic malicious/out-of-grant refusal, storage/capacity errors before/after commit, explicit human pauses, full/colliding frozen feedback inputs and progress past 32 uncertain sources. |
+| Host/provider | Controlled HTTP, native file tools and configured process stdout; exact outputs/usage, authority revocation between tool steps and call exhaustion. Production capture refuses live and restarted uncertain writers. Durable-root tests reject replacement identities and prevent alias retargeting from widening file access. |
+| Storage | Persistence/redb suites, including old/future format refusal preserving source bytes, bounded native claims and reserved settlement/control after ordinary capacity fills. |
+| Daemon | All 31 control-plane tests in `target/prompt03-daemon-tests.log`: independent JSON/CLI requests, guarded edits, scope, exact replay, inputs/results and process cleanup. |
+| Harness | Five application lifecycle and two actual connected-task tests in `target/prompt03-evidence-tests.log`; the role-selector regression and 30 repository contracts in `target/prompt03-contracts-final.log`. |
+
+The selected-result refinement at `ede0147` puts named model `final_text` before provider metadata
+while retaining canonical response/tool evidence. The focused daemon test in
+`target/prompt03-readable-result-test.log` checks the answer prefix, complete download digest and
+restart. Its warning-denying daemon Clippy rerun is in `target/prompt03-readable-result-clippy.log`.
+
+Frontend checks use Node 25.2.1 and the maintained `check`, `lint`, `test:unit` and `build` scripts.
+All 43 unit/component tests across 11 files pass; Svelte reports zero errors or warnings. Logs are
+`target/prompt03-web-final-{check,lint,unit,build}.log`. The input-capture mutation demonstrates that
+discarding a UTF-8 BOM changes the captured bytes. Held-discovery and linked-correction regressions
+fail before their fixes and pass afterward: a confirmed receipt opens without waiting for discovery,
+and a linked correction waits for the original to settle without requiring its success.
+Their retained logs are `target/prompt03-web-bom-mutation.log`,
+`target/prompt03-web-navigation-regression-{before,after}.log` and
+`target/prompt03-web-correction-regression-{before,after}.log`. Model options clear when switching to
+a process capability, while the daemon remains authoritative for the resolved capability category.
+
+The final production-browser run passed all 11 Chromium cases in
+`target/prompt03-web-browser-g.log`, using the immutable daemon executable from the final
+control-plane suite. The linked-replacement case executes new work after a stopped original and
+retains the original's stopped state and absent start time. The automatic journey submits one
+planner, sends no continuation batch, observes parallel intervals and adopted correction, and
+checks the final answer prefix. Desktop and 390-pixel phone views were inspected; retained captures
+and the report are under `target/prompt03-browser-g-results/` and
+`target/prompt03-browser-g-report/`. Test discovery is retained in
+`target/prompt03-web-browser-discovery.log`.
+
+Earlier browser attempts remain preserved. Run e reached creation/input-repair deadlines; diagnostic
+reruns passed, but their original request timing was not recovered. The independent held-discovery
+defect was reproduced and fixed. Fixture e also reported an unconfirmed shutdown deadline; both
+owned daemon processes were subsequently absent. Fixture f reached its startup deadline while
+the host's linkers were observed waiting for a filesystem transaction. The final g fixture uses
+`/tmp/milkdrift-prompt03-browser-20261017-g/`; its temporary filesystem is not evidence of disk
+crash durability. The delayed rebuild eventually passed in `target/prompt03-review-build.log`.
+These observations do not qualify the host's storage performance or hide the earlier failures.
+
+The final native command is:
+
+```sh
+target/debug/connected-tasks check \
+  --root target/daemon-workflows/prompt03-check-d \
+  --daemon target/debug/milkdrift-daemon --cli target/debug/milkdrift
+```
+
+The binary restart observes completed work; transaction fault tests establish response/admission
+crash-window behavior. A saved response whose source lacks terminal proof remains pending and
+uncertain. No exactly-once external-effect claim is made. No configured authorized real model was
+exercised. Native model file tools require Linux descriptor resolution, existing scoped folders,
+bounded UTF-8 content and at most 16 tool calls per task.
+
+Public API review generated default and all-feature inventories for blueprint, runtime, control,
+capability-host, model-provider and control-protocol in `target/public-api/prompt03/`. New task/tool
+and admission types are durable or transport contracts; daemon control and host composition consume
+the methods. Parsing, feedback, native files and loop accounting remain private. Default inventories
+exclude existing fixture/conformance helpers. Repository contracts verify production daemon/CLI
+dependency resolution excludes those features.
+
+Affected-package all-target/all-feature warning-denying Clippy passes in `target/prompt03-clippy.log`;
+warning-denying rustdoc is in `target/prompt03-rustdoc.log`. Dependency checks pass in
+`target/prompt03-deny.log` and `target/prompt03-machete.log`; the reviewed duplicate tree is
+`target/prompt03-duplicate-tree.log`. The audit found four advisories in locked Rustls 0.23.45;
+the lockfile selects the reported patched 0.23.46 release. No advisory was ignored. The existing Syn
+major-version duplicate remains a warning with its consumers visible in the retained tree.
+Formatting (`target/prompt03-format-final.log`), documentation links/versions, source ownership and
+diff checks complete the focused acceptance. The final eight documentation contracts pass in
+`target/prompt03-documentation-current.log`. Their Cargo rebuild reached another filesystem wait;
+the current compiled Rust test was linked with the same linker arguments and only its output moved
+to `/tmp/milkdrift-prompt03-documentation-contracts`, then run with the `documentation::` filter.
+No assertion or source was changed for that execution. An older cached executable lacked the newly
+added runtime-version contract and is not the final evidence. The full integrated gate remains
+prompt 07.
+
 ## Prompt 01 review corrections
 
 The assigned review of `e720bb9` was reproduced on Linux x86-64 with Rust 1.95.0. GitHub
