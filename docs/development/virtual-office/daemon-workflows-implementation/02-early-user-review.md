@@ -1,8 +1,16 @@
 # 02 — Early user review and repair
 
-**Prepared, not assigned.** Prerequisite: prompt 01's real production slice and focused evidence.
+**In progress; partial user feedback recorded.** Prerequisite: prompt 01's real production slice and
+focused evidence.
 This assignment requires actual user participation. It is a functional review and repair boundary,
 not a design presentation or permission to replace working screens with a mock.
+
+The user authorized 03 with this review pending, then connected Studio A and supplied the
+[recorded connection/visual findings](handoff.md#actual-user-review-and-corrections). They requested
+corrective prompts rather than immediate code changes. Implement [02a](02a-daemon-connection-identity.md)
+and [02b](02b-visual-design-and-brand.md) only when separately assigned, then resume this substantive
+journey on the repaired client. Connection success alone does not complete this checkpoint. Keep
+03's completed work; the next feature assignment after successful review is 04.
 
 Read [AGENTS](../../../../AGENTS.md), canonical docs, [sprint README](README.md),
 [ADR 0051](../../../decisions/0051-daemon-task-workflows.md), [journey](journey.md), the current
@@ -49,5 +57,6 @@ required here; 07 owns it and CI remains unchanged.
 
 Handoff the tested commit, actual user observations, repairs and any genuine unresolved decision.
 Required unfixed usability/functionality keeps this checkpoint open. On success, update status and
-verification evidence with the narrow observed result and stop before 03. Do not imply real model
-quality, phone support or general usability from a controlled endpoint or a single observed session.
+verification evidence with the narrow observed result and stop before the next unassigned phase,
+now 04. Do not imply real model quality, phone support or general usability from a controlled endpoint
+or a single observed session.

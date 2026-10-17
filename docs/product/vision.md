@@ -7,7 +7,7 @@ results, permissions and changes. Models and tools perform the work outside the 
 This is the intended product, revised from the user's October 12 account and continuation.
 [Status](status.md) describes the existing implementation, which does not yet deliver this whole
 experience. [Architecture](../architecture.md) distinguishes existing owners from the selected
-replacement design; [the roadmap](roadmap.md) identifies its unassigned implementation sprint.
+replacement design; [the roadmap](roadmap.md) identifies the remaining implementation assignments.
 The preceding vision remains in Git and the `milkdrift-pre-product-reset-2026-10-12` tag.
 
 ## Work starts with tasks and can grow
@@ -66,6 +66,12 @@ Svelte is the first GUI, maintained as a standalone client of public daemon oper
 connect to several daemons while keeping their workflows, settings and permissions separate. The
 CLI and other authorized clients use the same operations. No client owns execution, opens the
 database, calls CLI subprocesses or reconstructs a workflow from a local recovery file.
+
+A daemon owns its human-readable name. An authorized rename persists there and appears across
+clients; users do not maintain a different name in every browser. Connecting requires an address
+and credential. The client learns and remembers the daemon's stable identity, explains an unexpected
+replacement, and keeps technical identity details out of ordinary setup. A display name is not an
+identity or a permission.
 
 The timeline runs left to right with titles, short descriptions, actual start and end times, and
 clear queued, running, completed, failed and stopped states. Parallel work and dependencies remain

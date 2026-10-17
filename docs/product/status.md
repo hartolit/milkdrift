@@ -4,8 +4,12 @@ Milkdrift's current ordinary workflow path is a durable daemon-owned task collec
 the CLI, independent JSON requests and a standalone Svelte client. Prompt 03 of the
 [implementation sprint](../development/virtual-office/daemon-workflows-implementation/README.md)
 extends that path with model-authored future work, parallel research, correction and human batch
-editing. The user authorized proceeding while actual user review in prompt 02 remains pending.
-Prompt 04 is unassigned and prompt 07 retains the final integrated gate. Hosted quality run 227
+editing. The user authorized proceeding while actual user review in prompt 02 remained pending.
+That review has now begun: the user reports connecting Studio A and rejects the setup friction and
+current visual design. The substantive task journey remains unreviewed. Corrective prompts 02a/02b
+are prepared for shared daemon naming, simpler connection setup, the supplied visual direction and
+the real logo; their implementation is unassigned. Prompt 04 waits for those corrections and the
+completed early review. Prompt 07 retains the final integrated gate. Hosted quality run 227
 failed on the earlier `e720bb9`; no later hosted pass is claimed.
 
 ## Implemented now
@@ -56,6 +60,10 @@ stop requests, uncertainty and restart cannot refund unresolved work.
 
 ## Limitations now
 
+Connection names are currently browser-local labels, and setup requires manual installation identity
+entry. The client still uses its initial pale theme and a placeholder brand mark. Daemon-owned naming
+and the revised visual design are selected corrections, not implemented behavior or accepted usability.
+
 Saved method templates/expansion, persistent connection administration and configurable rolling
 expiry remain later phases. Current SSE
 messages are bounded snapshot invalidation hints, not a replayable public task event journal.
@@ -96,7 +104,7 @@ Clippy/rustdoc and dependency audits pass; the audit prompted a Rustls patch upd
 
 The earlier prompt-01 correction checkpoint `c9e9809` passed the complete strict static gate.
 Prompt 03 used its assigned focused checks; it does not claim that older full-gate result for the
-new source. No hosted rerun or actual user acceptance is claimed.
+new source. No hosted rerun or completed actual user acceptance is claimed.
 
 [Current contract versions](../reference/versions.md) are checked against their owning constants.
 

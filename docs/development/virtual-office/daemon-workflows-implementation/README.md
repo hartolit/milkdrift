@@ -1,8 +1,11 @@
 # Daemon workflows — implementation sprint
 
-**Prompt 03 completed locally; actual user review in 02 remains pending.** The user explicitly instructed
+**Prompt 03 completed locally; actual user review in 02 is in progress.** The user explicitly instructed
 execution of 03 on October 17 and confirmed proceeding with the review left as an evidence gap.
-That instruction authorizes 03 and its tested local commits only; 04–07 remain unassigned.
+They have since connected Studio A and requested simpler setup, daemon-owned names, the supplied
+visual direction and the real logo. Corrections 02a/02b are prepared from that partial review;
+their implementation and 04–07 remain unassigned. The current request authorizes corrective planning,
+not immediate product changes. Complete the corrections and remaining early review before 04.
 The consumer/CI retirement,
 required-input absence and cumulative-time defects pass focused regressions and the complete strict
 static gate at `c9e9809`. Publication and a corrected hosted run remain pending. Tested local
@@ -49,7 +52,8 @@ old-store converter, in-place reset or second engine.
 
 Use the pinned Rust toolchain and existing repository tools. Prompt 01 introduces the frontend's
 locked package/tool versions, typed client and checks. Actual user participation is required in 02
-and 06. Controlled Rust model/tool endpoints are available as fixtures only; real model use requires
+and 06, including rechecking the connection and visual corrections. Controlled Rust model/tool
+endpoints are available as fixtures only; real model use requires
 an already configured authorized endpoint/allowance. Do not invent credentials, paid usage or live
 service permissions. Missing real-user/external prerequisites remain explicit evidence gaps.
 
@@ -57,13 +61,19 @@ service permissions. Missing real-user/external prerequisites remain explicit ev
 
 Prompt 03 has completed its focused acceptance. Assigning one prompt authorizes its whole
 responsibility and local coherent commits; it does not silently assign its successor.
+The next execution order is **02a → 02b → finish 02 review → 04 → 05 → 06 → 07**.
+The correction labels preserve the original phase numbers; 03 is already done. Existing 04–07
+prompts included review/repair but did not explicitly assign this visual reference, real logo or
+browser onboarding change. Prompt 05's shared connections concern execution hosts, not browser labels.
 
 | Order | Full execution prompt | Prerequisite | Usable outcome |
 | --- | --- | --- | --- |
 | 01 | [Connected task and Svelte client](01-connected-task-and-svelte.md) | Explicit implementation instruction | Real task submission/output/discovery/reconnect, canonical fresh-store task path, affected legacy paths removed. |
 | 02 | [Early user review and repair](02-early-user-review.md) | 01 focused checks; actual user | A person completes the first journey; functional and usability findings are repaired. |
+| 02a | [Simple connection and shared daemon name](02a-daemon-connection-identity.md) | Partial 02 feedback; current 03 checkpoint; explicit assignment | Address/credential setup, automatic identity pinning and a shared, authorized daemon rename. |
+| 02b | [Visual direction and real brand](02b-visual-design-and-brand.md) | 02a focused checks; explicit assignment | Supplied dark visual direction and logo across the real client; user rechecks the result and resumes 02. |
 | 03 | [Evolving work and parallel research](03-evolving-work.md) | User authorized proceeding with 02 pending | Ordinary model tasks admit parallel research, composition, correction and bounded continuation through the same commands as humans. |
-| 04 | [Reusable methods](04-local-methods.md) | 03 | Current saved templates expand locally, with input repair, owner rights, import/export and exact interrupted recovery. |
+| 04 | [Reusable methods](04-local-methods.md) | 03; 02a/02b; completed 02 review | Current saved templates expand locally, with input repair, owner rights, import/export and exact interrupted recovery. |
 | 05 | [Remote tools and retention](05-remote-tools-and-retention.md) | 04 | Persistent connection administration, remote uncertainty/recovery and protected rolling retention across clients. |
 | 06 | [Combined user review and repair](06-combined-user-review.md) | 05; actual user | The full animation journey and different-project reuse work in production UI; consequential feedback is fixed. |
 | 07 | [Final full-system test and repair](07-final-test-and-repair.md) | 06 and all focused checks | Full current Rust/frontend gates and combined journey pass on repaired code; accurate limits and handoff. |
@@ -78,8 +88,8 @@ refusal/recovery, all affected daemon/client consumers, removed superseded paths
 evidence. Listed files/cases do not limit in-scope correction. No foundational choice is deferred to
 implementation discovery; inspect source to implement the selected responsibilities and catch drift.
 
-Run focused checks with every changed boundary and fix known failures immediately. Compile affected
-packages/callers, test intended filters using discovery, run applicable documentation/example checks,
+Run focused checks with every changed boundary, including 02a/02b, and fix known failures immediately.
+Compile affected packages/callers, test intended filters using discovery, run applicable documentation/example checks,
 and inspect the diff. Commit coherent tested changes regularly, with explicit staging and
 `git diff --cached --check`; preserve checkpoints without squashing, rebasing or pushing.
 One coordinator owns shared files and Cargo jobs when agents work in parallel.
@@ -113,8 +123,9 @@ Do not ask the user to choose routine implementation organization already settle
 
 The next implementation assignment, only when explicitly requested, is:
 
-> Execute `docs/development/virtual-office/daemon-workflows-implementation/04-local-methods.md`.
+> Execute `docs/development/virtual-office/daemon-workflows-implementation/02a-daemon-connection-identity.md`.
 > You are authorized to implement that prompt end to end and make regular tested local commits.
 > Follow this sprint's focused-check schedule; prompt 07 owns final full-system acceptance.
-> Preserve existing stores, services and Git checkpoints. Stop at the prompt 04 handoff; do not
-> start later prompts automatically. Actual prompt-02 review remains pending unless separately completed.
+> Preserve existing stores, services and Git checkpoints. Stop at the prompt 02a handoff; do not
+> start 02b or later prompts automatically. Actual prompt-02 review remains open until its remaining
+> journey and user recheck of the corrections are complete.

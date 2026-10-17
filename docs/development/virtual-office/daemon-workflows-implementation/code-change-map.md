@@ -6,6 +6,20 @@ semantics and reasons. These are proposed changes, not a claim that the current 
 them. The map uses current source and the preserved v3 observations; it does not repeat that
 investigation or carry its superseded architecture into this sprint.
 
+The October 17 partial user review adds the prepared
+[02a connection](02a-daemon-connection-identity.md) and
+[02b visual](02b-visual-design-and-brand.md) corrections before 04. Their current owners are:
+
+| Boundary | Correction and affected consumers |
+| --- | --- |
+| Daemon `Owner`, authority, persistence/redb | One shared display name, narrowly authorized durable rename, exact receipts and bounded current-store adoption; retain stable installation identity. |
+| Public session/command DTOs, control client, CLI and Rust fixture | Read/bootstrap shared metadata, execute the same rename command, keep identity and actor isolation; update generated TypeScript and operator instructions. |
+| `apps/web/src/App.svelte`, `components/ConnectionForm.svelte`, `lib/connections.ts`, `lib/transport.ts` | Address/credential connection, automatic pinning and old-profile adoption, shared-name refresh, clear replacement refusal. |
+| `apps/web/src/style.css`, `App.svelte`, task/timeline/inspector/editor components and public assets | Apply the supplied dark visual direction and real logo throughout the working client; preserve current operations, responsive layout and accessible task views. |
+
+These are selected corrections, not implemented capabilities. The remainder maps the original
+feature assignments; their tested standing is owned by status and the current handoff.
+
 ## One representation and one scheduler
 
 Keep the existing `blueprint`, `runtime`, `control`, `persistence`, `authority`, `workspace`,

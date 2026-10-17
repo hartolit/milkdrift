@@ -9,6 +9,10 @@ Read [AGENTS](../../../../AGENTS.md), canonical docs, [README](README.md),
 [cohesive review](../../practices/cohesive-review.md), [implementation](../../practices/implementation.md),
 [documentation](../../practices/documentation.md) and [workflow](../../workflow.md).
 Use existing evidence to prepare the review; do not repeat the whole product investigation.
+Recheck the early [02a connection](02a-daemon-connection-identity.md) and
+[02b visual](02b-visual-design-and-brand.md) findings across the added method/host/retention screens:
+simple setup, shared names across clients, real logo, visual fit, readable work and accessible
+navigation. Use the retained reference for appearance without reinstating its obsolete features.
 
 ## Let the user perform the connected work
 

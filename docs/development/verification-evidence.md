@@ -1,10 +1,25 @@
 # Verification and operational evidence
 
+## Partial early user review
+
+On October 17, the requesting user reported adding Studio A in the production Svelte preview at
+`http://127.0.0.1:4173/`, from the `9fe2915` checkpoint. They reported excessive connection setup,
+requested daemon-owned names across clients, rejected the current visual design and supplied an
+older mockup as a visual guide. They also identified the missing real logo and requested corrective
+planning. This is direct user feedback, not an agent-observed click trace or a completed journey.
+The [single sprint handoff](virtual-office/daemon-workflows-implementation/handoff.md#actual-user-review-and-corrections)
+retains the environment, source material, finding owners and resume procedure.
+
+Useful task output, close/reconnect, daemon switching, missing-input repair, failure and stop
+understanding have not yet been reviewed by this user. Browser engine and physical-phone use were
+not established. Prepared 02a/02b corrections have no implementation or acceptance evidence yet.
+
 ## Prompt 03 evolving task acceptance
 
 The October 17 focused assignment exercises automatic future work through the production daemon,
-configured provider mapping, capability host, CLI and Svelte. Actual user review in prompt 02 remains
-pending; the user authorized proceeding with that gap. Prompt 04 and the prompt-07 integrated gate
+configured provider mapping, capability host, CLI and Svelte. At that checkpoint actual user review
+in prompt 02 remained pending; the user authorized proceeding with that gap. The later partial
+feedback above does not complete that review. Prompt 04 and the prompt-07 integrated gate
 were not executed. This is local Linux evidence, not a hosted CI result.
 
 Tested implementation checkpoints are `34564c9` (shared admission and bounded tool execution),

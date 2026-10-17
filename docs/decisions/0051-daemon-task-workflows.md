@@ -1,8 +1,9 @@
 # 0051 — Daemon-owned tasks and locally expanded methods
 
-**Standing:** selected engineering design, 2026-10-12; ready for implementation authorization,
-not implemented. The user authorized finishing this design and local documentation commits.
-Production work requires the next instruction. [Vision](../product/vision.md) owns the requirements;
+**Standing:** selected engineering design, 2026-10-12, with the October 17 connection correction
+below selected after partial user review. Implementation through prompt 03 is recorded in status;
+the connection correction and later phases remain unimplemented and require their own assignments.
+[Vision](../product/vision.md) owns the requirements;
 [status](../product/status.md) owns implemented facts. The
 [implementation sprint](../development/virtual-office/daemon-workflows-implementation/README.md)
 owns sequencing, code changes and acceptance.
@@ -182,12 +183,34 @@ There is no server-side workflow state or required backend-for-frontend. Rust pu
 semantics; Rust tooling generates TypeScript DTOs/client codecs checked against shared wire fixtures.
 UI state contains drafts, presentation preferences and caches.
 
-Each client connection names endpoint, installation identity and scoped bearer credential. Operators
-bootstrap the daemon and initial administrator using restricted local configuration. Tokens stay in
-memory by default, never URLs/logs, and clear on disconnect. Reauthentication on a new device is
-expected; a recovery file is not. Persist only non-secret labels/endpoints/layout locally. Authorization
-changes invalidate streams and clear inaccessible cached data. Key caches/actions by daemon identity
-and actor, not a global workflow ID.
+The October 17 user review changes the original manual-name/manual-identity connection default.
+Ordinary setup asks for an endpoint and scoped bearer credential. The authenticated session returns
+the daemon's stable installation identity and shared display name. The client learns the identity on
+first connection and pins it to that endpoint; a reconnect mismatch refuses ordinary work and requires
+an explicit forget-and-reconnect decision. No old drafts, request recovery or cached results transfer
+to the replacement. The identity identifies the daemon, not the browser or device. It remains
+available in connection details and is carried on subsequent requests without manual entry.
+
+First-use trust rests on the operator-supplied endpoint and the transport/authentication rules below.
+A returned installation ID is not a certificate or an independent verification of server identity.
+The current initial session already sends the credential before comparing the manually entered ID;
+automating that comparison does not introduce a stronger cryptographic claim.
+
+One durable daemon metadata record owns its display name and generation. Restricted operator
+configuration seeds it only when absent; restart cannot overwrite an accepted rename. A narrow
+daemon-administration command performs an authorized, generation-guarded rename with exact durable
+request replay. GUI and CLI use the same path. Renaming changes no stable identities, workflow
+history, grants or host relationships. Duplicate names are allowed and endpoints distinguish them.
+Bounded observation invalidates connected clients' metadata so they refresh the shared name;
+reconnect and fresh clients read it from the daemon. A local last-observed name is only an explicitly
+cached display value. Browser-authored aliases cease to be a competing name owner.
+
+Operators bootstrap the daemon and initial administrator using restricted local configuration.
+Tokens stay in memory by default, never URLs/logs, and clear on disconnect. Reauthentication on a new
+device is expected; a recovery file is not. Persist only non-secret endpoints, learned identity pins,
+last-observed names and layout locally. Authorization changes invalidate streams and clear inaccessible
+cached data. Key caches/actions by daemon identity and actor, not a global workflow ID. Browser
+onboarding does not replace the separately authorized execution-host relationships below.
 
 Implement exact configured CORS origins, authenticated fetch, bounded preflights and exposed paging/
 stream headers. Fetch-based SSE carries bearer headers; reconnect uses scoped cursors and an expired

@@ -6,6 +6,10 @@ Execute this prompt only after the user has authorized this implementation sprin
 are complete. The production Svelte client, early user review and its repairs, evolving task path,
 and local method expansion must already work. Read their handoffs and preserve their production
 path. This is implementation of the selected design, not another investigation or a new transport.
+Carry forward the [02a connection](02a-daemon-connection-identity.md) and
+[02b visual](02b-visual-design-and-brand.md) corrections in all new host/retention surfaces. This
+phase's shared execution-host connections are different from browser onboarding and daemon naming;
+do not restore local aliases as the daemon's name or weaken the independent expected-host check.
 
 Read `AGENTS.md`, the canonical product documents in their required order, the relevant
 [implementation](../../practices/implementation.md) and

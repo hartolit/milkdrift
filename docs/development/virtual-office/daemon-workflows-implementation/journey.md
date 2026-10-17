@@ -62,6 +62,14 @@ corrections. An agent-driven browser run or a fixture demonstration does not sub
 checkpoint. Include the genuinely input-dependent result above in that review. Missing user
 participation leaves that checkpoint open.
 
+The October 17 partial review adds the prepared [02a](02a-daemon-connection-identity.md) and
+[02b](02b-visual-design-and-brand.md) corrections. Before continuing to methods, have the user connect
+with only an address and credential, recognize the daemon's shared name, and observe an authorized
+rename in another client and after reconnect. Exercise wrong-installation refusal separately.
+Recheck the real logo and the supplied visual direction in the working task/timeline/inspector,
+including a narrow layout. Then finish the substantive journey above. These remain acceptance
+requirements; the initial connection report and mockup are not evidence that the corrections work.
+
 ## Growing the same workflow: phases 03–05
 
 Phase 03 extends the retained production task/client path with model-produced actions. Phases 04 and

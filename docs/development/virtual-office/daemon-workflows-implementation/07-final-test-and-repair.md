@@ -1,7 +1,8 @@
 # 07 — Final full-system test and repair
 
-**Prepared, not assigned.** Prerequisites: 01–06 complete, both actual user checkpoints recorded,
-focused checks passing, no known deferred in-scope defects. This is the named final acceptance owner
+**Prepared, not assigned.** Prerequisites: 01–06 and corrective prompts 02a/02b complete, both actual
+user checkpoints recorded, focused checks passing, no known deferred in-scope defects. This is the
+named final acceptance owner
 under the [sprint schedule](README.md) and [verification policy](../../workflow.md).
 It is a test-and-repair assignment: fix findings, then verify the resulting code. A report of failures
 or a gate run on a superseded commit is not acceptance.
@@ -39,6 +40,10 @@ retained text search, file/result inspection, ordinary future edits, method admi
 connection settings. Run at least Chromium and the browser engine used for the actual user review;
 mobile claims require recorded device/browser evidence beyond viewport dimensions. Review keyboard
 navigation, accessible labels and readable parallel/blocked/uncertain states in rendered UI.
+Include [02a's](02a-daemon-connection-identity.md) shared-name/reconnect/replay and identity-replacement
+regressions, and [02b's](02b-visual-design-and-brand.md) real-logo, responsive inspector and visual
+review evidence. Later method/host surfaces must use the same design. Passing automation does not
+replace the user's recorded response to these corrections.
 
 Exercise retention with controlled time, enough turnover to cross configured count/byte/page bounds,
 reference changes racing collection, accepted expansion holds, pending results, unresolved remote

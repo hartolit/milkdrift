@@ -9,10 +9,11 @@ The [whiteboard](whiteboard/README.md) retains broader issues and discussions ac
 
 ## Current sprints
 
-[Daemon workflows implementation](daemon-workflows-implementation/README.md) is the completed
-planning result: selected design, source-change map, connected journey and seven full execution
-prompts. It is ready for authorization, unassigned and unexecuted. Its
-[handoff](daemon-workflows-implementation/handoff.md) owns planning checks and the exact next instruction.
+[Daemon workflows implementation](daemon-workflows-implementation/README.md) has completed prompt 03
+locally, with the early user review in progress. The user's connection and visual feedback produced
+prepared corrective prompts 02a/02b before further feature work. Their implementation and 04–07 remain
+unassigned. Its [handoff](daemon-workflows-implementation/handoff.md) records tested checkpoints,
+actual review observations and how to resume; the sprint README owns the next assignment.
 
 [Remedial planning v3](milkdrift-remedial-planning-v3/README.md) is retained as the superseded
 investigation/reset archive. Preserve its source evidence, disagreements and Git checkpoints.
@@ -23,7 +24,8 @@ The [roadmap](../../product/roadmap.md) owns unfinished work; unrelated whiteboa
 
 ## Prepared assignments
 
-Use the ordered [01–07 prompts](daemon-workflows-implementation/README.md#ordered-assignments).
+Use the ordered [sprint prompts](daemon-workflows-implementation/README.md#ordered-assignments),
+including the early-review corrections.
 The v3 [previous program](milkdrift-remedial-planning-v3/deliverables/proposed-implementation/README.md)
 remains superseded history. No implementation starts without the user's next instruction.
 

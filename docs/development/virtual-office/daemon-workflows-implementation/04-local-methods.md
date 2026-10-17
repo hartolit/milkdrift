@@ -1,8 +1,14 @@
 # 04 — Reusable methods expand into local tasks
 
 **Prepared, not assigned.** Prerequisite: 03's automatic work, prospective edits and cumulative
-limits. Deliver the reusable project-setup method in the same production workflow and clients.
+limits, the [02a connection correction](02a-daemon-connection-identity.md),
+[02b visual correction](02b-visual-design-and-brand.md) and completed early user review.
+Deliver the reusable project-setup method in the same production workflow and clients.
 No child workflow runtime, published method service or definition-time pinned copy supplies this use.
+
+Extend the corrected shell, shared daemon names and existing visual components for method browsing,
+editing and origin inspection. Do not reintroduce browser-local daemon names or the former visual
+theme. This phase adds method behavior to the reviewed client rather than replacing its design.
 
 Read [AGENTS](../../../../AGENTS.md), canonical docs, [implementation](../../practices/implementation.md),
 [documentation](../../practices/documentation.md), [workflow](../../workflow.md),
