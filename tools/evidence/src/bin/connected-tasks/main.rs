@@ -1,6 +1,7 @@
 //! Shared production-daemon fixture for finite task evidence and browser journeys.
 mod animation;
 mod animation_check;
+mod canvas_seeds;
 mod check;
 mod model;
 mod report;
@@ -27,6 +28,16 @@ struct Arguments {
 
 #[derive(Subcommand)]
 enum Action {
+    /// Create bounded canvas review cases through the running fixture's public command API.
+    Seed {
+        #[arg(long)]
+        root: PathBuf,
+    },
+    /// Produce bounded configured outputs for correction review fixtures.
+    CanvasReport {
+        #[arg(long)]
+        kind: String,
+    },
     /// Create a fresh private root and serve two independently authorized production daemons.
     Serve {
         #[arg(long)]
@@ -35,6 +46,9 @@ enum Action {
         daemon: PathBuf,
         #[arg(long, default_value_t = 3600)]
         lifetime_secs: u64,
+        /// Enable extra controlled executors needed only by the canvas acceptance suite.
+        #[arg(long)]
+        canvas_cases: bool,
     },
     /// Exercise the actual CLI and public client against isolated production task daemons.
     Check {
@@ -73,12 +87,17 @@ enum Control {
 #[tokio::main]
 async fn main() -> EvidenceResult {
     match Arguments::parse().action {
+        Action::Seed { root } => canvas_seeds::seed(&root).await,
+        Action::CanvasReport { kind } => canvas_seeds::report(&kind),
         Action::Serve {
             root,
             daemon,
             lifetime_secs,
-        } => run_fixture(&root, &daemon, lifetime_secs, None).await,
-        Action::Check { root, daemon, cli } => run_fixture(&root, &daemon, 300, Some(&cli)).await,
+            canvas_cases,
+        } => run_fixture(&root, &daemon, lifetime_secs, None, canvas_cases).await,
+        Action::Check { root, daemon, cli } => {
+            run_fixture(&root, &daemon, 300, Some(&cli), false).await
+        }
         Action::CargoReport { file, delay_ms } => report::run(&file, delay_ms),
         Action::Control { root, operation } => {
             let operation = match operation {
@@ -146,6 +165,7 @@ async fn run_fixture(
     daemon: &Path,
     lifetime_secs: u64,
     cli: Option<&Path>,
+    canvas_cases: bool,
 ) -> EvidenceResult {
     ensure(
         (30..=14_400).contains(&lifetime_secs),
@@ -182,7 +202,7 @@ async fn run_fixture(
     let mut model = model::Model::start(&root)?;
     let mut connections = serde_json::Map::new();
     for name in ["a", "b"] {
-        let configured = setup::configure(&root, &fixture, name, &model)?;
+        let configured = setup::configure(&root, &fixture, name, &model, canvas_cases)?;
         let log = root.join(format!("daemon-{name}.log"));
         write_private(&log, b"")?;
         let child = start(&daemon, &configured.config, &log)?;
@@ -195,6 +215,9 @@ async fn run_fixture(
         };
         ready(&mut instance).await?;
         connections.insert(name.to_owned(), json!({"url":instance.endpoint,"identity":format!("host:browser-{name}"),"token":instance.token}));
+        if let Some(token) = configured.limited_token {
+            connections.insert(format!("{name}_limited"), json!({"url":instance.endpoint,"identity":format!("host:browser-{name}"),"token":token}));
+        }
         instances.push(instance);
     }
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -203,6 +226,7 @@ async fn run_fixture(
     connections.insert("capability".into(), json!("cargo-report"));
     connections.insert("model_capability".into(), json!("controlled-model"));
     connections.insert("planning_capability".into(), json!("controlled-planner"));
+    connections.insert("canvas_cases".into(), json!(canvas_cases));
     connections.insert(
         "planning_expect".into(),
         json!([

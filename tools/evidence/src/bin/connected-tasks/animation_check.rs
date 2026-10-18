@@ -35,10 +35,24 @@ pub(super) async fn run(
         "inputs":{"brief":{"kind":"text","text":"Investigate learned animation in Rust: motion representation, training data, and render validation. Preserve failed research and correct its future consumers."}},
         "finish_when_settled":false,"limits":null
     }))?;
-    let receipt = client.create_workflow(&request).await?;
+    let receipt = client
+        .create_workflow(&request)
+        .await
+        .map_err(|error| format!("animation planner submission failed: {error}"))?;
     let deadline = Instant::now() + Duration::from_secs(60);
+    let mut longest_observation_ms = 0;
     let workflow = loop {
-        let current = client.workflow(&receipt.workflow_id).await?;
+        let observation = Instant::now();
+        let current = client
+            .workflow(&receipt.workflow_id)
+            .await
+            .map_err(|error| {
+                format!(
+                    "animation workflow observation failed after {} ms: {error}",
+                    observation.elapsed().as_millis()
+                )
+            })?;
+        longest_observation_ms = longest_observation_ms.max(observation.elapsed().as_millis());
         if current.state == "completed" {
             break current;
         }
@@ -66,7 +80,12 @@ pub(super) async fn run(
     )?;
     let mut tasks = Vec::new();
     for task in &workflow.tasks {
-        tasks.push(client.task(&workflow.id, &task.id).await?);
+        tasks.push(
+            client
+                .task(&workflow.id, &task.id)
+                .await
+                .map_err(|error| format!("animation retained task read failed: {error}"))?,
+        );
     }
     ensure(
         tasks
@@ -137,7 +156,8 @@ pub(super) async fn run(
     ensure(
         client
             .task_result(&workflow.id, &final_task.id)
-            .await?
+            .await
+            .map_err(|error| format!("animation final result read failed: {error}"))?
             .text
             .contains("Final animation report"),
         "final result was unavailable through the public client",
@@ -159,13 +179,20 @@ pub(super) async fn run(
     instance.child = start(daemon_binary, &instance.config, &instance.log)?;
     ready(instance).await?;
     let reopened = super::check::client(instance)?;
-    let recovered = reopened.workflow(&workflow.id).await?;
+    let recovered = reopened
+        .workflow(&workflow.id)
+        .await
+        .map_err(|error| format!("animation workflow read after restart failed: {error}"))?;
     ensure(
         recovered.tasks == workflow.tasks && recovered.admissions == workflow.admissions,
         "restart changed accepted descendants or response admission linkage",
     )?;
     ensure(
-        reopened.create_workflow(&request).await? == receipt,
+        reopened
+            .create_workflow(&request)
+            .await
+            .map_err(|error| format!("animation planner replay after restart failed: {error}"))?
+            == receipt,
         "exact initial planner replay changed its durable acceptance",
     )?;
     ensure(
@@ -185,7 +212,7 @@ pub(super) async fn run(
         "accepted_model_batches":3,"client_continuation_batches":0,"parallel_start_end_evidence":true,
         "failed_outcome_composition":true,"correction_rebinds_required_input":true,
         "native_read_write_tools":true,"restart_preserves_accepted_batches":true,
-        "canonical_action_outputs":true,
+        "canonical_action_outputs":true,"longest_workflow_observation_ms":longest_observation_ms,
         "evidence_scope":"Controlled responses establish daemon construction and bounded tool execution, not real-model quality"
     }))
 }

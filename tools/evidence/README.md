@@ -26,6 +26,20 @@ as `MILKDRIFT_BROWSER_CONFIG` to the [web browser suite](../../apps/web/README.m
 `control --root DIRECTORY` subcommand requests bounded restart/crash/stop actions from its live Rust
 owner. Tokens and private request bodies must not be printed or retained in browser traces.
 
+For canvas acceptance, start `serve` with `--canvas-cases` to enable the extra controlled executors.
+This mode also permits the browser suite at `http://127.0.0.1:6173` for isolated parallel verification;
+set `MILKDRIFT_BROWSER_PORT=6173` when ports 4173 and 5173 are already in use.
+Ordinary CLI and user-review fixtures keep the process and two model choices. After checking empty
+discovery, `connected-tasks seed --root DIRECTORY` creates bounded canvas
+review cases through that daemon's public API and writes private identities to `canvas-seeds.json`.
+The cases cover a paged graph, a rejected follow-up proposal with a separate human wait, and a failed
+historical producer whose undeclared report can be redirected to a compatible correction. Real Rust
+processes publish the correction files. The oversized case exceeds the original evidence declaration;
+it does not manufacture a successful artifact above the runtime's aggregate task-output allowance.
+This mode also configures a second actor on each daemon with workflow inspection but no project
+folders or access to internal artifacts. A captured private source lets the browser prove that a
+valid connection can show a restricted source and refuse its reuse without exposing the content.
+
 The finite application lane uses those same daemons and capabilities:
 
 ```sh

@@ -227,7 +227,8 @@ impl Fixture {
                 1,
             )?),
         ));
-        let control = TaskControlService::new(runtime.clone(), authority, clock.clone());
+        let control =
+            TaskControlService::new(runtime.clone(), authority, clock.clone(), store.clone());
         Ok(Self {
             runtime,
             executor,

@@ -65,14 +65,9 @@ fn context(
     use milkdrift_authority::{
         AuthorityBudget, AuthorityDecisionSnapshot, AuthorityExecutionProvenance,
         AuthorityOperation, AuthorityRequest, BoundaryTimeMillis, DecisionId, DecisionReasonCode,
-        ExecutionAuthorityBasis, GrantDigest, GrantId, PolicyId, RequestedResourceFacts,
+        GrantDigest, GrantId, PolicyId, RequestedResourceFacts,
     };
-    use milkdrift_capability::{
-        CapabilityDescriptorDocument, ResolvedCapabilitySnapshot, SideEffectClass,
-    };
-    let revision: RevisionId = serde_json::from_value(json!(format!("rev_{}", "1".repeat(64))))?;
-    let workflow = WorkflowId::new("run-materialization")?;
-    let run = RunId::new(workflow.as_str())?;
+    use milkdrift_capability::SideEffectClass;
     let decision = AuthorityDecisionSnapshot::from_evaluation(
         PolicyId::new("materialization-test")?,
         1,
@@ -93,8 +88,22 @@ fn context(
         AuthorityBudget::default(),
         SideEffectClass::Unknown,
     )?;
+    context_with_authorization(request, budget, &decision, &decision)
+}
+
+fn context_with_authorization(
+    request: &InvocationRequest,
+    budget: WorkspaceBudget,
+    decision: &milkdrift_authority::AuthorityDecisionSnapshot,
+    entry: &milkdrift_authority::AuthorityDecisionSnapshot,
+) -> TestResult<AdapterExecutionContext> {
+    use milkdrift_authority::ExecutionAuthorityBasis;
+    use milkdrift_capability::{CapabilityDescriptorDocument, ResolvedCapabilitySnapshot};
+    let revision: RevisionId = serde_json::from_value(json!(format!("rev_{}", "1".repeat(64))))?;
+    let workflow = WorkflowId::new("run-materialization")?;
+    let run = RunId::new(workflow.as_str())?;
     let basis = ExecutionAuthorityBasis::from_start_decision(
-        &decision,
+        decision,
         workflow,
         run.clone(),
         revision.clone(),
@@ -132,12 +141,15 @@ fn context(
         "execution":"execution-materialization","attempt":"attempt-materialization",
         "lease":"lease-materialization","lease_expires_at":1000,
         "resolution":resolution,"execution_authority":basis,
-        "resolution_authorization":decision,"entry_authorization":decision,"request":request
+        "resolution_authorization":entry,"entry_authorization":entry,"request":request
     }))?;
     Ok(AdapterExecutionContext::from_dispatch(
         &dispatch.for_task(budget, Vec::new()),
     )?)
 }
+
+#[path = "materialization/authority.rs"]
+mod authority;
 
 fn request() -> TestResult<InvocationRequest> {
     Ok(InvocationRequest::new(
@@ -196,6 +208,33 @@ fn direct_selection_materializes_only_frozen_inputs_and_cannot_publish_before_en
     let request = request()?;
     let selection = DirectInputSelection::new(&request, 1_024)?;
     assert!(DirectInputSelection::new(&request, 1).is_err());
+    let mut artifact_inputs = Vec::new();
+    for name in ["first-report", "second-report"] {
+        artifact_inputs.push(InputReference::new(
+            name,
+            InvocationValueReference::Artifact {
+                reference: milkdrift_capability::ArtifactReference::new(
+                    name,
+                    "1".repeat(64),
+                    Some("text/plain".into()),
+                    Some(900),
+                )?,
+            },
+        )?);
+    }
+    let artifacts = InvocationRequest::new(
+        request.invocation().clone(),
+        request.capability().clone(),
+        request.operation().clone(),
+        request.provider_profile().cloned(),
+        None,
+        artifact_inputs,
+        BTreeMap::new(),
+    )?;
+    // Each retained result fits alone; the shared entry selection must reject their sum
+    // before it can construct an adapter context or materialize provider input.
+    assert!(DirectInputSelection::new(&artifacts, 1_024).is_err());
+    assert!(DirectInputSelection::new(&artifacts, 1_800).is_ok());
     assert!(!selection.canonical_json().contains("instruction"));
     let context = AdapterExecutionContext::direct(selection);
     assert!(context.workflow().is_none());

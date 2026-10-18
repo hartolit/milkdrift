@@ -1,4 +1,5 @@
 //! Adapt public task commands and authorized projections to their semantic owners.
+mod authoring;
 mod commands;
 mod mapping;
 mod reads;

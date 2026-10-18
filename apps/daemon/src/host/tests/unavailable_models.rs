@@ -3,6 +3,7 @@ use super::*;
 use milkdrift_control_client::{BearerCredential, ClientConfig, ControlClient};
 use milkdrift_control_protocol::tasks::{
     ChangeWorkflowRequest, CreateWorkflowRequest, TaskChangeDto, TaskDefinitionDto, TaskStateDto,
+    WorkflowReadDto,
 };
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, path::Path};
@@ -77,11 +78,35 @@ fn cli(endpoint: &url::Url, root: &Path, args: &[&str]) -> TestResult<Value> {
         .output()?;
     assert!(
         output.status.success(),
-        "{}",
+        "CLI status {}: stdout {}; stderr {}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
     let value: Value = serde_json::from_slice(&output.stdout)?;
     Ok(value.get("value").ok_or("CLI value absent")?.clone())
+}
+
+async fn waiting_for_brief(client: &ControlClient, workflow: &str) -> TestResult<WorkflowReadDto> {
+    // Revising clears the waiting reason. Let maintenance restore it before capturing the next
+    // generation, so this replacement test does not race an unrelated readiness update.
+    Ok(
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let read = client.workflow(workflow).await?;
+                if read.tasks.len() == 2
+                    && read.tasks.iter().all(|task| {
+                        task.state == TaskStateDto::Queued
+                            && task.reason.as_deref() == Some("missing supplied input brief")
+                    })
+                {
+                    return Ok::<_, milkdrift_control_client::ClientError>(read);
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await??,
+    )
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -152,16 +177,7 @@ async fn drained_models_can_be_replaced_individually_through_http_and_cli() -> T
     }))?;
     let receipt = client.create_workflow(&request).await?;
     let workflow = receipt.workflow_id.clone();
-    let original = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        loop {
-            let read = client.workflow(&workflow).await?;
-            if read.tasks.iter().all(|task| task.reason.is_some()) {
-                return Ok::<_, milkdrift_control_client::ClientError>(read);
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-    })
-    .await??;
+    let original = waiting_for_brief(&client, &workflow).await?;
     assert!(
         original
             .tasks
@@ -206,7 +222,7 @@ async fn drained_models_can_be_replaced_individually_through_http_and_cli() -> T
             },
         )
         .await?;
-    let current = client.workflow(&workflow).await?;
+    let current = waiting_for_brief(&client, &workflow).await?;
     let second_change = ChangeWorkflowRequest {
         request_id: "repair-second".into(),
         expected_generation: current.generation,
@@ -228,7 +244,7 @@ async fn drained_models_can_be_replaced_individually_through_http_and_cli() -> T
         assert_eq!(task.state, TaskStateDto::Queued);
         assert!(task.frozen.is_none());
     }
-    let current = client.workflow(&workflow).await?;
+    let current = waiting_for_brief(&client, &workflow).await?;
     let supply = ChangeWorkflowRequest {
         request_id: "repair-supply".into(),
         expected_generation: current.generation,

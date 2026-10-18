@@ -468,6 +468,18 @@ impl LocalProcessAdapter {
 }
 
 impl CapabilityAdapter for LocalProcessAdapter {
+    fn task_authoring(
+        &self,
+    ) -> std::collections::BTreeMap<
+        milkdrift_capability::OperationId,
+        milkdrift_capability_host::TaskAuthoringContract,
+    > {
+        std::collections::BTreeMap::from([(
+            self.profile.operation.clone(),
+            self.profile.task_authoring(),
+        )])
+    }
+
     fn accepts_direct_inputs(&self) -> bool {
         true
     }

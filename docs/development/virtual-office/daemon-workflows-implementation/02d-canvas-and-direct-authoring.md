@@ -1,6 +1,6 @@
 # 02d — A workflow canvas with direct task and input authoring
 
-**Prepared, not assigned.** The user rejected the implemented 02c interaction as still complicated
+**Implemented; focused checks complete and actual user review open.** The user rejected the implemented 02c interaction as still complicated
 and bloated. They want the workspace to be a canvas beside navigation, task details on the left,
 and inputs connected to tasks directly. They specifically reject authoring through binding names,
 input policies, supplied-input names, task identities/batch aliases, output names and project-path

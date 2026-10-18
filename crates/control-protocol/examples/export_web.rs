@@ -2,10 +2,12 @@
 use milkdrift_control_protocol::tasks::{
     ChangeWorkflowRequest, CreateWorkflowRequest, FrozenInputDto, FrozenTaskDto, InputBinding,
     InputValue, ModelAdmissionDto, NewTaskDto, PathAccess, TaskActionPolicyDto,
-    TaskBindingRedirectDto, TaskCapability, TaskChangeDto, TaskDefinitionDto,
-    TaskOutputDeclarationDto, TaskReadDto, TaskResultDto, TaskSessionDto, TaskStateDto,
-    TaskSummaryDto, TaskToolDto, TaskUploadReceipt, TaskUploadRequest, WorkflowLimitsDto,
-    WorkflowPageDto, WorkflowReadDto, WorkflowReceipt, WorkflowSummaryDto,
+    TaskBindingRedirectDto, TaskCapability, TaskCapabilityAuthoringDto, TaskChangeDto,
+    TaskDefinitionDto, TaskInputSlotDto, TaskOutputDeclarationDto, TaskOutputPortDto,
+    TaskProjectRootDto, TaskPublishedOutputDto, TaskReadDto, TaskResultDto, TaskSessionDto,
+    TaskStateDto, TaskSummaryDto, TaskSuppliedInputDto, TaskToolDto, TaskUploadReceipt,
+    TaskUploadRequest, WorkflowLimitsDto, WorkflowPageDto, WorkflowReadDto, WorkflowReceipt,
+    WorkflowSummaryDto,
 };
 use milkdrift_control_protocol::{DaemonMetadataDto, RenameDaemonReceipt, RenameDaemonRequest};
 use ts_rs::TS;
@@ -16,6 +18,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         InputValue::decl(&config),
         InputBinding::decl(&config),
         TaskCapability::decl(&config),
+        TaskInputSlotDto::decl(&config),
+        TaskOutputPortDto::decl(&config),
+        TaskCapabilityAuthoringDto::decl(&config),
+        TaskProjectRootDto::decl(&config),
+        TaskPublishedOutputDto::decl(&config),
+        TaskSuppliedInputDto::decl(&config),
         PathAccess::decl(&config),
         TaskOutputDeclarationDto::decl(&config),
         TaskBindingRedirectDto::decl(&config),

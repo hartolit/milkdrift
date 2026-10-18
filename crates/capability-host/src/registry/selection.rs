@@ -132,6 +132,11 @@ impl CapabilityHost {
         };
         let authority_requirements =
             lifecycle_call(|| Ok::<_, crate::AdapterError>(adapter.authority_requirements()))?;
+        let task_authoring = lifecycle_call(|| {
+            let contracts = adapter.task_authoring();
+            crate::authoring::validate_contracts(&contracts, &descriptor)?;
+            Ok(contracts)
+        })?;
         let accepts_direct_inputs =
             lifecycle_call(|| Ok::<_, crate::AdapterError>(adapter.accepts_direct_inputs()))?;
         let pending_limit =
@@ -171,6 +176,7 @@ impl CapabilityHost {
         state.generations.insert(
             key.clone(),
             Generation {
+                task_authoring,
                 accepts_direct_inputs,
                 descriptor,
                 descriptor_digest,

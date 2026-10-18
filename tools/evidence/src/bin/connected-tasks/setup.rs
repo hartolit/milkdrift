@@ -12,6 +12,7 @@ pub(super) struct Configured {
     pub config: PathBuf,
     pub endpoint: String,
     pub token: String,
+    pub limited_token: Option<String>,
 }
 
 pub(super) fn fresh_root(path: &Path) -> EvidenceResult<PathBuf> {
@@ -32,6 +33,7 @@ pub(super) fn configure(
     executable: &Path,
     name: &str,
     model: &super::model::Model,
+    canvas_cases: bool,
 ) -> EvidenceResult<Configured> {
     let directory = root.join(format!("daemon-{name}"));
     fs::create_dir(&directory)?;
@@ -76,6 +78,10 @@ pub(super) fn configure(
         json!(format!("host:browser-{name}")),
     )?;
     let serving_default = serde_json::to_value(milkdrift_daemon::ServingHostConfig::default())?;
+    let mut browser_origins = vec!["http://127.0.0.1:5173", "http://127.0.0.1:4173"];
+    if canvas_cases {
+        browser_origins.push("http://127.0.0.1:6173");
+    }
     configuration
         .as_object_mut()
         .ok_or("config is not an object")?
@@ -83,10 +89,7 @@ pub(super) fn configure(
         .or_insert(serving_default)
         .as_object_mut()
         .ok_or("serving is not an object")?
-        .insert(
-            "browser_origins".into(),
-            json!(["http://127.0.0.1:5173", "http://127.0.0.1:4173"]),
-        );
+        .insert("browser_origins".into(), json!(browser_origins));
     set(
         &mut configuration,
         "/secret_sources",
@@ -112,10 +115,19 @@ pub(super) fn configure(
         "/actors/0/authority/resources/daemon/configuration",
         json!(true),
     )?;
+    let mut identities = vec!["cargo-report", "controlled-model", "controlled-planner"];
+    if canvas_cases {
+        identities.extend([
+            "canvas-source",
+            "canvas-compatible",
+            "canvas-wrong-media",
+            "canvas-oversized",
+        ]);
+    }
     set(
         &mut configuration,
         "/actors/0/authority/resources/capability/identities",
-        json!({"type":"only","values":["cargo-report","controlled-model","controlled-planner"]}),
+        json!({"type":"only","values":identities}),
     )?;
     set(
         &mut configuration,
@@ -170,11 +182,18 @@ pub(super) fn configure(
         "/actors/0/authority/budget/units",
         json!(64_000_000),
     )?;
+    let mut process_profiles = vec![profile.clone()];
+    if canvas_cases {
+        process_profiles.extend(canvas_profiles(&directory, &profile)?);
+    }
     set(
         &mut configuration,
         "/adapters",
-        json!({"process_profiles":[profile],"model_profiles":[{"capability_id":"controlled-model","profile":model.profile(&directory)?},{"capability_id":"controlled-planner","profile":model.planning_profile(&directory,name)?}]}),
+        json!({"process_profiles":process_profiles,"model_profiles":[{"capability_id":"controlled-model","profile":model.profile(&directory)?},{"capability_id":"controlled-planner","profile":model.planning_profile(&directory,name)?}]}),
     )?;
+    let limited_token = canvas_cases
+        .then(|| restricted_actor(&mut configuration, &directory, name))
+        .transpose()?;
     let validated: milkdrift_daemon::DaemonConfig = serde_json::from_value(configuration)?;
     validated.clone().validate(&directory)?;
     let config = write_private(
@@ -185,7 +204,47 @@ pub(super) fn configure(
         config,
         endpoint: format!("http://{endpoint}"),
         token,
+        limited_token,
     })
+}
+
+fn restricted_actor(
+    configuration: &mut Value,
+    directory: &Path,
+    name: &str,
+) -> EvidenceResult<String> {
+    let mut entropy = [0u8; 32];
+    getrandom::fill(&mut entropy).map_err(|_| "operating-system token entropy unavailable")?;
+    let token = blake3::hash(&entropy).to_hex().to_string();
+    let token_path = write_private(&directory.join("limited.token"), token.as_bytes())?;
+    configuration
+        .get_mut("secret_sources")
+        .and_then(Value::as_object_mut)
+        .ok_or("fixture secret sources missing")?
+        .insert(
+            "credential:limited".into(),
+            json!({"type":"file","path":token_path}),
+        );
+    let actors = configuration
+        .get_mut("actors")
+        .and_then(Value::as_array_mut)
+        .ok_or("fixture actors missing")?;
+    let mut limited = actors.first().cloned().ok_or("fixture actor missing")?;
+    for (pointer, value) in [
+        ("/actor", json!(format!("human:browser-{name}-limited"))),
+        ("/grant_id", json!(format!("grant:browser-{name}-limited"))),
+        ("/credential_ref", json!("credential:limited")),
+        ("/authority/resources/filesystem", json!([])),
+        (
+            "/authority/resources/artifacts",
+            json!({"type":"allow","identities":{"type":"any"},"sensitivities":["public"]}),
+        ),
+        ("/authority/resources/daemon/configuration", json!(false)),
+    ] {
+        set(&mut limited, pointer, value)?;
+    }
+    actors.push(limited);
+    Ok(token)
 }
 
 fn process_profile(directory: &Path, executable: &Path) -> EvidenceResult<PathBuf> {
@@ -219,6 +278,36 @@ fn process_profile(directory: &Path, executable: &Path) -> EvidenceResult<PathBu
     )
 }
 
+fn canvas_profiles(directory: &Path, base: &Path) -> EvidenceResult<Vec<PathBuf>> {
+    let original: Value = serde_json::from_slice(&fs::read(base)?)?;
+    ["source", "compatible", "wrong-media", "oversized"]
+        .into_iter()
+        .map(|kind| {
+            let mut document = original.clone();
+            let profile = document
+                .get_mut("profile")
+                .and_then(Value::as_object_mut)
+                .ok_or("process fixture profile missing")?;
+            profile.insert("profile_id".into(), json!(format!("canvas-{kind}")));
+            profile.insert("capability".into(), json!(format!("canvas-{kind}")));
+            profile.insert("arguments".into(), json!(["canvas-report", "--kind", kind]));
+            profile.insert("inputs".into(), json!([]));
+            let mut outputs = vec![json!({"name":"report","relative_path":"report.txt","media_type":if kind == "wrong-media" { "application/json" } else { "text/plain" },"required":true})];
+            if kind != "source" {
+                outputs.push(json!({"name":"evidence","relative_path":"evidence.txt","media_type":"text/plain","required":true}));
+            }
+            profile.insert("outputs".into(), json!(outputs));
+            let validated = milkdrift_local_process::ProcessProfileDocument::from_json(
+                &serde_json::to_vec(&document)?,
+            )?;
+            write_private(
+                &directory.join(format!("canvas-{kind}-profile.json")),
+                &validated.to_canonical_json()?,
+            )
+        })
+        .collect()
+}
+
 fn set(document: &mut Value, pointer: &str, value: Value) -> EvidenceResult {
     *document
         .pointer_mut(pointer)
@@ -241,18 +330,35 @@ mod tests {
 
     #[test]
     fn generated_browser_config_compiles_complete_serving_defaults() -> EvidenceResult {
-        let root = tempfile::tempdir()?;
-        let mut model = super::super::model::Model::start(root.path())?;
-        let configured = configure(
-            root.path(),
-            &std::env::current_exe()?.canonicalize()?,
-            "fixture",
-            &model,
-        )?;
-        let plan = milkdrift_daemon::DaemonConfig::load(&configured.config)?;
-        assert!(plan.bind().ip().is_loopback());
-        assert!(!configured.token.is_empty());
-        model.finish()?;
+        for canvas_cases in [false, true] {
+            let root = tempfile::tempdir()?;
+            let mut model = super::super::model::Model::start(root.path())?;
+            let configured = configure(
+                root.path(),
+                &std::env::current_exe()?.canonicalize()?,
+                "fixture",
+                &model,
+                canvas_cases,
+            )?;
+            let plan = milkdrift_daemon::DaemonConfig::load(&configured.config)?;
+            assert!(plan.bind().ip().is_loopback());
+            assert!(!configured.token.is_empty());
+            assert_eq!(configured.limited_token.is_some(), canvas_cases);
+            let document: milkdrift_daemon::DaemonConfig =
+                toml::from_str(&fs::read_to_string(&configured.config)?)?;
+            assert_eq!(document.actors.len(), if canvas_cases { 2 } else { 1 });
+            if canvas_cases {
+                let actor = document.actors.last().ok_or("restricted actor missing")?;
+                assert!(actor.authority.resources.filesystem.is_empty());
+                assert_eq!(
+                    actor.authority.resources.artifacts.sensitivities(),
+                    Some(&std::collections::BTreeSet::from([
+                        milkdrift_workspace::ArtifactSensitivity::Public
+                    ]))
+                );
+            }
+            model.finish()?;
+        }
         Ok(())
     }
 }

@@ -532,6 +532,12 @@ impl ModelToolLoopAdapter {
 }
 
 impl CapabilityAdapter for ModelToolLoopAdapter {
+    fn task_authoring(
+        &self,
+    ) -> BTreeMap<milkdrift_capability::OperationId, crate::TaskAuthoringContract> {
+        self.model.task_authoring()
+    }
+
     fn accepts_direct_inputs(&self) -> bool {
         self.model.accepts_direct_inputs()
     }

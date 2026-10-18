@@ -18,6 +18,19 @@ impl Owner {
         request: CreateWorkflowRequest,
         canonical_request: &[u8],
     ) -> Result<WorkflowReceipt, PublicFailure> {
+        if let Some(receipt) = self
+            .workflow()?
+            .task_control
+            .replay_exact(
+                &session.context,
+                &request.request_id,
+                None,
+                canonical_request,
+            )
+            .map_err(super::super::read_model::public_control)?
+        {
+            return public_receipt(receipt);
+        }
         let tasks = request
             .tasks
             .into_iter()
@@ -65,6 +78,19 @@ impl Owner {
         canonical_request: &[u8],
     ) -> Result<WorkflowReceipt, PublicFailure> {
         let workflow = milkdrift_blueprint::WorkflowId::new(workflow).map_err(failure)?;
+        if let Some(receipt) = self
+            .workflow()?
+            .task_control
+            .replay_exact(
+                &session.context,
+                &request.request_id,
+                Some(&workflow),
+                canonical_request,
+            )
+            .map_err(super::super::read_model::public_control)?
+        {
+            return public_receipt(receipt);
+        }
         let changes = request
             .changes
             .into_iter()

@@ -168,13 +168,13 @@ fn preparation_unknown_ownership_never_fabricates_non_entry_or_releases_claims()
         )?);
         let authority = Arc::new(InvocationAllowance(Some(8)));
         let runtime = Arc::new(TaskRuntime::new(
-            store,
+            store.clone(),
             executor.clone(),
             authority.clone(),
             clock.clone(),
             Arc::new(SequentialIdGenerator::new("prepare-test", 1)?),
         ));
-        let control = TaskControlService::new(runtime.clone(), authority, clock);
+        let control = TaskControlService::new(runtime.clone(), authority, clock, store.clone());
         let mut create = request()?;
         create.inputs.insert(
             "manifest".into(),

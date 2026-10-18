@@ -5,12 +5,23 @@ adapter is a `trusted_host_process`: it runs with the daemon account's OS author
 Milkdrift mediates direct argv, a rebuilt environment, selected inputs, declared outputs, and
 configured paths. It is not a sandbox.
 
+For a configured coding agent, the browser's task inspector calls this choice **Model or agent**.
+**Models & agents** lists the processes the current account can select and links this setup from
+**Add model or agent**. Installation and profile configuration happen on the daemon computer;
+the browser does not download an agent or choose an arbitrary executable. Once configured, the
+connection is shared by permitted clients rather than installed separately in each browser.
+
 ## Profile schema 2
 
 For ordinary setup use the [operator recipe](../../examples/operator/README.md#configure-the-host-and-account).
 The complete [coding-agent profile template](../../examples/external-evidence/coding-agent-profile.example.json)
 is validated by the production reader. Copy it outside the repository and supply the actual
 executable digest, size, paths, arguments, and declared resources before registration.
+Add the profile filename to `adapters.process_profiles` in the daemon configuration, grant the
+account its exact operation and resources, check the configuration and restart using the
+[daemon procedure](../operations/daemon.md). Reconnect the browser and select the process on a task.
+The canvas shows its configured input slots; connect the actual file or text it requires before
+submitting. A display name alone cannot establish that a process accepts arbitrary instructions.
 `revision` and `descriptor_revision` must be the same nonzero value. `content_digest` is `b3_`
 followed by the lowercase 64-hex BLAKE3 digest, and `size_bytes` is the exact nonzero file size.
 The executable is streamed through a bounded 64-KiB buffer and may be at most 1 GiB. The optional

@@ -24,6 +24,13 @@ reconstructs a workflow history or causal manifest. Serving output names the rea
 while task publication uses its owning workflow's durable entry proof and frozen artifact allowance.
 Pending and committed output both consume that invocation's output ceiling.
 
+The daemon configures `StoreInvocationDataAccess::with_task_authority` so local task artifact reads
+check the accepted actor's grant against actual stored identity, sensitivity and byte count before
+releasing content. Permission to invoke a capability alone does not grant artifact access. The final
+execution check also rejects replacement or revocation of the frozen grant. Direct and peer inputs
+keep their separate serving admission. Per-file and aggregate materialization limits remain with
+this bridge and the configured adapter.
+
 The daemon installs one durable native-directory claim store before admitting task paths. Host
 preparation resolves each declared directory to its physical path and identity, acquires its full
 read/write set, then rechecks the selection before external entry. Equal or ancestor/descendant
@@ -40,6 +47,13 @@ process/model profiles, creates adapters with explicit data and secret ports, re
 and refreshes health. Registration calls `authority_requirements` and `start` before publishing the
 generation. Re-registering the same descriptor replays the existing registration; it does not replace
 the live adapter. Changed facts need a new descriptor revision.
+
+For task editors, `CapabilityAdapter::task_authoring` supplies a `TaskAuthoringContract` with the
+configured input slots and actual output names. The host validates and captures this finite map
+at registration, then includes only permitted operations in `GenerationView::task_authoring`.
+An adapter without metadata offers no direct connector choices. This read model carries no
+credentials or execution configuration and grants no authority. It remains separate from the
+hashed capability descriptor, so adding editor metadata does not change retained selections.
 
 The runtime reaches the host through `TaskExecutor`. The following shows the local runtime path;
 the [serving owner](src/serving.rs) supplies the remote durable acceptance boundary.

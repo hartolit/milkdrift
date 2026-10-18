@@ -1,4 +1,4 @@
-# Local control API 3.2
+# Local control API 3.3
 
 Use this API to submit ordinary tasks, discover permitted workflows and inspect retained results.
 All clients use the daemon's owner queue. The standalone [Svelte client](../../apps/web/README.md),
@@ -13,12 +13,22 @@ maps that credential to an immutable actor/grant revision. JSON cannot choose an
 negotiates the exact version before use; older graph clients are refused:
 
 ```json
-{"protocol":{"major":3,"minor":2}}
+{"protocol":{"major":3,"minor":3}}
 ```
 
 Send this to `POST /v1/version`. `GET /v1/session` returns `daemon_id`, `daemon_name`,
 `daemon_name_generation` and `can_rename_daemon`, together with the authenticated actor, available
 task capabilities and effective defaults. First connection needs only the endpoint and credential.
+The session also projects `authoring` contracts from the configured adapter generation: readable
+executor labels, exact input slots, real output keys, conditional publication, byte bounds and an
+owner-defined default output when one exists. Missing metadata means the client cannot offer direct
+connectors for that executor. These facts contain no argv, environment or secret configuration.
+`task_output_limit_bytes` gives the aggregate declaration allowance shared by a task's selected
+outputs; individual port bounds do not add more allowance. An omitted value from an older server
+is unknown (decoded as zero), so clients cannot invent an allocation before refreshing metadata.
+`project_roots` contains only current granted filesystem roots and read/write modes; choosing one
+does not grant access. Native paths still pass the ordinary Rust path and authority checks.
+
 The browser learns the stable daemon identity through this authenticated bootstrap, then sends it
 in `x-milkdrift-daemon` on subsequent requests. First-use trust comes from the supplied endpoint and
 transport policy; discovering an identity does not independently verify the endpoint.
@@ -36,13 +46,13 @@ collection sizes before dispatch.
 Success bodies use the common envelope:
 
 ```json
-{"protocol":{"major":3,"minor":2},"request_id":"req-1","value":{}}
+{"protocol":{"major":3,"minor":3},"request_id":"req-1","value":{}}
 ```
 
 Errors use a stable code and redacted explanation. They never include credentials or task content:
 
 ```json
-{"protocol":{"major":3,"minor":2},"request_id":"req-1","code":"conflict","message":"workflow generation changed","retryable":false,"details":{}}
+{"protocol":{"major":3,"minor":3},"request_id":"req-1","code":"conflict","message":"workflow generation changed","retryable":false,"details":{}}
 ```
 
 `unauthenticated` means the credential failed, `unauthorized` means the current grant does not
@@ -265,3 +275,27 @@ the authenticated session continues to show the current daemon name; browser lab
 rename commands. The browser retains no credential in that profile.
 
 [Current versions](versions.md) are checked against their owning constants.
+
+## Canvas source reads and authoring guards
+
+Workflow reads include bounded `supplied_inputs` previews from the daemon-owned shared values.
+Selected task reads include the currently supplied values referenced by that task, independently
+of its `frozen.inputs`. Each map value distinguishes available, restricted and expired sources;
+an absent key means a value has not been supplied. Text previews share a 64 KiB budget and each
+value is bounded by the existing 16 KiB task-input allowance. A truncated preview is explicitly
+marked and cannot be treated as the complete source for replacement.
+`TaskRead.inline_inputs` projects inline values and captured-upload provenance from the owning task
+definition under the same bounded, authorized read rules. A fresh client uses it to reconstruct
+inline source cards; `frozen.inputs` remains the separate evidence of what a started task consumed.
+
+Task results retain the legacy artifact list and add `outputs`, keyed by actual named publications.
+Each accessible entry includes the exact artifact, retained media type and byte count. A result
+preview is presentation only and is never an input artifact. An output need not have been declared
+in the historical producer definition; future binding admission still validates the retained
+publication, outcome rule and current authority through the shared task path.
+
+A new or revised task may include `authoring_generation` to bind its composition choices to the
+observed registered generation. A stale or unavailable contract refuses the entire request before
+acceptance. The guard does not become another stored capability selector. Exact accepted request
+replay is resolved before rechecking authoring metadata, so upgrading an adapter does not invalidate
+old receipts. Omitting the guard preserves the existing programmatic request shape.

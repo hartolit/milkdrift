@@ -69,9 +69,9 @@ rename in another client and after reconnect. Exercise wrong-installation refusa
 Recheck the real logo and the supplied visual direction in the working task/timeline/inspector,
 including a narrow layout. The implemented [02c](02c-workspace-and-task-creation.md) correction also requires
 the user to create two workflows, switch between them and add a second task to the first without
-coaching through technical fields. Its recheck rejected the remaining forms; prepared
+coaching through technical fields. Its recheck rejected the remaining forms; assigned
 [02d](02d-canvas-and-direct-authoring.md) replaces that interaction and adds direct file/result
-connections with compact left-side selection. Complete that correction when assigned, then finish
+connections with compact left-side selection. Its focused checks are complete; finish
 the substantive journey above. These remain acceptance
 requirements; the initial connection report and mockup are not evidence that the corrections work.
 

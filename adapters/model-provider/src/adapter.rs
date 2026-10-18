@@ -36,6 +36,7 @@ use crate::{
     profile::AuthMode,
 };
 
+mod authoring;
 mod report;
 
 use report::{ProviderFailure, report_failure, report_uncertain};
@@ -697,6 +698,12 @@ impl ModelEndpointAdapter {
 }
 
 impl CapabilityAdapter for ModelEndpointAdapter {
+    fn task_authoring(
+        &self,
+    ) -> BTreeMap<OperationId, milkdrift_capability_host::TaskAuthoringContract> {
+        authoring::contract(&self.profile)
+    }
+
     fn accepts_direct_inputs(&self) -> bool {
         true
     }

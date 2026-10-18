@@ -1,5 +1,6 @@
 //! Shared scoped admission for human, CLI, browser and model-proposed ordinary task changes.
 mod model_actions;
+mod sources;
 
 use crate::{ActorAuthorityContext, ControlError};
 use milkdrift_authority::{
@@ -17,21 +18,57 @@ pub struct TaskControlService {
     runtime: Arc<TaskRuntime>,
     authority: Arc<dyn AuthorityEvaluator>,
     clock: Arc<dyn BoundaryClock>,
+    artifacts: Arc<dyn milkdrift_persistence::ArtifactStore>,
     admission_cursor: std::sync::Mutex<Option<String>>,
 }
 
 impl TaskControlService {
+    /// Recovers an already accepted exact public request without resolving today's authoring choices.
+    /// This is an actor-scoped receipt read. Absence still requires the ordinary command admission.
+    ///
+    /// # Errors
+    /// Refuses current workflow read scope, a conflicting envelope, or unavailable receipt storage.
+    pub fn replay_exact(
+        &self,
+        context: &ActorAuthorityContext,
+        key: &str,
+        workflow: Option<&WorkflowId>,
+        canonical_transport: &[u8],
+    ) -> Result<Option<WorkflowCommandReceipt>, ControlError> {
+        let identity = match workflow {
+            Some(workflow) => workflow.clone(),
+            None => TaskRuntime::workflow_identity(context.actor().as_str(), key)?,
+        };
+        let receipt =
+            self.runtime
+                .replay_exact(context.actor().as_str(), key, workflow, canonical_transport);
+        if matches!(&receipt, Ok(None)) {
+            return Ok(None);
+        }
+        // A fresh command keeps its existing mutation permissions. Any recovered fact or
+        // conflict is exposed only after the current receipt-read permission is checked.
+        self.authorize(
+            context,
+            &identity,
+            AuthorityOperation::InspectRun,
+            "read-receipt",
+        )?;
+        Ok(receipt?)
+    }
+
     /// Connects scoped command admission to the same runtime used by execution workers.
     #[must_use]
     pub fn new(
         runtime: Arc<TaskRuntime>,
         authority: Arc<dyn AuthorityEvaluator>,
         clock: Arc<dyn BoundaryClock>,
+        artifacts: Arc<dyn milkdrift_persistence::ArtifactStore>,
     ) -> Self {
         Self {
             runtime,
             authority,
             clock,
+            artifacts,
             admission_cursor: std::sync::Mutex::new(None),
         }
     }
@@ -137,6 +174,21 @@ impl TaskControlService {
             .any(|change| !matches!(change, TaskChange::Stop { .. }))
         {
             self.authorize(context, workflow, AuthorityOperation::Apply, key)?;
+        }
+        let replay = match transport {
+            Some(bytes) => {
+                self.runtime
+                    .replay_exact(context.actor().as_str(), key, Some(workflow), bytes)?
+            }
+            None => self
+                .runtime
+                .replay_edit(context.actor().as_str(), key, workflow, &batch)?,
+        };
+        if let Some(receipt) = replay {
+            return Ok(receipt);
+        }
+        if let Some(record) = self.runtime.workflow(workflow)? {
+            self.authorize_sources(context, &record, &batch)?;
         }
         Ok(match transport {
             Some(bytes) => {

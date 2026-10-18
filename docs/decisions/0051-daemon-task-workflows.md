@@ -4,7 +4,7 @@
 below selected after partial user review. Implementation through prompt 03 and the assigned 02a/02b
 connection and visual corrections is recorded in status. The subsequent workspace interaction
 correction was implemented in assigned 02c and rejected in the October 18 user recheck. The canvas
-replacement below is selected for prepared 02d; it is not implemented or user-accepted. Later phases
+replacement below is implemented and passes 02d's focused checks; it is not user-accepted. Later phases
 require their own assignments.
 [Vision](../product/vision.md) owns the requirements;
 [status](../product/status.md) owns implemented facts. The
@@ -240,7 +240,7 @@ protocol-shaped advanced editor. The October 18 user recheck rejects that result
 bloated, names the input/dependency/output/path fields, and requests a canvas with task details on
 the left. Hiding those fields under another disclosure or embedding them inside graph nodes would
 retain the rejected interaction. The selected replacement is a workflow canvas and direct authoring,
-owned by prepared [02d](../development/virtual-office/daemon-workflows-implementation/02d-canvas-and-direct-authoring.md).
+owned by assigned [02d](../development/virtual-office/daemon-workflows-implementation/02d-canvas-and-direct-authoring.md).
 
 Navigation selects the daemon and workflow. The main area keeps that workflow's tasks, source cards
 and connections visible; a compact left panel edits or inspects the selected item. Selection does
@@ -264,8 +264,8 @@ rule. The client includes the implied dependency, while order-only prerequisites
 task without passing data. Correction adoption still redirects future task-output bindings and keeps
 failed history. Shared-source edits show their future consumers; started inputs remain frozen.
 
-Current validation requires a producer output declaration, yet existing tasks can publish artifacts
-without one. Select a narrow extension for 02d: a new `TaskOutput` may reference either a declared
+The earlier validation required a producer output declaration, yet existing tasks could publish
+artifacts without one. The narrow extension in 02d allows this: a new `TaskOutput` may reference either a declared
 future output or an actual named output already retained in that producer's result. Shared admission
 and runtime owners validate actual published evidence, permissions, media/bounds and the existing
 success/optional rule. For an undeclared published source, use its retained media type and the
@@ -275,7 +275,6 @@ observed length is not a maximum for a longer correction. Declared outputs keep 
 stricter contracts. An empty declaration map cannot bypass the new binding's replacement checks.
 Caller assertions cannot manufacture an output. This does not add a declaration
 retroactively, accept an arbitrary artifact ID, change a started input or bypass correction semantics.
-The current implementation retains the declaration-only rule until 02d completes these owners/tests.
 
 Captured client files remain task inputs, separate from native filesystem access. File-tool tasks
 select authorized project roots and explicit read/write modes through narrow daemon-owned metadata;

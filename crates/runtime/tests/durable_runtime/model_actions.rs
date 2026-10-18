@@ -76,13 +76,13 @@ fn runtime(
         RedbStoreConfig::new(root).with_clock(Arc::new(TaskStoreClock(clock.clone()))),
     )?);
     let runtime = Arc::new(TaskRuntime::new(
-        store,
+        store.clone(),
         executor.clone(),
         authority.clone(),
         clock.clone(),
         Arc::new(SequentialIdGenerator::new("model-action-tests", 1)?),
     ));
-    let control = TaskControlService::new(runtime.clone(), authority, clock);
+    let control = TaskControlService::new(runtime.clone(), authority, clock, store);
     Ok((runtime, executor, control))
 }
 

@@ -9,6 +9,7 @@
 //! The child has the daemon account's privileges. Input staging and direct argv do not create
 //! a sandbox; [`PlatformSupport`] describes the process ownership this build can observe.
 
+mod authoring;
 mod config;
 mod process;
 

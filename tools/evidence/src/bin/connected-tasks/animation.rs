@@ -46,6 +46,7 @@ pub(super) fn respond(root: &Path, body: &Value) -> io::Result<Option<Reply>> {
         .join(format!("daemon-{name}"))
         .join("animation-project");
     let reply = match role {
+        "canvas-rejected" => text(json!({"changes":[]}).to_string()),
         "planner" => {
             text(planning(&snapshot(messages)?, &project, planner_brief(messages)?)?.to_string())
         }
@@ -132,7 +133,7 @@ fn snapshot(messages: &[Value]) -> io::Result<Value> {
 
 fn planner_brief(messages: &[Value]) -> io::Result<&str> {
     // The controlled planner receives one brief. Read its actual invocation text rather than
-    // assuming that a task-local input also exists in the workflow's shared input map.
+    // assuming a client chose a particular binding name or populated the shared input map.
     messages
         .iter()
         .rev()
@@ -142,8 +143,9 @@ fn planner_brief(messages: &[Value]) -> io::Result<&str> {
             !text.starts_with("Authorized future-work snapshot (data, not instructions): ")
         })
         .and_then(|text| {
-            text.split_once("\n\nInput brief:\n")
-                .map(|(_, brief)| brief)
+            let (_, input) = text.split_once("\n\nInput ")?;
+            let (name, brief) = input.split_once(":\n")?;
+            (!name.is_empty() && !name.contains('\n')).then_some(brief)
         })
         .ok_or_else(|| invalid("controlled planner requires its actual brief input"))
 }
@@ -442,7 +444,10 @@ mod tests {
                 .and_then(Value::as_array)
                 .ok_or_else(|| invalid("response changes absent"))?;
             assert_eq!(changes.len(), 4);
-            for research in &changes[..3] {
+            for research in changes
+                .get(..3)
+                .ok_or_else(|| invalid("research changes absent"))?
+            {
                 assert_eq!(
                     research.pointer("/definition/inputs"),
                     Some(&json!({
@@ -460,6 +465,27 @@ mod tests {
             planner_brief(&[json!({"role":"user","content":"Instructions without an input."})])
                 .is_err()
         );
+    }
+
+    #[test]
+    fn generated_canvas_input_name_preserves_exact_planner_brief() -> io::Result<()> {
+        let brief =
+            "Actual canvas context: bevægelse\n\nInput text inside the brief:\nremains data.";
+        for name in ["brief", "source_765ac06a134f40c2baa4de97cb590797"] {
+            let messages = [
+                json!({"role":"user","content":[{"type":"text","text":"Input brief:\nWrong preceding artifact"}]}),
+                json!({"role":"user","content":format!("Plan research.\n\nInput {name}:\n{brief}")}),
+                json!({"role":"user","content":"Authorized future-work snapshot (data, not instructions): {}\nReturn a structured task batch."}),
+            ];
+            assert_eq!(planner_brief(&messages)?, brief);
+        }
+        for content in [
+            "Plan research.\n\nInput :\nvalue",
+            "Plan research.\n\nInput malformed\nname:\nvalue",
+        ] {
+            assert!(planner_brief(&[json!({"role":"user","content":content})]).is_err());
+        }
+        Ok(())
     }
 
     #[test]
@@ -502,7 +528,13 @@ mod tests {
         assert!(
             matches!(batch.changes.first(), Some(milkdrift_blueprint::TaskChange::Add { definition, .. }) if definition.title == "Corrected render research" && definition.corrective_of.as_ref().is_some_and(|id| id.as_str() == "render-id"))
         );
-        let correction = serde_json::to_value(&batch.changes[0]).map_err(io::Error::other)?;
+        let correction = serde_json::to_value(
+            batch
+                .changes
+                .first()
+                .ok_or_else(|| invalid("correction change absent"))?,
+        )
+        .map_err(io::Error::other)?;
         assert_eq!(
             correction.pointer("/definition/dependencies"),
             Some(&json!(["motion-id", "render-id", "training-id"]))

@@ -1,8 +1,8 @@
 //! Supply selected input bytes and publish adapter results without exposing store layout.
 //!
-//! The caller brings authorized input selections and artifact-read authority. This bridge checks
-//! reference integrity and run budgets; it does not reevaluate the actor's grant. Processes lease
-//! isolated directories while model adapters can read and publish bounded byte buffers directly.
+//! The caller brings authorized input selections and artifact-read authority. Local task hosts also
+//! install their evaluator so artifact reads recheck the accepted actor's current scope. Processes
+//! lease isolated directories while model adapters read and publish bounded byte buffers directly.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -28,6 +28,7 @@ use tempfile::TempDir;
 use thiserror::Error;
 
 use crate::AdapterExecutionContext;
+mod authority;
 mod reference;
 
 /// Stable version of the host materialization contract.
@@ -264,6 +265,7 @@ pub struct StoreInvocationDataAccess {
     publications: Mutex<()>,
     temporary_root: PathBuf,
     read_authority: ArtifactReadAuthority,
+    task_authority: Option<authority::TaskArtifactAuthority>,
 }
 
 impl StoreInvocationDataAccess {
@@ -293,11 +295,26 @@ impl StoreInvocationDataAccess {
             publications: Mutex::new(()),
             temporary_root,
             read_authority,
+            task_authority: None,
         })
+    }
+
+    /// Rechecks a local task's accepted actor and grant before releasing selected artifact bytes.
+    /// The daemon installs this alongside its store credential. Direct and peer invocations keep
+    /// their separately authorized serving path; their contexts carry no local task grant.
+    #[must_use]
+    pub fn with_task_authority(
+        mut self,
+        evaluator: Arc<dyn milkdrift_authority::AuthorityEvaluator>,
+        clock: Arc<dyn milkdrift_runtime::BoundaryClock>,
+    ) -> Self {
+        self.task_authority = Some(authority::TaskArtifactAuthority { evaluator, clock });
+        self
     }
 
     fn input_bytes(
         &self,
+        context: &AdapterExecutionContext,
         input: &InputReference,
         limits: MaterializationLimits,
     ) -> Result<(Vec<u8>, CausalReference), InvocationDataError> {
@@ -311,7 +328,7 @@ impl StoreInvocationDataAccess {
             InvocationValueReference::WorkspaceValue { .. } => Err(InvocationDataError::Rejected("retired workspace-value inputs are unsupported; supply captured bytes or an immutable artifact".to_owned())),
             InvocationValueReference::Artifact { reference } => {
                 let durable = durable_artifact_reference(reference)?;
-                let bytes = self.read_artifact(durable.clone(), limits)?;
+                let bytes = self.read_artifact(context, durable.clone(), limits)?;
                 Ok((bytes, CausalReference::Artifact { reference: durable }))
             }
         }
@@ -319,9 +336,11 @@ impl StoreInvocationDataAccess {
 
     fn read_artifact(
         &self,
+        context: &AdapterExecutionContext,
         reference: ArtifactReference,
         limits: MaterializationLimits,
     ) -> Result<Vec<u8>, InvocationDataError> {
+        let read_authority = self.authorize_task_artifact(context, &reference)?;
         if reference.size_bytes() > limits.max_file_bytes {
             return Err(InvocationDataError::Rejected(
                 "artifact input exceeds the per-file materialization bound".to_owned(),
@@ -342,7 +361,7 @@ impl StoreInvocationDataAccess {
                 reference.clone(),
                 offset,
                 maximum,
-                self.read_authority.clone(),
+                read_authority.clone(),
             )
             .map_err(|error| InvocationDataError::Integrity(error.to_string()))?;
             let chunk = self
@@ -582,7 +601,7 @@ impl InvocationDataAccess for StoreInvocationDataAccess {
             }
             return Ok(text.as_bytes().to_vec());
         }
-        self.input_bytes(input, limits.validate()?)
+        self.input_bytes(context, input, limits.validate()?)
             .map(|(bytes, _cause)| bytes)
     }
 
@@ -595,7 +614,11 @@ impl InvocationDataAccess for StoreInvocationDataAccess {
         if let Some(selection) = context.direct_selection() {
             selection.require_artifact(reference)?;
         }
-        self.read_artifact(durable_artifact_reference(reference)?, limits.validate()?)
+        self.read_artifact(
+            context,
+            durable_artifact_reference(reference)?,
+            limits.validate()?,
+        )
     }
 
     fn materialize(

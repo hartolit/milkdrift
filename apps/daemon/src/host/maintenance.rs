@@ -40,7 +40,7 @@ impl Owner {
         if let Some(workflow) = &self.workflow
             && let Err(error) = workflow
                 .task_control
-                .process_model_admissions(self.store.as_ref(), self.store.as_ref())
+                .process_model_admissions(self.store.as_ref())
         {
             warn!(code = "model_admission", "{}", bounded(&error.to_string()));
         }

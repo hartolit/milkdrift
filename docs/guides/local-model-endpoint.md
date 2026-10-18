@@ -5,6 +5,12 @@ inference memory. Run and secure the server separately, or use the existing mana
 for a separately configured owned service. The [operator recipe](../../examples/operator/README.md)
 registers the model adapter and creates ordinary daemon tasks.
 
+In the browser, select a task and use **Model or agent** to assign an existing connection.
+**Models & agents** lists the choices available to the signed-in account. Its **Add model or agent**
+action opens setup guidance: the current browser does not install a connection or save an API key.
+The following setup happens once on the daemon computer, so every permitted client sees the same
+configured model. Closing or renaming a browser connection does not change that model configuration.
+
 Copy the [endpoint template](../../examples/local-model/openai-compatible-loopback.example.json)
 to a private operator directory. Set the exact endpoint, provider protocol, model alias, revision,
 feature declarations and request/response bounds. An OpenAI-compatible chat endpoint uses protocol
@@ -32,6 +38,34 @@ limited to 16 KiB; the daemon also checks the combined instructions and selected
 explicitly bound to future tasks; previous conversations are not discovered automatically. The
 [continuation guide](model-continuation.md) explains using prior immutable results as fresh evidence.
 The daemon freezes the selected bytes, capability generation and actor/grant facts before entry.
+
+## Register the connection on the daemon
+
+After completing and qualifying the endpoint profile, add its path to the existing daemon's
+`adapters.model_profiles`. For example, this TOML entry selects one profile stored beside the
+daemon configuration; replace the identity and filename for the actual connection:
+
+```toml
+[[adapters.model_profiles]]
+capability_id = "operator-model"
+profile = "model-profile.json"
+```
+
+If the configuration already has `model_profiles = []` under `[adapters]`, replace that empty
+declaration with the table above instead of declaring the same key twice. Grant the intended
+account this capability's `model.generate` operation and its actual network, secret, budget and
+trust requirements through the [operator configuration](../../examples/operator/README.md#configure-the-host-and-account).
+Capability operation scope determines which registered models appear in the account's choices.
+Displayed availability does not prove that its other execution requirements are authorized;
+network, secret and budget checks still apply before execution. Store credential values only in the configured private file or environment secret
+source; the endpoint profile names the reference.
+
+Check the edited daemon configuration, then restart the daemon with it using the
+[daemon procedure](../operations/daemon.md). Existing work remains in its selected store; profile
+changes use a new generation and do not rewrite frozen tasks. Reconnect the browser and open
+**Models & agents**, or run `milkdrift --json workflow capabilities`, to inspect the permitted
+choices. Select the connection on a task before submitting work. Registration and displayed local
+readiness do not establish a successful remote call.
 
 ## Transport and unsupported features
 

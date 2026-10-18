@@ -202,7 +202,7 @@ One transaction adds the daemon metadata tables and changes the physical marker 
 rewriting workflow, receipt or installation-identity rows. Earlier graph/task formats still require
 a separate fresh root; this narrow addition does not restore their readers or change frozen grants.
 Daemon configuration stays at version 14 because the optional name seed preserves existing reads;
-control protocol 3.2 requires coordinated client upgrades. Do not stop existing services, reset a
+control protocol 3.3 requires coordinated client upgrades. Do not stop existing services, reset a
 store or repoint an existing installation merely to try the new task client. See
 [operation](operations/daemon.md), [authority](operations/authority.md) and the
 [public API](reference/control-api.md) for configuration and transport details.

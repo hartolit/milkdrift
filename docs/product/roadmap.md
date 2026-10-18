@@ -16,10 +16,11 @@ rejects its forms, navigation and unclear workflow creation. Subsequently assign
 [02c](../development/virtual-office/daemon-workflows-implementation/02c-workspace-and-task-creation.md)
 implements contextual task creation, explicit workflow/addition actions and bounded navigation.
 The user rejects its remaining page/form model and requests a canvas with left-side details and
-direct input connections. Prepared
+direct input connections. Assigned
 [02d](../development/virtual-office/daemon-workflows-implementation/02d-canvas-and-direct-authoring.md)
 replaces that authoring model and supplies the narrow daemon contracts needed for truthful connectors.
-It remains unassigned. That correction and the remaining actual journey precede prompt 04.
+Its implementation and focused verification are complete. The remaining actual journey and user
+recheck precede prompt 04.
 Prompt 03 stays complete and is not replayed.
 Earlier checkpoints and stores remain preserved; no corrected hosted run is claimed.
 Prompts 04–07 remain unassigned; 07 owns the named
@@ -34,8 +35,8 @@ The new program delivers these outcomes in order:
 2. An actual early user review tests that journey and repairs behavior and usability findings.
    Its implemented 02a correction simplifies connection and shares the daemon's name; 02b applies the
    supplied visual direction and logo. Implemented 02c addresses the rejected authoring/navigation
-   experience, but its user recheck rejects the remaining protocol forms. Prepared 02d replaces them
-   with canvas authoring and compact left-side selection. Implement it when assigned, then recheck
+   experience, but its user recheck rejects the remaining protocol forms. Assigned 02d replaces them
+   with canvas authoring and compact left-side selection. Its focused checks are complete; recheck
    the working result and naming and complete the substantive review before adding methods.
    These insertions preserve the remaining prompt numbers and final gate.
 3. Models and humans build parallel research, composition and corrective future work through the

@@ -123,7 +123,7 @@ impl ModelFixture {
             clock.clone(),
             Arc::new(SequentialIdGenerator::new("session-http", 1)?),
         ));
-        let control = TaskControlService::new(runtime.clone(), authority, clock);
+        let control = TaskControlService::new(runtime.clone(), authority, clock, store.clone());
         let actor = ActorAuthorityContext::new(
             ActorRef::new("human:session")?,
             CommandAuthorityClaim::new(

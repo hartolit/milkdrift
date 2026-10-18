@@ -60,6 +60,22 @@ impl Owner {
         session: &ActorSession,
         definition: TaskDefinitionDto,
     ) -> Result<TaskDefinition, PublicFailure> {
+        if let Some(expected) = definition.authoring_generation {
+            let current = self
+                .task_authoring(session)?
+                .into_iter()
+                .find(|contract| contract.capability == definition.capability);
+            if current
+                .as_ref()
+                .is_none_or(|contract| contract.generation != expected)
+            {
+                return Err(PublicFailure::new(
+                    milkdrift_control_protocol::ErrorCode::Conflict,
+                    "The executor's input and result choices changed. Refresh its choices and review this task before submitting again.",
+                    false,
+                ));
+            }
+        }
         let inputs = definition
             .inputs
             .into_iter()
@@ -215,6 +231,7 @@ pub(super) fn definition(value: &TaskDefinition) -> Result<TaskDefinitionDto, Pu
         })
         .collect::<Result<_, PublicFailure>>()?;
     Ok(TaskDefinitionDto {
+        authoring_generation: None,
         actions: value.actions.as_ref().map(|policy| milkdrift_control_protocol::tasks::TaskActionPolicyDto { automatic_repair:policy.automatic_repair }),
         tools: value.tools.iter().map(|tool| Ok(match tool {
             milkdrift_blueprint::TaskTool::ReadFile => milkdrift_control_protocol::tasks::TaskToolDto::ReadFile,

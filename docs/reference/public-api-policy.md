@@ -26,6 +26,18 @@ serialized in frozen starts. Runtime's task records expose immutable starts/resu
 and authorized daemon projections. Construction and transition ownership remain in runtime;
 clients never write those records directly.
 
+`MAX_TASK_OUTPUT_BYTES` and `TaskOutputDeclaration::validate_reference` expose the shared finite
+output contract to runtime and daemon projections. `validate_task_set` takes a retained-output
+resolver supplied by runtime so an actual historical publication can satisfy a future connection;
+the browser cannot supply publication evidence. Runtime and control's `replay_exact` methods recover
+the same canonical actor-scoped receipt before resolving today's authoring choices. Control checks
+current receipt-read authority; an absent receipt still follows ordinary mutation admission.
+Runtime's `replay_edit` gives native control callers the same receipt preflight for a typed batch,
+retaining the storage request bound without applying the smaller public transport envelope bound.
+`StoreInvocationDataAccess::with_task_authority` lets the daemon install its existing evaluator and
+clock at local task materialization. The host checks actual stored artifact scope before releasing
+bytes; this does not replace independent direct/peer admission or change the accepted grant.
+
 `InvocationAdmissionEnvelope::execution_duration_ms` is an adapter contract: its bound must come
 from an enforced attempt deadline, never a descriptor estimate. Runtime's `TaskExecutionDuration`
 is durable evidence for an accepted reservation and its elapsed-time watermark. These exports
@@ -48,6 +60,14 @@ Public task DTOs in `control-protocol::tasks` are transport contracts for CLI, S
 JSON consumers. Rust generates the TypeScript declarations and envelope decoder. Summary/read/result
 DTOs deliberately have different payload sizes: a discovery page never embeds all captured files.
 `validate_response_capacity`, cursor binding and error status mapping remain pure wire helpers.
+
+`CapabilityAdapter::task_authoring`, `TaskAuthoringContract` and `TaskAuthoringPort` are workspace
+adapter contracts. Process and model adapters derive connector choices from their existing private
+configuration; the host validates and captures them once per registered generation, then filters
+them with the same operation scope as capability discovery. They are not hashed descriptor fields,
+so introducing this read projection does not change old frozen descriptor digests. Session authoring,
+project-root and supplied-input DTOs are transport projections for the canvas. Their names, bounds
+and availability come from those existing owners, never from a browser-owned capability catalog.
 
 `DaemonDisplayName` is the one validated Rust name type. `DaemonMetadataStore` and its metadata,
 rename and receipt types are workspace storage contracts used by the daemon's private metadata

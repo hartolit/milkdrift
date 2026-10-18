@@ -14,7 +14,7 @@ use std::{fs, path::Path, time::Duration};
 
 pub(super) fn client(instance: &Daemon) -> EvidenceResult<ControlClient> {
     let mut config = ClientConfig::new(instance.endpoint.parse()?);
-    config.request_timeout = Duration::from_secs(2);
+    config.request_timeout = Duration::from_secs(10);
     config.safe_query_retries = 0;
     Ok(ControlClient::new(
         config,

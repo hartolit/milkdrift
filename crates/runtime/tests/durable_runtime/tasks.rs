@@ -31,6 +31,9 @@ mod policy;
 #[path = "correction.rs"]
 mod correction;
 
+#[path = "historical_outputs.rs"]
+mod historical_outputs;
+
 #[path = "model_faults.rs"]
 mod model_faults;
 
@@ -103,6 +106,23 @@ fn runtime_with_limit(
     Arc<DeterministicExecutor>,
     TaskControlService,
 )> {
+    let (runtime, executor, control, _) = runtime_and_store(root, authority, clock, maximum)?;
+    Ok((runtime, executor, control))
+}
+
+type StoredTaskRuntime = (
+    Arc<TaskRuntime>,
+    Arc<DeterministicExecutor>,
+    TaskControlService,
+    Arc<RedbStore>,
+);
+
+fn runtime_and_store(
+    root: &std::path::Path,
+    authority: Arc<dyn AuthorityEvaluator>,
+    clock: Arc<ManualClock>,
+    maximum: u32,
+) -> TestResult<StoredTaskRuntime> {
     let mut fixture: serde_json::Value = serde_json::from_slice(include_bytes!(
         "../../../capability/tests/fixtures/descriptor-v1.json"
     ))?;
@@ -118,7 +138,7 @@ fn runtime_with_limit(
     )?);
     let runtime = Arc::new(
         TaskRuntime::new(
-            store,
+            store.clone(),
             executor.clone(),
             authority.clone(),
             clock.clone(),
@@ -126,8 +146,8 @@ fn runtime_with_limit(
         )
         .with_maximum_active_tasks(maximum)?,
     );
-    let control = TaskControlService::new(runtime.clone(), authority, clock);
-    Ok((runtime, executor, control))
+    let control = TaskControlService::new(runtime.clone(), authority, clock, store.clone());
+    Ok((runtime, executor, control, store))
 }
 
 #[test]
@@ -160,6 +180,111 @@ fn ordinary_submission_replays_aliases_and_refuses_conflicting_request() -> Test
     assert_eq!(workflow.tasks.len(), 1);
     assert!(workflow.tasks.values().all(|task| task.started_at.is_none()
         && task.reason.as_deref() == Some("missing supplied input manifest")));
+    Ok(())
+}
+
+#[test]
+fn typed_edit_replay_preserves_storage_byte_bound_without_widening_public_transport() -> TestResult
+{
+    let root = tempfile::tempdir()?;
+    let (runtime, executor, control) = runtime(
+        root.path(),
+        Arc::new(RevocableAuthority(AtomicBool::new(false))),
+        Arc::new(ManualClock::new(1000)),
+    )?;
+    let context = context()?;
+    let created = control.create(&context, "typed-bound-create", request()?)?;
+    let batch = TaskBatch {
+        expected_generation: created.generation,
+        changes: (0..32)
+            .map(|index| TaskChange::BindInput {
+                name: format!("future_{index}"),
+                value: TaskInputValue::Text {
+                    text: "\"".repeat(16_000),
+                },
+            })
+            .collect(),
+    };
+    let canonical_public = serde_json::to_vec(&serde_json::to_value(&batch)?)?;
+    assert!(canonical_public.len() > 1_000_000);
+    let accepted = control.edit(
+        &context,
+        "typed-bound-edit",
+        &created.workflow,
+        batch.clone(),
+    )?;
+    assert!(
+        accepted.acceptance.canonical_request.len()
+            <= milkdrift_persistence::MAX_WORKFLOW_REQUEST_BYTES
+    );
+    assert_eq!(
+        control.edit(
+            &context,
+            "typed-bound-edit",
+            &created.workflow,
+            batch.clone()
+        )?,
+        accepted
+    );
+    assert!(
+        control
+            .edit_exact(
+                &context,
+                "public-bound-edit",
+                &created.workflow,
+                batch.clone(),
+                &canonical_public
+            )
+            .is_err_and(|error| error
+                .to_string()
+                .contains("canonical public request exceeds"))
+    );
+
+    let mut conflicting = batch;
+    let Some(TaskChange::BindInput { value, .. }) = conflicting.changes.first_mut() else {
+        return Err("input change absent".into());
+    };
+    *value = TaskInputValue::Text {
+        text: "changed request".into(),
+    };
+    assert!(matches!(
+        control.edit(
+            &context,
+            "typed-bound-edit",
+            &created.workflow,
+            conflicting.clone()
+        ),
+        Err(milkdrift_control::ControlError::Runtime(
+            milkdrift_runtime::RuntimeError::Persistence(
+                milkdrift_persistence::PersistenceError::WorkflowIdempotencyConflict { .. }
+            )
+        ))
+    ));
+    conflicting.expected_generation = accepted.generation;
+    for change in &mut conflicting.changes {
+        let TaskChange::BindInput { value, .. } = change else {
+            return Err("input change absent".into());
+        };
+        *value = TaskInputValue::Text {
+            text: "\"".repeat(16_384),
+        };
+    }
+    assert!(
+        serde_json::to_vec(&conflicting)?.len() > milkdrift_persistence::MAX_WORKFLOW_REQUEST_BYTES
+    );
+    assert!(
+        control
+            .edit(&context, "typed-too-large", &created.workflow, conflicting)
+            .is_err()
+    );
+    assert_eq!(
+        runtime
+            .workflow(&created.workflow)?
+            .ok_or("workflow absent")?
+            .generation,
+        accepted.generation
+    );
+    assert_eq!(executor.entry_count(), 0);
     Ok(())
 }
 
@@ -1356,7 +1481,7 @@ fn discovery_fields_cannot_contradict_the_authoritative_workflow_document() -> T
             command: None,
         })?;
         let runtime = TaskRuntime::new(
-            store,
+            store.clone(),
             executor,
             authority,
             clock,

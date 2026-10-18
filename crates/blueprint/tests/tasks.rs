@@ -58,7 +58,7 @@ fn dependency_and_correction_cycles_are_refused_without_hiding_missing_inputs() 
     consumer.dependencies.insert(a.clone());
     let mut definitions = BTreeMap::from([(a.clone(), task()?), (b.clone(), consumer)]);
     assert!(
-        validate_task_set(&definitions, &WorkflowLimits::default()).is_err(),
+        validate_task_set(&definitions, &WorkflowLimits::default(), |_, _| None).is_err(),
         "even an acyclic binding must name a declared output"
     );
     definitions
@@ -73,21 +73,21 @@ fn dependency_and_correction_cycles_are_refused_without_hiding_missing_inputs() 
                 max_bytes: 4096,
             },
         );
-    validate_task_set(&definitions, &WorkflowLimits::default())?;
+    validate_task_set(&definitions, &WorkflowLimits::default(), |_, _| None)?;
     definitions
         .get_mut(&a)
         .ok_or("task absent")?
         .dependencies
         .insert(b.clone());
-    assert!(validate_task_set(&definitions, &WorkflowLimits::default()).is_err());
+    assert!(validate_task_set(&definitions, &WorkflowLimits::default(), |_, _| None).is_err());
     definitions.get_mut(&a).ok_or("task absent")?.dependencies = BTreeSet::new();
     definitions.get_mut(&a).ok_or("task absent")?.corrective_of = Some(b.clone());
     assert!(
-        validate_task_set(&definitions, &WorkflowLimits::default()).is_err(),
+        validate_task_set(&definitions, &WorkflowLimits::default(), |_, _| None).is_err(),
         "correction waiting and explicit dependency form one causal cycle"
     );
     definitions.get_mut(&b).ok_or("task absent")?.corrective_of = Some(a);
-    assert!(validate_task_set(&definitions, &WorkflowLimits::default()).is_err());
+    assert!(validate_task_set(&definitions, &WorkflowLimits::default(), |_, _| None).is_err());
     Ok(())
 }
 
@@ -113,6 +113,66 @@ fn captured_bytes_have_verified_identity_and_output_contracts_have_finite_bounds
         serde_json::from_value::<TaskDefinition>(value)?
             .validate()
             .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn retained_named_outputs_require_complete_bounded_evidence_and_keep_cycles_invalid() -> TestResult
+{
+    let producer = TaskId::new("producer")?;
+    let consumer = TaskId::new("consumer")?;
+    let mut definition = task()?;
+    definition.dependencies.insert(producer.clone());
+    definition.inputs.insert(
+        "result".into(),
+        TaskInputBinding::TaskOutput {
+            task: producer.clone(),
+            output: "report".into(),
+            optional: false,
+        },
+    );
+    let mut definitions =
+        BTreeMap::from([(producer.clone(), task()?), (consumer.clone(), definition)]);
+    for (media, size, accepted) in [
+        (Some("text/plain"), Some(2_097_152), true),
+        (Some("text/plain"), Some(2_097_153), false),
+        (Some("text/plain"), None, false),
+        (None, Some(8), false),
+    ] {
+        let reference = milkdrift_capability::ArtifactReference::new(
+            "retained-report",
+            "0".repeat(64),
+            media.map(str::to_owned),
+            size,
+        )?;
+        let result = validate_task_set(&definitions, &WorkflowLimits::default(), |id, output| {
+            (id == &producer && output == "report").then_some(&reference)
+        });
+        assert_eq!(result.is_ok(), accepted);
+        assert!(
+            validate_task_set(&definitions, &WorkflowLimits::default(), |id, output| {
+                (id == &producer && output == "different-name").then_some(&reference)
+            })
+            .is_err()
+        );
+    }
+    definitions
+        .get_mut(&producer)
+        .ok_or("producer absent")?
+        .dependencies
+        .insert(consumer);
+    let reference = milkdrift_capability::ArtifactReference::new(
+        "retained-report",
+        "0".repeat(64),
+        Some("text/plain".into()),
+        Some(8),
+    )?;
+    assert!(
+        validate_task_set(&definitions, &WorkflowLimits::default(), |_, _| Some(
+            &reference
+        ))
+        .is_err()
     );
     Ok(())
 }

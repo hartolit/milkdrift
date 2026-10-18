@@ -14,6 +14,41 @@ use super::{TaskRecord, TaskRuntime, TaskState, WorkflowRecord, WorkflowState};
 use crate::RuntimeError;
 
 impl TaskRuntime {
+    /// Looks up the exact actor-scoped public request before resolving current authoring metadata.
+    /// The control owner authorizes this read; an absent receipt grants no admission or execution.
+    ///
+    /// # Errors
+    /// Refuses noncanonical envelopes, conflicting request reuse, or unavailable receipt storage.
+    pub fn replay_exact(
+        &self,
+        actor: &str,
+        key: &str,
+        workflow: Option<&WorkflowId>,
+        canonical_transport: &[u8],
+    ) -> Result<Option<WorkflowCommandReceipt>, RuntimeError> {
+        let identity = canonical_transport_value(canonical_transport)?;
+        self.replay(actor, key, &canonical_request(workflow, identity)?)
+    }
+
+    /// Recovers an exact typed edit without applying the public transport envelope's byte bound.
+    /// Control checks current command authority before using this preflight for retained sources.
+    ///
+    /// # Errors
+    /// Returns canonical encoding, conflicting request reuse, or receipt storage failures.
+    pub fn replay_edit(
+        &self,
+        actor: &str,
+        key: &str,
+        workflow: &WorkflowId,
+        batch: &TaskBatch,
+    ) -> Result<Option<WorkflowCommandReceipt>, RuntimeError> {
+        self.replay(
+            actor,
+            key,
+            &canonical_request(Some(workflow), serde_json::to_value(batch)?)?,
+        )
+    }
+
     /// Stable daemon namespace used by authorization before admission; replay allocates no IDs.
     ///
     /// # Errors
@@ -75,9 +110,7 @@ impl TaskRuntime {
             .map(canonical_transport_value)
             .transpose()?
             .unwrap_or(serde_json::to_value(&request)?);
-        let canonical_request = serde_json::to_vec(
-            &serde_json::json!({"operation":"create_workflow","request":request_identity}),
-        )?;
+        let canonical_request = canonical_request(None, request_identity)?;
         if let Some(receipt) = self.replay(owner_actor, key, &canonical_request)? {
             return Ok(receipt);
         }
@@ -149,7 +182,7 @@ impl TaskRuntime {
                 },
             );
         }
-        validate_task_set(&definitions(&tasks), &request.limits).map_err(invalid)?;
+        validate_task_set(&definitions(&tasks), &request.limits, |_, _| None).map_err(invalid)?;
         for value in request.inputs.values() {
             value.validate().map_err(invalid)?;
         }
@@ -251,9 +284,7 @@ impl TaskRuntime {
             .map(canonical_transport_value)
             .transpose()?
             .unwrap_or(serde_json::to_value(&batch)?);
-        let canonical_request = serde_json::to_vec(
-            &serde_json::json!({"operation":"edit_workflow","workflow":workflow,"batch":request_identity}),
-        )?;
+        let canonical_request = canonical_request(Some(workflow), request_identity)?;
         if let Some(receipt) = self.replay(owner_actor, key, &canonical_request)? {
             return Ok(receipt);
         }
@@ -430,7 +461,20 @@ impl TaskRuntime {
                 TaskChange::Finish => record.finish_when_settled = true,
             }
         }
-        validate_task_set(&definitions(&record.tasks), &record.limits).map_err(invalid)?;
+        validate_task_set(
+            &definitions(&record.tasks),
+            &record.limits,
+            |producer, output| {
+                record
+                    .tasks
+                    .get(producer)?
+                    .result
+                    .as_ref()?
+                    .outputs
+                    .get(output)
+            },
+        )
+        .map_err(invalid)?;
         for task in record
             .tasks
             .values()
@@ -538,6 +582,12 @@ fn adopt_correction(
             "correction does not satisfy original outputs: {reason}"
         )));
     }
+    let original_declarations = original.definition.outputs.clone();
+    let original_outputs = original
+        .result
+        .as_ref()
+        .map(|result| result.outputs.clone())
+        .unwrap_or_default();
     let mut changed = BTreeSet::new();
     let mut seen = BTreeSet::new();
     for redirect in redirects {
@@ -559,6 +609,17 @@ fn adopt_correction(
                 "correction redirect names another source or an absent replacement output",
             ));
         }
+        // A historical producer may have published this named result without declaring it.
+        // Its observed length is not a replacement ceiling; its media type and the task output
+        // allowance are the prospective contract. Empty declarations never bypass this check.
+        validate_redirect_output(
+            &original_declarations,
+            &original_outputs,
+            output,
+            outputs
+                .get(output)
+                .ok_or_else(|| invalid("replacement output disappeared"))?,
+        )?;
         if changed.insert(redirect.consumer.clone()) {
             if consumer.previous_definitions.len() >= 128 {
                 return Err(invalid("retained task definition capacity exhausted"));
@@ -596,6 +657,30 @@ fn adopt_correction(
     Ok(())
 }
 
+fn validate_redirect_output(
+    declarations: &BTreeMap<String, milkdrift_blueprint::TaskOutputDeclaration>,
+    original_outputs: &BTreeMap<String, milkdrift_capability::ArtifactReference>,
+    output: &str,
+    replacement: &milkdrift_capability::ArtifactReference,
+) -> Result<(), RuntimeError> {
+    if let Some(contract) = declarations.get(output) {
+        return contract.validate_reference(replacement).map_err(invalid);
+    }
+    let original = original_outputs
+        .get(output)
+        .ok_or_else(|| invalid("redirected source lacks a retained named output"))?;
+    let media_type = original
+        .media_type()
+        .ok_or_else(|| invalid("redirected source lacks retained media type"))?;
+    let contract = milkdrift_blueprint::TaskOutputDeclaration {
+        required: true,
+        media_type: Some(media_type.into()),
+        max_bytes: milkdrift_blueprint::MAX_TASK_OUTPUT_BYTES,
+    };
+    contract.validate_reference(original).map_err(invalid)?;
+    contract.validate_reference(replacement).map_err(invalid)
+}
+
 fn canonical_transport_value(bytes: &[u8]) -> Result<serde_json::Value, RuntimeError> {
     if bytes.is_empty() || bytes.len() > 1_000_000 {
         return Err(invalid(
@@ -607,6 +692,18 @@ fn canonical_transport_value(bytes: &[u8]) -> Result<serde_json::Value, RuntimeE
         return Err(invalid("public request must be a canonical JSON object"));
     }
     Ok(value)
+}
+
+fn canonical_request(
+    workflow: Option<&WorkflowId>,
+    request: serde_json::Value,
+) -> Result<Vec<u8>, RuntimeError> {
+    Ok(serde_json::to_vec(&match workflow {
+        Some(workflow) => {
+            serde_json::json!({"operation":"edit_workflow","workflow":workflow,"batch":request})
+        }
+        None => serde_json::json!({"operation":"create_workflow","request":request}),
+    })?)
 }
 
 fn receipt(outcome: WorkflowCommitOutcome) -> Result<WorkflowCommandReceipt, RuntimeError> {
@@ -678,4 +775,70 @@ pub(super) fn revision_identity(
 }
 fn invalid(error: impl std::fmt::Display) -> RuntimeError {
     RuntimeError::InvalidCommand(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_redirect_output;
+    use milkdrift_blueprint::TaskOutputDeclaration;
+    use milkdrift_capability::ArtifactReference;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn historical_redirect_uses_retained_media_and_finite_allowance_not_original_length()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let reference = |media: &str, bytes| {
+            ArtifactReference::new(
+                "retained-report",
+                "0".repeat(64),
+                Some(media.into()),
+                Some(bytes),
+            )
+        };
+        let original = BTreeMap::from([("report".into(), reference("text/plain", 3)?)]);
+        for (media, bytes, accepted) in [
+            ("text/plain", 40, true),
+            ("text/plain", 2_097_152, true),
+            ("text/plain", 2_097_153, false),
+            ("text/markdown", 3, false),
+        ] {
+            assert_eq!(
+                validate_redirect_output(
+                    &BTreeMap::new(),
+                    &original,
+                    "report",
+                    &reference(media, bytes)?
+                )
+                .is_ok(),
+                accepted
+            );
+        }
+        let declarations = BTreeMap::from([(
+            "report".into(),
+            TaskOutputDeclaration {
+                required: true,
+                media_type: Some("text/plain".into()),
+                max_bytes: 8,
+            },
+        )]);
+        assert!(
+            validate_redirect_output(
+                &declarations,
+                &original,
+                "report",
+                &reference("text/plain", 9)?
+            )
+            .is_err()
+        );
+        assert!(
+            validate_redirect_output(
+                &BTreeMap::new(),
+                &original,
+                "missing",
+                &reference("text/plain", 3)?
+            )
+            .is_err()
+        );
+        Ok(())
+    }
 }

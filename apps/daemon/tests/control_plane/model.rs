@@ -42,6 +42,27 @@ async fn controlled_model_receives_selected_text_and_uploaded_file_and_retains_i
     let config = configuration_with_model(&directory, model.address, 2)?;
     let plan = config.validate(directory.path())?;
     let daemon = start(plan.clone(), CONTROLLER_TOKEN).await?;
+    let session = daemon.client.task_session().await?;
+    let contract = session
+        .authoring
+        .iter()
+        .find(|contract| contract.capability.id == "writing-model")
+        .ok_or("model authoring contract missing")?;
+    assert_eq!(contract.category, "model");
+    assert!(contract.allows_additional_inputs && contract.inputs.is_empty());
+    assert_eq!(contract.default_output.as_deref(), Some("model_response"));
+    assert!(
+        contract
+            .outputs
+            .iter()
+            .any(|output| output.name == "final_text" && !output.required)
+    );
+    assert!(
+        contract
+            .outputs
+            .iter()
+            .any(|output| output.name == "structured_output" && !output.required)
+    );
     let bytes = "captured Cargo evidence\n[package]\nname = \"release-notes\"\n";
     let file = daemon
         .client

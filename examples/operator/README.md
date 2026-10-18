@@ -77,8 +77,8 @@ labelled bounded previews. Results requiring missing artifact permission remain 
 
 Start the standalone client using [its README](../../apps/web/README.md), or serve its built static
 files independently. The template allows exactly `http://127.0.0.1:5173` and
-`http://127.0.0.1:4173`. In **Connect a daemon**, enter its endpoint, expected `host:local` identity
-and scoped credential. The credential remains in memory. Closing the entire browser does not stop
+`http://127.0.0.1:4173`. In **Connect a daemon**, enter its endpoint and scoped credential. The browser
+learns the daemon identity from its authenticated reply. The credential remains in memory. Closing the entire browser does not stop
 daemon work; reconnect and use discovery to find the result. Two connections retain separate
 credentials, settings and selections.
 

@@ -95,13 +95,13 @@ fn save_previous_work(
     let store = Arc::new(RedbStore::open(&config.data_root)?);
     let clock = Arc::new(SystemBoundaryClock);
     let runtime = Arc::new(TaskRuntime::new(
-        store,
+        store.clone(),
         executor.clone(),
         authority.clone(),
         clock.clone(),
         Arc::new(SequentialIdGenerator::new("prior-controller", 1)?),
     ));
-    let control = TaskControlService::new(runtime.clone(), authority, clock);
+    let control = TaskControlService::new(runtime.clone(), authority, clock, store);
     let original = request.tasks.first().ok_or("task absent")?;
     let definition = &original.definition;
     let typed = WorkflowCreate {

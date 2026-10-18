@@ -49,6 +49,7 @@ fn narrow(owner: &mut Owner, session: &mut ActorSession, metadata_only: bool) ->
         workflow.tasks.clone(),
         owner.authority.clone(),
         owner.clock.runtime_adapter(),
+        owner.store.clone(),
     );
     Ok(())
 }
@@ -256,6 +257,7 @@ async fn retained_task_reply_rechecks_revocation_and_expiry_without_editing_rece
                     workflow.tasks.clone(),
                     owner.authority.clone(),
                     owner.clock.runtime_adapter(),
+                    owner.store.clone(),
                 );
                 assert!(
                     owner

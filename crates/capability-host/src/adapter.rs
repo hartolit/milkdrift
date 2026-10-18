@@ -220,6 +220,15 @@ pub trait AdapterReporter: Send + Sync {
 /// idempotent no-resource behavior; resource-owning implementations must make replay, drain, and
 /// shutdown behavior explicit in their own state machine.
 pub trait CapabilityAdapter: Send + Sync + 'static {
+    /// Safe task-editor choices from this immutable adapter configuration. Absence means that
+    /// direct authoring is unavailable, not that the client may guess input or output keys.
+    fn task_authoring(
+        &self,
+    ) -> std::collections::BTreeMap<milkdrift_capability::OperationId, crate::TaskAuthoringContract>
+    {
+        std::collections::BTreeMap::new()
+    }
+
     /// Independent bound for durable workflow continuations. Ordinary synchronous adapters have
     /// no continuation slots. These lifetime pins do not consume an execution permit.
     fn maximum_pending_workflows(&self) -> Option<u32> {

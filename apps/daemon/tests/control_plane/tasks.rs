@@ -2,11 +2,204 @@
 use super::support::*;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shared_source_sensitivity_is_restricted_without_weakening_artifact_lookup_masking()
+-> TestResult {
+    let directory = TempDir::new()?;
+    let profile = captured_file_profile(&directory)?;
+    let mut config = configuration_document_with_process_profiles(&directory, 32, vec![profile])?;
+    let observer = config.actors.get_mut(1).ok_or("observer actor absent")?;
+    observer.authority.resources.workflow_run = WorkflowRunScope::Any;
+    observer.authority.dangerous_allow_broad_authority = true;
+    observer.authority.resources.artifacts = ArtifactAuthorityScope::new(
+        milkdrift_authority::Selection::any(),
+        std::collections::BTreeSet::from([milkdrift_workspace::ArtifactSensitivity::Public]),
+    )?;
+    let daemon = start(config.validate(directory.path())?, CONTROLLER_TOKEN).await?;
+    let upload = daemon
+        .client
+        .upload_task_input(&TaskUploadRequest {
+            request_id: "sensitive-captured-source".into(),
+            name: "private.txt".into(),
+            media_type: "text/plain".into(),
+            text: "private captured bytes".into(),
+        })
+        .await?;
+    let mut request = create_request("sensitive-shared-source", false);
+    request
+        .tasks
+        .first_mut()
+        .ok_or("task absent")?
+        .definition
+        .inputs
+        .insert(
+            "file".into(),
+            InputBinding::Supplied {
+                name: "file".into(),
+                optional: false,
+            },
+        );
+    request.inputs.insert(
+        "file".into(),
+        InputValue::Uploaded {
+            input_id: upload.input_id.clone(),
+        },
+    );
+    let receipt = daemon.client.create_workflow(&request).await?;
+    let observer = client(&daemon.endpoint, OBSERVER_TOKEN)?;
+    assert!(
+        matches!(observer.artifact_metadata(&upload.input_id).await, Err(ClientError::Api(error)) if error.code == ErrorCode::NotFound)
+    );
+    let workflow = observer.workflow(&receipt.workflow_id).await?;
+    let source = workflow
+        .supplied_inputs
+        .get("file")
+        .ok_or("source missing")?;
+    assert_eq!(source.availability, "restricted");
+    assert!(source.value.is_none());
+    let task = observer
+        .task(
+            &receipt.workflow_id,
+            receipt.aliases.get("inspect").ok_or("task missing")?,
+        )
+        .await?;
+    assert_eq!(task.supplied_inputs.get("file"), Some(source));
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn project_choices_expose_only_current_read_write_grants() -> TestResult {
+    use milkdrift_authority::{AccessMode, FilesystemScope};
+    use std::collections::BTreeSet;
+    let directory = TempDir::new()?;
+    let project = directory.path().join("read-only-project");
+    let executable = directory.path().join("execute-only");
+    fs::create_dir(&project)?;
+    fs::create_dir(&executable)?;
+    let mut config = configuration_document_with_process_profiles(&directory, 32, vec![])?;
+    config
+        .actors
+        .first_mut()
+        .ok_or("controller actor absent")?
+        .authority
+        .resources
+        .filesystem = vec![
+        FilesystemScope::from_canonical_host_path(
+            &project.canonicalize()?,
+            BTreeSet::from([AccessMode::Read]),
+        )?,
+        FilesystemScope::from_canonical_host_path(
+            &executable.canonicalize()?,
+            BTreeSet::from([AccessMode::Execute]),
+        )?,
+    ];
+    let daemon = start(config.validate(directory.path())?, CONTROLLER_TOKEN).await?;
+    let session = daemon.client.task_session().await?;
+    assert_eq!(session.project_roots.len(), 1);
+    let root = session.project_roots.first().ok_or("project root absent")?;
+    assert_eq!(root.path, project.canonicalize()?.to_string_lossy());
+    assert_eq!(root.label, "read-only-project");
+    assert!(root.read && !root.write);
+    assert!(session.authoring.is_empty());
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn authoring_generation_refuses_changed_choices_but_preserves_exact_replay() -> TestResult {
+    let directory = TempDir::new()?;
+    let profile = captured_file_profile(&directory)?;
+    let plan = configuration_with_process_profiles(&directory, 32, vec![profile.clone()])?;
+    let daemon = start(plan.clone(), CONTROLLER_TOKEN).await?;
+    let generation = daemon
+        .client
+        .task_session()
+        .await?
+        .authoring
+        .into_iter()
+        .find(|contract| contract.capability.id == "golden-local-process")
+        .ok_or("configured authoring metadata missing")?
+        .generation;
+    let mut request = create_request("authoring-generation", false);
+    request
+        .tasks
+        .first_mut()
+        .ok_or("task absent")?
+        .definition
+        .authoring_generation = Some(generation);
+    let accepted = daemon.client.create_workflow(&request).await?;
+    daemon.stop().await?;
+    let mut document: serde_json::Value = serde_json::from_slice(&fs::read(&profile)?)?;
+    let body = document
+        .get_mut("profile")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("profile object absent")?;
+    body.insert("revision".into(), (generation + 1).into());
+    body.insert("descriptor_revision".into(), (generation + 1).into());
+    fs::write(&profile, serde_json::to_vec(&document)?)?;
+    let restarted = start(plan, CONTROLLER_TOKEN).await?;
+    assert_eq!(restarted.client.create_workflow(&request).await?, accepted);
+    let mut stale = request.clone();
+    stale.request_id = "authoring-generation-stale".into();
+    assert!(
+        matches!(restarted.client.create_workflow(&stale).await, Err(ClientError::Api(error)) if error.code == ErrorCode::Conflict)
+    );
+    assert_eq!(
+        restarted
+            .client
+            .workflows("authoring-generation", None, 50)
+            .await?
+            .items
+            .len(),
+        1
+    );
+    stale
+        .tasks
+        .first_mut()
+        .ok_or("task absent")?
+        .definition
+        .authoring_generation = Some(generation + 1);
+    assert!(restarted.client.create_workflow(&stale).await.is_ok());
+    let mut changed_reuse = request;
+    changed_reuse
+        .tasks
+        .first_mut()
+        .ok_or("task absent")?
+        .definition
+        .authoring_generation = Some(generation + 1);
+    assert!(
+        matches!(restarted.client.create_workflow(&changed_reuse).await, Err(ClientError::Api(error)) if error.code == ErrorCode::Conflict)
+    );
+    restarted.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn exact_requests_missing_inputs_and_frozen_file_bytes_survive_restart() -> TestResult {
     let directory = TempDir::new()?;
     let profile = captured_file_profile(&directory)?;
     let plan = configuration_with_process_profiles(&directory, 32, vec![profile])?;
     let daemon = start(plan.clone(), CONTROLLER_TOKEN).await?;
+    let session = daemon.client.task_session().await?;
+    let contract = session
+        .authoring
+        .iter()
+        .find(|contract| contract.capability.id == "golden-local-process")
+        .ok_or("process authoring contract absent")?;
+    assert_eq!(
+        session.task_output_limit_bytes,
+        milkdrift_blueprint::MAX_TASK_OUTPUT_BYTES
+    );
+    assert_eq!(contract.generation, 2);
+    assert!(!contract.allows_additional_inputs);
+    assert_eq!(
+        contract
+            .inputs
+            .iter()
+            .map(|input| input.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["file"]
+    );
+    assert!(contract.outputs.iter().any(|output| output.name == "report"
+        && output.required
+        && output.media_type.as_deref() == Some("text/plain")));
     let source = directory.path().join("Cargo.toml");
     let captured = "[package]\nname = \"captured-project\"\nversion = \"0.1.0\"\n";
     fs::write(&source, captured)?;
@@ -72,6 +265,14 @@ async fn exact_requests_missing_inputs_and_frozen_file_bytes_survive_restart() -
     .await?;
     assert_eq!(queued.state, TaskStateDto::Queued);
     assert!(queued.started_at.is_none() && queued.frozen.is_none());
+    let captured_read = queued
+        .supplied_inputs
+        .get("file")
+        .and_then(|input| input.value.as_ref())
+        .ok_or("queued captured source missing")?;
+    assert_eq!(captured_read.text.as_deref(), Some(captured));
+    assert_eq!(captured_read.name.as_deref(), Some("Cargo.toml"));
+    assert!(!queued.supplied_inputs.contains_key("brief"));
     assert!(
         queued
             .reason
@@ -86,6 +287,14 @@ async fn exact_requests_missing_inputs_and_frozen_file_bytes_survive_restart() -
             .is_err()
     );
     let workflow = daemon.client.workflow(&accepted.workflow_id).await?;
+    assert_eq!(
+        workflow
+            .supplied_inputs
+            .get("file")
+            .and_then(|input| input.value.as_ref())
+            .and_then(|value| value.text.as_deref()),
+        Some(captured)
+    );
     let mut definition = queued.definition;
     definition.instructions =
         "Use the exact uploaded manifest and the later supplied brief.".into();
@@ -177,6 +386,13 @@ async fn exact_requests_missing_inputs_and_frozen_file_bytes_survive_restart() -
         .task_result(&accepted.workflow_id, task)
         .await?;
     assert!(result.text.contains(captured));
+    let published = result
+        .outputs
+        .get("report")
+        .ok_or("named report output missing")?;
+    assert!(published.available && published.artifact_id.is_some());
+    assert_eq!(published.media_type.as_deref(), Some("text/plain"));
+    assert_eq!(published.bytes, captured.len() as u64);
     daemon.stop().await?;
     let restarted = start(plan, CONTROLLER_TOKEN).await?;
     assert_eq!(restarted.client.create_workflow(&request).await?, accepted);
@@ -638,6 +854,12 @@ async fn selected_text_is_a_bounded_preview_while_download_and_digest_cover_exac
             && restricted.artifact_id.is_none()
     );
     assert!(!restricted.text_truncated);
+    let supplied = visible
+        .supplied_inputs
+        .get("file")
+        .ok_or("restricted shared source missing")?;
+    assert_eq!(supplied.availability, "restricted");
+    assert!(supplied.value.is_none());
     let summary = observer.workflow(&accepted.workflow_id).await?;
     assert!(
         summary

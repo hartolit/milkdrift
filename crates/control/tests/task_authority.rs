@@ -60,7 +60,7 @@ fn creating_future_work_does_not_supply_start_permission_or_widen_workflow_scope
         clock.clone(),
         Arc::new(SequentialIdGenerator::new("control-test", 1)?),
     ));
-    let control = TaskControlService::new(runtime, evaluator, clock);
+    let control = TaskControlService::new(runtime, evaluator, clock, store.clone());
     let capability = milkdrift_capability::CapabilityRequirement::new(
         milkdrift_capability::OperationId::new("model.generate")?,
     );

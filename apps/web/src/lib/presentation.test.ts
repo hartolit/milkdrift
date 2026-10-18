@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { executionLanes, inputLabel } from './presentation';
+import { executionLanes, readableReason } from './presentation';
 import type { TaskSummaryDto } from './protocol.generated';
 
 function task(id: string, start: number | null, end: number | null): TaskSummaryDto {
@@ -12,8 +12,8 @@ it('plots recorded overlapping intervals on the same axis and excludes queued wo
   expect(executionLanes([task('queued', null, null)], 500)).toEqual([]);
 });
 
-it('keeps input success and settlement policies readable and distinct', () => {
-  expect(inputLabel({ kind: 'task_output', task: 'source', output: 'notes', optional: false })).toContain('requires producer success');
-  expect(inputLabel({ kind: 'task_output', task: 'source', output: 'notes', optional: true })).toContain('optional after producer settles');
-  expect(inputLabel({ kind: 'settled_outcome', task: 'source' })).toContain('including failure');
+it('presents required-input waiting without generated identities and preserves unknown diagnostics', () => {
+  expect(readableReason('missing supplied input source_generated_identity')).toBe('Waiting for a required input');
+  expect(readableReason('process exited with code 3')).toBe('process exited with code 3');
+  expect(readableReason(null)).toBeNull();
 });

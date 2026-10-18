@@ -13,8 +13,9 @@ client, with responsive navigation and a desktop task inspector. The user then r
 usability: too many forms, disruptive navigation and unclear creation of multiple workflows. The
 assigned 02c correction implements distinct creation/addition actions, contextual authoring and
 workflow navigation. The October 18 user recheck rejects it as still bloated and asks for a canvas,
-compact left-side details and direct input connections. Prepared 02d owns that replacement; it is
-not implemented or assigned. Prompt 04 waits for the correction and completed early
+compact left-side details and direct input connections. The assigned 02d correction replaces the
+forms with that canvas and adds the daemon contracts needed by its connections. Its focused
+verification is complete; actual user acceptance remains open. Prompt 04 waits for completed early
 review. Prompt 07 retains the final integrated gate. Hosted quality run 227
 failed on the earlier `e720bb9`; no later hosted pass is claimed.
 
@@ -53,24 +54,32 @@ durable generation guard and exact actor-scoped receipt; restart cannot restore 
 seed. Other connected clients refresh the name through existing observation, including empty searches.
 Disconnected names are explicitly cached. Earlier browser labels are adopted without losing pins.
 
-The client also provides authentication/disconnection, discovery,
-search, supplied-file submission, task editing/repair, result inspection and an accessible
-left-to-right dependency timeline. Its future-batch editor previews additions, revisions, removals,
-input supply, correction/rebinding, stop, wait, finish and limit changes together. Conflicts retain
-the draft for review; lost replies retain the exact request identity. Parallel lanes use actual start
-and end times, and selected follow-up tasks expose their source admission. Credentials stay in memory;
-connections have separate selection, settings and caches. Exact-origin CORS, authenticated fetch
-streams, identity checks and snapshot
-resynchronization belong to the production daemon/client path.
+The Svelte workspace keeps tasks, text/file sources and result connections on one canvas, with a
+compact left selection panel, pan/zoom/fit and an accessible list. **New workflow** opens an unsaved
+canvas; **Add task** adds a card. One explicit submission accepts the drawing atomically. Instructions
+suggest a title and **Model or agent** exposes the configured choice. **Models & agents** lists those
+connections and explains the existing operator setup. Model/agent installation remains daemon
+configuration, not an in-browser capability installer.
 
-**New workflow** creates the workflow and its first task together; **Add task** sends a single guarded
-addition to the current workflow. The shared composer requires instructions, suggests an editable
-title, exposes its executor and offers optional task-local context/files. Ordinary additions need no
-batch staging or JSON preview and preserve explicit waits and limits. The rail keeps current/recent
-work available; **All workflows** owns paged discovery. Up to eight drafts per authenticated
-connection survive navigation in memory, including exact pending requests. Stale reads cannot
-replace a newer selection. Advanced editors remain in their workflow until explicitly closed or
-their pending changes recovered.
+Adapter-owned authoring metadata supplies real input slots, output ports, labels and configuration
+generations. A draft result connection adds its actual output declaration and implied prerequisite.
+Retained named results may be selected even when the historical producer did not declare them;
+shared admission verifies publication metadata and current source authority. Correction redirect
+preserves the original media contract and finite output allowance. Bounded inline/shared-input reads
+rebuild source cards, while started tasks retain frozen inputs. File tools select permitted project
+roots and explicit access modes independently of captured client files.
+Before a local task receives artifact bytes, the host checks its accepted actor's current read
+permission against the actual artifact, sensitivity and size. Capability execution permission alone
+does not authorize those reads.
+
+The canvas exposes prospective edits, correction/rebinding, stop, removal, wait/resume, completion,
+limits and rejected-model-proposal dismissal through contextual actions. The former definition,
+composer and JSON batch editor product paths are removed. Exact pending requests and up to eight
+dirty drawings remain scoped in memory to the authenticated daemon and actor; navigation never
+submits them. Graph/detail caches are bounded and off-page connections remain explicit. A full draft
+cache still permits viewing other workflows. Conflicts retain the drawing for a new decision;
+lost replies offer exact recovery. Spatial layout owns no scheduling or elapsed-time meaning;
+a secondary timeline shows actual starts and settlements. The daemon still owns all durable work.
 
 The task scheduler uses existing external preparation, final-entry and effect-lifetime mechanisms.
 Durable native path claims coordinate declared project reads/writes, including aliases and
@@ -82,12 +91,11 @@ stop requests, uncertainty and restart cannot refund unresolved work.
 
 ## Limitations now
 
-The dark workspace, real brand and compact authoring/navigation correction are implemented. The
-user rejected 02c's remaining forms and page layout; the selected canvas/direct-authoring replacement
-is prepared in 02d. Current capability reads lack authoring ports, task results omit output-name
-mapping and queued supplied values lack a source read. Task-output validation still requires a
-producer declaration, including for already-published results. These gaps belong to 02d, not a
-browser-only drawing layer. Naming and visual preference acceptance remain unreported.
+The user rejected the earlier compact form layout. Canvas behavior and model assignment have
+focused verification; the actual user has not rechecked the replacement. Naming and visual
+preference acceptance also remain unreported. Adding a new model or process still requires a qualified
+operator profile, appropriate grants and daemon restart; the browser now exposes that setup path
+rather than implying that a connection can be installed from a task's selector.
 Drafts are memory-only and are lost on reload
 or disconnect; accepted work remains daemon-owned. A new workflow still requires its first task.
 Rename receipts have a fixed capacity of 1,024; new renames refuse at capacity while reads and exact
@@ -128,7 +136,7 @@ authority loss. The affected Rust fixture passes five unit cases, scoped Clippy 
 CLI/daemon journey, retaining eight tasks and three accepted model batches without client
 continuation. Desktop and narrow renders were inspected. These focused checks establish the
 implemented behavior; the subsequent user recheck rejected the interaction. They do not validate the
-prepared canvas replacement or complete the substantive user journey.
+current canvas replacement or complete the substantive user journey.
 
 Prompt 02b passes frontend check/lint, 67 unit cases, production build and all 16 real-daemon
 Chromium cases, with focused reruns for the final render corrections. Desktop and 390-pixel views

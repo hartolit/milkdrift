@@ -443,7 +443,7 @@ fn active_starts(record: &WorkflowRecord) -> Result<u64, RuntimeError> {
 }
 
 /// Enforceable maximum aggregate output bytes of one ordinary task.
-pub(crate) const TASK_OUTPUT_BYTES: u64 = 2_097_152;
+pub(crate) const TASK_OUTPUT_BYTES: u64 = milkdrift_blueprint::MAX_TASK_OUTPUT_BYTES;
 
 fn managed_executions(
     record: &WorkflowRecord,
@@ -497,22 +497,8 @@ fn output_contract_failure(
             }
             continue;
         };
-        if reference
-            .size_bytes()
-            .is_none_or(|bytes| bytes > declaration.max_bytes)
-        {
-            return Some(format!(
-                "output {name} size is unknown or exceeds its declared allowance"
-            ));
-        }
-        if declaration
-            .media_type
-            .as_deref()
-            .is_some_and(|expected| reference.media_type() != Some(expected))
-        {
-            return Some(format!(
-                "output {name} media type differs from its declaration"
-            ));
+        if let Err(reason) = declaration.validate_reference(reference) {
+            return Some(format!("output {name}: {reason}"));
         }
     }
     None

@@ -236,7 +236,12 @@ impl Fixture {
             )
             .with_maximum_active_tasks(64)?,
         );
-        let control = Arc::new(TaskControlService::new(runtime.clone(), authority, clock));
+        let control = Arc::new(TaskControlService::new(
+            runtime.clone(),
+            authority,
+            clock,
+            store.clone(),
+        ));
         Ok(Self {
             store,
             runtime,
@@ -295,8 +300,7 @@ impl Fixture {
         Ok(())
     }
     fn process(&self) -> Result<(), milkdrift_control::ControlError> {
-        self.control
-            .process_model_admissions(self.store.as_ref(), self.store.as_ref())
+        self.control.process_model_admissions(self.store.as_ref())
     }
     fn generation(&self, workflow: &WorkflowId, source: &TaskId) -> TestResult<u64> {
         Ok(self

@@ -548,7 +548,7 @@ fn help_and_version_are_json_without_a_session() -> TestResult {
 
 #[test]
 fn workflow_result_preserves_retained_evidence() -> TestResult {
-    let value = json!({"text":"useful report", "text_truncated":false, "text_unavailable":false, "digest":format!("b3_{}",blake3::hash(b"useful report")),"artifacts":["report"],"input_digests":{"brief":"captured"}});
+    let value = json!({"text":"useful report", "text_truncated":false, "text_unavailable":false, "digest":format!("b3_{}",blake3::hash(b"useful report")),"artifacts":["report"],"outputs":{"final_text":{"artifact_id":"report","media_type":"text/plain","bytes":13,"available":true}},"input_digests":{"brief":"captured"}});
     let server = Server::new(vec![negotiation(), response(value.clone())])?;
     let (exit, records, stderr) =
         server.invoke(&["workflow", "result", "workflow-one", "task-one"], false)?;

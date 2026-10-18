@@ -32,6 +32,13 @@ tool loop in [`capability-host`](../../crates/capability-host/README.md), and re
 Keep the same capability identity and profile in both calls. Profile changes require a new generation;
 health describes local adapter readiness and active load without probing endpoint availability.
 
+Task-editor metadata uses the configured model name and accepts independently named context
+inputs. It offers `model_response` as the complete response connector; `final_text` and
+`structured_output` are conditional choices because a valid response may contain neither.
+These choices describe the adapter's real publication names and response byte limit. They do
+not expose credentials, add a provider, or make conditional output exist. The tool-loop wrapper
+forwards the same metadata, keeping model selection and result connections consistent.
+
 The adapter verifies that the frozen selection matches the exact invocation request, reads selected
 content through the host data port, and verifies artifact size and digest. Both mappings inject the
 selection's provenance as system context and label additional named evidence as untrusted data.

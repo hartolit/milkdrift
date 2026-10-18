@@ -21,7 +21,6 @@ impl TaskControlService {
     pub fn process_model_admissions(
         &self,
         workflows: &dyn WorkflowStore,
-        artifacts: &dyn ArtifactStore,
     ) -> Result<(), ControlError> {
         let mut cursor = self
             .admission_cursor
@@ -54,7 +53,7 @@ impl TaskControlService {
                     .runtime
                     .workflow(&snapshot.workflow)?
                     .ok_or_else(|| invalid("admission workflow disappeared"))?;
-                self.process_response(&record, &source, artifacts)?;
+                self.process_response(&record, &source, self.artifacts.as_ref())?;
             }
         }
         *cursor = page.next;
@@ -193,6 +192,7 @@ impl TaskControlService {
                 "model-actions",
             )?;
         }
+        self.authorize_sources(context, record, batch)?;
         Ok(())
     }
 

@@ -13,6 +13,7 @@
 //! follows that consumer through a complete invocation.
 
 mod adapter;
+mod authoring;
 #[cfg(any(test, feature = "test-support"))]
 pub mod conformance;
 mod materialization;
@@ -28,6 +29,7 @@ pub use adapter::{
     AdapterInvocation, AdapterReporter, CapabilityAdapter, DirectInputSelection,
     HostAdapterContractError, PreparedAdapterExecution, WorkflowExecutionContext,
 };
+pub use authoring::{TaskAuthoringContract, TaskAuthoringPort};
 pub use materialization::{
     InputMaterialization, InvocationDataAccess, InvocationDataError,
     MATERIALIZATION_SCHEMA_VERSION_V1, MaterializationLimits, MaterializedExecution,

@@ -30,6 +30,21 @@ fn task_transport_rejects_duplicate_and_unknown_request_fields() {
 }
 
 #[test]
+fn older_session_without_output_allowance_remains_unknown() -> Result<(), Box<dyn std::error::Error>>
+{
+    let mut fixture: serde_json::Value =
+        serde_json::from_slice(include_bytes!("fixtures/task-session.json"))?;
+    fixture
+        .get_mut("value")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("fixture session missing")?
+        .remove("task_output_limit_bytes");
+    let envelope: ResponseEnvelope<TaskSessionDto> = decode_json(&serde_json::to_vec(&fixture)?)?;
+    assert_eq!(envelope.value.task_output_limit_bytes, 0);
+    Ok(())
+}
+
+#[test]
 fn session_name_fields_require_the_current_coordinated_protocol()
 -> Result<(), Box<dyn std::error::Error>> {
     assert!(matches!(

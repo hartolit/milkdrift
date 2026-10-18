@@ -14,6 +14,13 @@ paths before producing `descriptor()`. The daemon uses this path in
 [capability registration](../../apps/daemon/src/host/capabilities.rs). The adapter needs an injected
 `InvocationDataAccess` and `SecretResolver`, so it can use durable inputs without knowing store layout.
 
+The adapter also derives task-editor connector choices from that same validated profile. Input
+files, stdin and named text substitutions expose their real names and byte limits; text
+substitutions require inline text, while file inputs can consume selected artifacts. Output choices
+come from declared files and captured streams, with missing optional files remaining optional.
+The projection exposes the profile's display name and these choices, not its executable, arguments,
+environment or secrets. Changing the profile still requires a new registered generation.
+
 During preparation, the adapter materializes only configured inputs, selects the working directory,
 expands argument placeholders, and freezes stdin and the environment. The runtime or serving owner
 then rechecks authority and durably authorizes entry. Only the consumed prepared handle can spawn,

@@ -426,6 +426,7 @@ impl Owner {
                         tasks.clone(),
                         authority.clone(),
                         clock.runtime_adapter(),
+                        store.clone(),
                     ),
                     tasks,
                 })
@@ -476,7 +477,8 @@ impl Owner {
                             .map_err(|error| error.to_string())?,
                     },
                 )
-                .map_err(|error| error.to_string())?,
+                .map_err(|error| error.to_string())?
+                .with_task_authority(authority.clone(), clock.runtime_adapter()),
             );
             let managed = adapters
                 .managed_linux

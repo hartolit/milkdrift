@@ -283,10 +283,18 @@ async fn shared_absent_input_waits_only_for_required_consumer_and_preserves_star
             .as_deref(),
         Some("Only future starts select this text")
     );
+    let mut optional_after = daemon.client.task(&accepted.workflow_id, optional).await?;
     assert_eq!(
-        daemon.client.task(&accepted.workflow_id, optional).await?,
-        optional_start
+        optional_after
+            .supplied_inputs
+            .get("shared")
+            .and_then(|input| input.value.as_ref())
+            .and_then(|input| input.text.as_deref()),
+        Some("Only future starts select this text")
     );
+    // The live shared-source projection changes; every retained task fact stays identical.
+    optional_after.supplied_inputs = optional_start.supplied_inputs.clone();
+    assert_eq!(optional_after, optional_start);
     daemon.stop().await?;
     assert_eq!(entries(&directory)?, 2);
     Ok(())

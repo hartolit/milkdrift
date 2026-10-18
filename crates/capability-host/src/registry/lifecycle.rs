@@ -299,6 +299,24 @@ impl CapabilityHost {
                     })
             })
             .map(|(key, generation)| GenerationView {
+                task_authoring: generation
+                    .task_authoring
+                    .iter()
+                    .filter(|(identity, _)| {
+                        generation
+                            .descriptor
+                            .operation(identity)
+                            .is_some_and(|operation| {
+                                scope_allows_operation(
+                                    visible,
+                                    &generation.descriptor,
+                                    identity,
+                                    operation.side_effect(),
+                                )
+                            })
+                    })
+                    .map(|(operation, contract)| (operation.clone(), contract.clone()))
+                    .collect(),
                 capability: key.capability.clone(),
                 descriptor_revision: key.revision,
                 descriptor_digest: generation.descriptor_digest.clone(),

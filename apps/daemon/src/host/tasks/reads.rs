@@ -42,8 +42,11 @@ impl Owner {
             .collect();
         let metadata = self.daemon_metadata(session)?;
         Ok(TaskSessionDto {
+            authoring: self.task_authoring(session)?,
+            project_roots: Self::task_project_roots(session),
             input_limit_bytes: u32::try_from(milkdrift_blueprint::MAX_TASK_TEXT_BYTES)
                 .map_err(failure)?,
+            task_output_limit_bytes: milkdrift_blueprint::MAX_TASK_OUTPUT_BYTES,
             daemon_id: self.host_id.to_string(),
             daemon_name: metadata.name,
             daemon_name_generation: metadata.generation,
@@ -254,6 +257,7 @@ impl Owner {
             None
         };
         Ok(WorkflowReadDto {
+            supplied_inputs: self.supplied_input_reads(session, record.inputs.iter(), 65_536)?,
             wait_question: record.wait_question.clone(),
             admitted_tasks: record.admitted_tasks,
             admitted_model_batches: record.admitted_model_batches,
@@ -346,6 +350,29 @@ impl Owner {
                     .transpose()?
                     .unwrap_or_default();
                 Ok::<_, PublicFailure>(TaskResultDto {
+                    outputs: result
+                        .outputs
+                        .iter()
+                        .map(|(name, output)| {
+                            self.artifact_range(
+                                session,
+                                output.identity(),
+                                0,
+                                1,
+                                "task-published-output",
+                            )?;
+                            let metadata = self.artifact_metadata(session, output.identity())?;
+                            Ok((
+                                name.clone(),
+                                milkdrift_control_protocol::tasks::TaskPublishedOutputDto {
+                                    artifact_id: Some(metadata.artifact_id),
+                                    media_type: output.media_type().map(str::to_owned),
+                                    bytes: metadata.size,
+                                    available: true,
+                                },
+                            ))
+                        })
+                        .collect::<Result<_, PublicFailure>>()?,
                     digest,
                     text_unavailable,
                     text,
@@ -368,6 +395,18 @@ impl Owner {
             Err(error) => return Err(error),
         };
         Ok(TaskReadDto {
+            inline_inputs: self.supplied_input_reads(
+                session,
+                task.definition
+                    .inputs
+                    .iter()
+                    .filter_map(|(name, binding)| match binding {
+                        TaskInputBinding::Inline { value } => Some((name, value)),
+                        _ => None,
+                    }),
+                65_536,
+            )?,
+            supplied_inputs: BTreeMap::new(),
             origin: None,
             id: task.id.to_string(),
             version: task.version,
@@ -565,6 +604,7 @@ impl Owner {
             .get(&milkdrift_blueprint::TaskId::new(task).map_err(failure)?)
             .ok_or_else(super::super::read_model::not_found)?;
         let mut read = self.task_read(session, workflow, task)?;
+        read.supplied_inputs = self.supplied_input_reads(session, record.inputs.iter().filter(|(name, _)| task.definition.inputs.values().any(|binding| matches!(binding, TaskInputBinding::Supplied { name: selected, .. } if selected == *name))), 65_536)?;
         read.origin = record
             .admissions
             .iter()

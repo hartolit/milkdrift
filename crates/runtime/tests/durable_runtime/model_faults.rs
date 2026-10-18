@@ -149,13 +149,13 @@ impl Fixture {
         });
         let authority = Arc::new(InvocationAllowance(Some(8)));
         let engine = Arc::new(TaskRuntime::new(
-            store,
+            store.clone(),
             executor.clone(),
             authority.clone(),
             clock.clone(),
             Arc::new(SequentialIdGenerator::new(label, 1)?),
         ));
-        let control = TaskControlService::new(engine.clone(), authority, clock);
+        let control = TaskControlService::new(engine.clone(), authority, clock, store);
         Ok(Self {
             engine,
             executor,

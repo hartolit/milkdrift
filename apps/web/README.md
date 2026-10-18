@@ -19,87 +19,77 @@ If a saved address points to a different daemon, reconnect stops before loading 
 address, deliberately forget the saved connection, then connect afresh. **Connection details**
 explains the stable identity; it identifies the daemon, not a device, and is not a setup field.
 
-Choose **New workflow** to compose its first task, or **Add task** within a workflow to add to that
-workflow. Both use the same composer alongside the existing work. Write **What should this task do?**;
-the editable title is suggested from those instructions. A new workflow uses that title unless you
-change its name in **Advanced task options**. Nothing is created until submission.
+Choose **New workflow** for an unsaved canvas. **Add task** adds a draft card and opens its compact
+left inspector. Write **What should this task do?**; its editable title is suggested from your
+instructions. Select another task to change the inspector while keeping the canvas and camera.
+**Start workflow** accepts the first task or connected group together. An empty canvas creates no
+durable work. Within an existing workflow, **Add task** or **Apply changes** accepts the drawing
+through one guarded request. Cards and wires remain drafts until that explicit action.
 
-Choose an **Executor** from the connected daemon's permitted capabilities. A sole available executor
-or your last deliberate choice on this authenticated connection can be selected for you; the choice
-is always visible. A missing or removed choice is never replaced with another executor automatically.
-Instructions alone are sufficient for authoring; an executor that needs particular inputs can still
-refuse work that does not supply them. Its requirements are not inferred from its name.
+The visible **Model or agent** choice comes from this daemon. A sole available choice or the last
+deliberate selection on the same authenticated connection can be preselected. A missing choice
+is never silently replaced. **Models & agents** lists available models and configured processes;
+**Add model or agent** explains the existing operator setup and links its maintained guides.
+Connections are configured once on the daemon computer, then shared with permitted clients.
+The browser does not install agents, load weights or write provider credentials. See the
+[model setup guide](../../docs/guides/local-model-endpoint.md) and
+[process setup guide](../../docs/guides/local-process.md).
 
-**Add context** supplies a task-local `brief`; **Attach text file** captures a task-local UTF-8 `file`
-input. Adding either to another task does not replace values used by earlier queued tasks. Captured
-files are bounded by the daemon's advertised limit, currently 16 KiB, and the daemon checks combined
-instructions and selected input text. Under context, uncheck **Supply context now** to deliberately
-queue a task awaiting its own required context. The inspector can later supply that input.
+Instructions alone are enough for a model task. To add context, create a text or captured file
+source, then drag its connector to a task or use **Connect to…**. **Add input** on a task starts
+the same operation. A configured process may require a particular input: its real slots come
+from the daemon, and a contextual choice appears when several destinations are possible. Binding
+keys and task identities are generated. Captured files are UTF-8 and bounded by the daemon's
+advertised upload limit, currently 16 KiB; capturing a file grants no daemon filesystem access.
 
-**Advanced task options** retains named inputs, dependencies, output contracts, project paths and
-workflow limits. Open **Model continuation and permitted tools** there to opt in to future-work proposals and,
-separately, automatic feedback after a refused proposal. Select file tools only with declared paths
-and select process tools from configured capabilities. The daemon rechecks the category and grant;
-the browser does not authorize a capability by showing it. Turn off **Finish when required work
-settles** when the model will explicitly request completion after creating its follow-up work.
-An ordinary addition sends one guarded change; it never implicitly resumes a waiting workflow,
-changes its completion choice or enlarges its limits.
+Connect a task's real result to use its successful output. The client offers actual declared or
+retained named outputs, not the combined display preview. It adds the implied prerequisite.
+**Use the outcome even if it fails** deliberately accepts the settled failure report; optional
+absence is a separate choice. **Run after…** adds ordering without importing a result. Removing a
+wire retains prerequisites still needed by other wires or an explicit ordering relationship.
+New work and its inputs are submitted atomically; drawing a card never starts it before wiring.
+When a draft producer exposes several results, the connection panel shows how they share its
+daemon-advertised output allowance before applying that choice. Existing accepted output contracts
+stay fixed. Accepted prerequisites do not record whether they originally came from a wire or an
+explicit order; removing a result wire therefore retains its **Run after** relationship until you
+deliberately remove that ordering connection too.
 
-The dark workspace keeps a daemon switcher, **New workflow**, the current workflow and up to eight
-recent workflows in the left rail. **All workflows** opens paged discovery and search; the recent
-list is not the whole collection. On narrow screens, **Workspace navigation** opens the rail.
-Browser Back/Forward restores location with authenticated reads, without submitting work.
-The supplied Milkdrift logo is used unchanged.
+Queued missing inputs appear as sources that can be supplied in place. A shared source names its
+affected future consumers before replacement. Started tasks keep their frozen versions. Missing,
+restricted, expired and outside-page sources are distinct; the client never substitutes empty text
+for unavailable content. Workflow and task discovery are paged, with explicit bounded loading.
 
-Each authenticated connection retains up to eight task drafts in memory. Switching workflows or
-opening settings preserves them. **Keep draft**, **Close composer** and Escape hide the composer;
-reopen it through **Add task**, **New workflow** or the rail's **Drafts** list. **Discard draft** frees
-its slot. At capacity, new drafts refuse without dropping existing work. Disconnect, authority loss
-and identity replacement dispose of inaccessible drafts. Reloading the browser loses unsent drafts;
-neither draft text nor credentials are saved in browser storage or URLs.
+The rail keeps the daemon switcher, workflow creation, recent workflows and **All workflows**
+discovery. Browser Back/Forward restores location without submitting work. Each authenticated
+connection retains up to eight canvas drafts in memory. A canvas bounds its staged changes to 32,
+loaded tasks to 200, sources to 400, edges to 1,024, draft data to 2 MiB and selected-task cache to
+8 MiB. Capacity refusal preserves existing work and offers explicit discard. No automatic splitting
+of a large batch occurs. Disconnect, identity replacement and authority loss dispose of inaccessible
+state. Browser reload loses unsent work; draft content and credentials never enter browser storage
+or URLs. The supplied Milkdrift logo remains unchanged.
+At the eight-draft limit, other workflows remain available as a clean view. **Clear cached details**
+releases loaded detail without discarding drafts or accepted connections; select a task to load it
+again.
 
-The timeline orders dependency columns from left to right. A shared time axis also shows actual
-overlapping starts and settlements, with open bars for tasks without recorded ends. Queued tasks
-show no invented start time. The list offers the same inspector and actions. Future
-edits carry the observed workflow generation and task version. A requested stop remains separate
-from proof that execution stopped. Results retain content and selected-input digests. Failed,
-forbidden, expired and uncertain responses come from the daemon and remain visible.
-Workflow discovery and task lists display bounded pages with explicit navigation. Selecting a
-task fetches its full inspector separately. The inspector sits beside the timeline on wide screens
-and stacks below it on narrower screens. **Hide inspector**, or Escape from inside it, preserves
-the selection and unfinished edit; **Show inspector** returns focus to its last focused control.
-Results can be collapsed without losing their content. Technical task facts and dependencies have
-a separate disclosure. Large inputs and results show a labelled preview;
-**Download result** requests the complete retained text from the daemon and displays any refusal.
-If the current grant denies retained content, the inspector labels that restriction while keeping
-the permitted lifecycle visible. Non-UTF-8 output retains its artifact identities and byte digest
-with an explicit notice that it cannot be shown as text.
+Pan, zoom, fit and the accessible list operate on the same graph. A closable left inspector stays
+compact at narrow widths. Layout is presentation; the secondary timeline uses actual starts and
+settlements to show overlap. Queued tasks have no invented start time. Results have bounded previews
+and explicit complete-content downloads; technical facts remain separate from ordinary authoring.
+Access restrictions and uncertainty remain visible.
 
-**Edit future batch** stages complete additions, revisions, input supply, removals, stop requests,
-correction adoption and explicit wait/resume/finish decisions. Task definitions expose named input
-policies, dependencies, required obligations, output contracts and scoped project paths. Required
-producer outputs wait for success; optional outputs wait for settlement; a **Settled task outcome**
-binding explicitly accepts failure. Inspect the exact batch preview before **Submit reviewed batch**.
-The daemon validates and accepts the complete batch atomically. A preview itself sends no changes.
-Finish or close an advanced editor before navigating away from its workflow; the client keeps it
-open instead of silently discarding the draft. An unconfirmed change must be recovered before leaving.
+**Edit task**, **Create correction**, **Use correction for future work**, **Request stop** and
+**Remove unstarted task** are contextual actions. Workflow actions expose wait, resume, completion
+and prospective limits. Rejected model proposals can be reviewed and dismissed with repaired work
+in the same atomic change; dismissal does not resume a separate human wait. Model continuation,
+automatic repair and tools remain deliberate permissions. File tools select permitted project roots
+and access modes supplied by the daemon, with an optional relative subfolder. Ordinary input
+connections require no file-tool permission. Rust rechecks authority and native paths before entry.
 
-If a concurrent human/model edit wins, the editor retains the draft and requires a refreshed
-generation and explicit review. Reload affected task definitions before staging their new versions;
-the client never merges or retries a refused semantic edit automatically. A lost reply instead
-holds the exact request unchanged for **Replay exact batch**. The JSON draft editor uses the same
-typed public change array as the CLI and supports editing any staged change before preview.
-
-**Create linked corrective work** prepares a new task linked to the original. Its corrective link
-keeps replacement work waiting for the original to settle. An uncertain or stop-requested task is
-not evidence of a safe replacement. Once correction succeeds, choose **Adopt a successful correction**
-and select the future consumer bindings to redirect. Historical failures and frozen started inputs
-remain inspectable. Workflow limits are available in a disclosure below the task workspace.
-That panel reports cumulative admissions and elapsed execution beside the ceilings. The response
-decision panel links source tasks, immutable response digests, receipts and allocated child aliases.
-For a refused response, stage **Dismiss a response decision** with the reviewed replacement changes;
-this is an explicit decision through the same batch path, with no hidden permission expansion.
-**Change prospective workflow limits** and **Resume prospectively** are separate staged actions.
+Concurrent changes or a task starting can refuse a prospective edit. The drawing remains for a
+new explicit decision after refresh. A lost response instead preserves the exact target, payload
+and request identity for receipt lookup or exact replay across navigation. Neither recovery path
+silently expands permissions, resumes waiting work or increases limits. Started definitions,
+failed history and frozen inputs remain unchanged when a successful correction redirects future work.
 
 ## Run locally
 
@@ -151,10 +141,9 @@ a supported setup.
 ## Maintain and verify
 
 `src/style.css` owns shared colors, typography, spacing, controls, focus, navigation and authoring
-panels. It loads before component styles in `src/main.ts`. `src/workflow.css`, imported by
-`WorkflowView.svelte`, owns the timeline, execution lanes and inspector. Extend these owners when
+panels. It loads before component styles in `src/main.ts`. `src/canvas.css` owns the canvas workspace, execution lanes and inspector. Extend these owners when
 adding a surface so forms and status cues remain consistent. Keep labels alongside state colors,
-allow long names to wrap, and preserve mounted editor content when toggling the inspector.
+allow long names to wrap, and preserve draft content when toggling the inspector.
 `public/milkdrift-logo.svg` is the exact supplied brand asset, copied from
 `docs/development/virtual-office/milkdrift-remedial-planning-v3/assets/milkdrift-logo.svg` at the
 repository root; change its display size in CSS without changing its paths or colors.
@@ -184,11 +173,17 @@ npm run test:browser
 
 The browser suite uses a production static build and two real daemons started by the repository's
 Rust evidence harness. Supply its private configuration file through `MILKDRIFT_BROWSER_CONFIG`.
+For the complete canvas suite, start a fresh fixture with **serve --canvas-cases**, as documented
+in the [Rust harness guide](../../tools/evidence/README.md). The additional executors are isolated
+test cases; ordinary user-review fixtures omit them. The suite fails setup if those required cases
+are absent. Use a fresh root for a complete run: the controlled endpoint has a finite call allowance,
+and repeated suites must not rely on a previously consumed fixture.
 The configuration names each daemon's URL, identity and credential, the `cargo-report` capability,
 two captured Cargo inputs and expected report terms. Backend launching, process fixtures and fault
-orchestration stay in Rust. The TypeScript tests only operate and inspect the client.
+orchestration stay in Rust. The TypeScript tests operate the client, inspect public responses and
+invoke the Rust seed command for bounded retained-state scenarios; they do not write daemon stores.
 When the harness supplies `model_capability` and `model_expect`, the suite also exercises the
-controlled external model through the same task form and verifies the retained response.
+controlled external model through the same canvas and verifies the retained response.
 Prompt 03 requires `planning_capability` from that Rust harness. Its automatic journey submits only
 the initial planning task, observes daemon-created research/composition/correction, checks recorded
 parallel intervals and the failed original, and asserts that the browser sent no continuation

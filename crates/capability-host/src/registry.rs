@@ -91,6 +91,8 @@ pub enum GenerationHealth {
 /// Scoped generation read model used by daemon capability inspection.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GenerationView {
+    /// Safe task authoring contracts for the operations visible to this authority scope.
+    pub task_authoring: BTreeMap<OperationId, crate::TaskAuthoringContract>,
     /// Capability identity.
     pub capability: CapabilityId,
     /// Exact descriptor revision.
@@ -221,6 +223,7 @@ struct GenerationKey {
 }
 
 struct Generation {
+    task_authoring: BTreeMap<OperationId, crate::TaskAuthoringContract>,
     accepts_direct_inputs: bool,
     descriptor: CapabilityDescriptor,
     descriptor_digest: String,

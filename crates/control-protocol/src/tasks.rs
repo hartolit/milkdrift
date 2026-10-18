@@ -69,6 +69,83 @@ pub struct TaskCapability {
     pub operation: String,
 }
 
+/// One real input or publication slot from an adapter's configured contract.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+pub struct TaskInputSlotDto {
+    /// Mechanical name assigned by the adapter, never user-invented.
+    pub name: String,
+    /// Readable label for connection choices.
+    pub label: String,
+    /// Whether this input must be connected.
+    pub required: bool,
+    /// False for a configured inline scalar substitution that cannot consume result artifacts.
+    pub accepts_artifacts: bool,
+    /// Exact media constraint, when one exists.
+    pub media_type: Option<String>,
+    /// Adapter-enforced maximum bytes.
+    #[cfg_attr(feature = "web-codegen", ts(type = "number"))]
+    pub max_bytes: u64,
+}
+
+/// A real adapter publication, which may be absent on successful settlement.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+pub struct TaskOutputPortDto {
+    /// Exact name emitted by the adapter.
+    pub name: String,
+    /// Readable connection label.
+    pub label: String,
+    /// False means publication is conditional, not guaranteed on every success.
+    pub required: bool,
+    /// Media type emitted by the adapter.
+    pub media_type: Option<String>,
+    /// Maximum bytes permitted for the selected task output.
+    #[cfg_attr(feature = "web-codegen", ts(type = "number"))]
+    pub max_bytes: u64,
+}
+
+/// Safe authoring choices for one current, authorized registered generation.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+pub struct TaskCapabilityAuthoringDto {
+    /// Exact executor selected by the task.
+    pub capability: TaskCapability,
+    /// Registered immutable configuration generation.
+    #[cfg_attr(feature = "web-codegen", ts(type = "number"))]
+    pub generation: u64,
+    /// Actual configured model or process name.
+    pub label: String,
+    /// Explicit adapter category rather than a guess from its identity.
+    pub category: String,
+    /// Exact configured input choices.
+    pub inputs: Vec<TaskInputSlotDto>,
+    /// Whether generated additional context keys are supported.
+    pub allows_additional_inputs: bool,
+    /// Real publication choices.
+    pub outputs: Vec<TaskOutputPortDto>,
+    /// Preferred real publication, if the adapter defines one.
+    pub default_output: Option<String>,
+}
+
+/// Filesystem scope already granted to this actor; selecting it does not grant permission.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+pub struct TaskProjectRootDto {
+    /// Canonical root to combine with an optional relative subfolder.
+    pub path: String,
+    /// Last path component for display; path disambiguates equal labels.
+    pub label: String,
+    /// Current authority permits reads beneath this root.
+    pub read: bool,
+    /// Current authority permits writes beneath this root.
+    pub write: bool,
+}
+
 /// A declared filesystem access coordinated by the host before entry.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
@@ -114,6 +191,11 @@ pub struct TaskBindingRedirectDto {
 #[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
 #[serde(deny_unknown_fields)]
 pub struct TaskDefinitionDto {
+    /// Optional admission guard for the authoring contract observed while composing this task.
+    /// It is not retained as a second capability selector in the accepted definition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "web-codegen", ts(optional, type = "number"))]
+    pub authoring_generation: Option<u64>,
     /// Opt in to structured action proposals; plain model text remains result data.
     #[serde(default)]
     pub actions: Option<TaskActionPolicyDto>,
@@ -354,6 +436,9 @@ pub enum TaskStateDto {
 #[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
 #[serde(deny_unknown_fields)]
 pub struct TaskResultDto {
+    /// Actual named publications, independent of the producer's declaration map.
+    #[serde(default)]
+    pub outputs: BTreeMap<String, TaskPublishedOutputDto>,
     /// Declared text artifacts contain non-UTF-8 bytes; download individual artifacts.
     #[serde(default)]
     pub text_unavailable: bool,
@@ -369,11 +454,44 @@ pub struct TaskResultDto {
     pub input_digests: BTreeMap<String, String>,
 }
 
+/// An actual retained named publication, not a display preview or invented default port.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+pub struct TaskPublishedOutputDto {
+    /// Immutable artifact identity when current authority permits disclosure.
+    pub artifact_id: Option<String>,
+    /// Retained media type, when supplied by its owner.
+    pub media_type: Option<String>,
+    /// Exact retained byte count.
+    #[cfg_attr(feature = "web-codegen", ts(type = "number"))]
+    pub bytes: u64,
+    /// Whether the selected actor can currently retrieve this artifact.
+    pub available: bool,
+}
+
+/// Current supplied value and provenance, bounded separately from frozen start inputs.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+pub struct TaskSuppliedInputDto {
+    /// Available, restricted by authority, or expired; an absent map key means missing.
+    pub availability: String,
+    /// Bounded captured value when readable.
+    pub value: Option<FrozenInputDto>,
+}
+
 /// One task as observed through the selected daemon and actor.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
 #[serde(deny_unknown_fields)]
 pub struct TaskReadDto {
+    /// Captured inline values and upload provenance from this task's owning definition.
+    #[serde(default)]
+    pub inline_inputs: BTreeMap<String, TaskSuppliedInputDto>,
+    /// Current shared values referenced by this task, separate from its frozen start.
+    #[serde(default)]
+    pub supplied_inputs: BTreeMap<String, TaskSuppliedInputDto>,
     /// Source response that admitted this task, available independently of workflow task paging.
     pub origin: Option<ModelAdmissionDto>,
     /// Stable workflow-local task identity.
@@ -512,6 +630,9 @@ pub struct WorkflowSummaryDto {
 #[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowReadDto {
+    /// Shared daemon-owned sources with bounded previews; absence means no supplied value.
+    #[serde(default)]
+    pub supplied_inputs: BTreeMap<String, TaskSuppliedInputDto>,
     /// Current actionable question preventing new entry.
     pub wait_question: Option<String>,
     /// Cumulative task admissions, including removed and failed tasks.
@@ -589,8 +710,18 @@ pub struct WorkflowPageDto {
 #[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
 #[serde(deny_unknown_fields)]
 pub struct TaskSessionDto {
+    /// Safe real connector choices for the permitted current executor generations.
+    #[serde(default)]
+    pub authoring: Vec<TaskCapabilityAuthoringDto>,
+    /// Permitted configured filesystem roots for explicitly selected native file tools.
+    #[serde(default)]
+    pub project_roots: Vec<TaskProjectRootDto>,
     /// Maximum UTF-8 bytes in a supplied text value or captured file.
     pub input_limit_bytes: u32,
+    /// Aggregate declared output allowance per task. Zero means an older server omitted it.
+    #[serde(default)]
+    #[cfg_attr(feature = "web-codegen", ts(type = "number"))]
+    pub task_output_limit_bytes: u64,
     /// Installation identity required on subsequent task operations.
     pub daemon_id: String,
     /// Shared current daemon name; never a connection-local label.

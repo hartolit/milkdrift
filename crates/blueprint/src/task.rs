@@ -16,6 +16,8 @@ pub const MAX_TASK_BATCH_ACTIONS: usize = 32;
 pub const MAX_TASK_DEFINITION_BYTES: usize = 1_048_576;
 /// Maximum UTF-8 text bytes in one instruction, supplied text or captured file.
 pub const MAX_TASK_TEXT_BYTES: usize = 16_384;
+/// Aggregate output allowance of one task, also bounding an undeclared retained output binding.
+pub const MAX_TASK_OUTPUT_BYTES: u64 = 2_097_152;
 /// Escaped instructions and known input content must fit the shared inline execution contract.
 const MAX_TASK_RENDERED_BYTES: usize = 24_576;
 
@@ -137,7 +139,7 @@ pub enum TaskInputBinding {
         #[serde(default)]
         optional: bool,
     },
-    /// An immutable named result from a declared producer dependency.
+    /// A declared future output or an actual named retained result from a producer dependency.
     TaskOutput {
         /// Producer identity or an alias in the same atomic request.
         task: TaskId,
@@ -176,6 +178,36 @@ pub struct TaskOutputDeclaration {
     pub media_type: Option<String>,
     /// Maximum artifact bytes; unknown artifact sizes cannot satisfy this declaration.
     pub max_bytes: u64,
+}
+
+impl TaskOutputDeclaration {
+    /// Checks retained output evidence against this producer's media and byte contract.
+    ///
+    /// # Errors
+    /// Refuses unknown or excessive size and a media type differing from an explicit declaration.
+    pub fn validate_reference(
+        &self,
+        reference: &milkdrift_capability::ArtifactReference,
+    ) -> Result<(), TaskDefinitionError> {
+        if reference
+            .size_bytes()
+            .is_none_or(|bytes| bytes > self.max_bytes)
+        {
+            return Err(TaskDefinitionError(
+                "output size is unknown or exceeds its allowance".into(),
+            ));
+        }
+        if self
+            .media_type
+            .as_deref()
+            .is_some_and(|expected| reference.media_type() != Some(expected))
+        {
+            return Err(TaskDefinitionError(
+                "output media type differs from its contract".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// One explicitly named future input redirected by correction adoption.
@@ -311,7 +343,7 @@ impl TaskDefinition {
                 .checked_add(declaration.max_bytes)
                 .ok_or_else(|| TaskDefinitionError("output byte bound overflow".into()))?;
         }
-        if output_bytes > 2_097_152 {
+        if output_bytes > MAX_TASK_OUTPUT_BYTES {
             return Err(TaskDefinitionError(
                 "task declared output allowance exceeds 2 MiB".into(),
             ));
@@ -609,12 +641,15 @@ pub struct WorkflowCreate {
 pub struct TaskDefinitionError(pub String);
 
 /// Checks the whole prospective task set before any part of a batch can be accepted.
+/// The owning runtime supplies named outputs from retained producer results; a caller's requested
+/// artifact or a declaration added to a different task is not published evidence.
 ///
 /// # Errors
 /// Refuses invalid definitions, excess tasks, missing references, self-dependencies and cycles.
-pub fn validate_task_set(
+pub fn validate_task_set<'a>(
     tasks: &BTreeMap<TaskId, TaskDefinition>,
     limits: &WorkflowLimits,
+    published_output: impl Fn(&TaskId, &str) -> Option<&'a milkdrift_capability::ArtifactReference>,
 ) -> Result<(), TaskDefinitionError> {
     limits.validate()?;
     if tasks.len()
@@ -661,13 +696,31 @@ pub fn validate_task_set(
                 output,
                 ..
             } = binding
-                && tasks
-                    .get(producer)
-                    .is_none_or(|task| !task.outputs.contains_key(output))
             {
-                return Err(TaskDefinitionError(format!(
-                    "task {id} references undeclared output {producer}/{output}"
-                )));
+                let declaration = tasks
+                    .get(producer)
+                    .and_then(|task| task.outputs.get(output));
+                let retained = published_output(producer, output);
+                if declaration.is_none() && retained.is_none() {
+                    return Err(TaskDefinitionError(format!(
+                        "task {id} references output {producer}/{output} without a declaration or retained publication"
+                    )));
+                }
+                if declaration.is_none()
+                    && let Some(reference) = retained
+                {
+                    if reference.media_type().is_none() {
+                        return Err(TaskDefinitionError(format!(
+                            "task {id} references output {producer}/{output} without a retained media type"
+                        )));
+                    }
+                    TaskOutputDeclaration {
+                        required: true,
+                        media_type: None,
+                        max_bytes: MAX_TASK_OUTPUT_BYTES,
+                    }
+                    .validate_reference(reference)?;
+                }
             }
         }
         let mut waits_for = definition.dependencies.clone();

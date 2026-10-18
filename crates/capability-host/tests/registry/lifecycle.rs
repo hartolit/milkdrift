@@ -1,4 +1,102 @@
 use super::*;
+use milkdrift_capability_host::{TaskAuthoringContract, TaskAuthoringPort};
+
+fn authoring_contract() -> TaskAuthoringContract {
+    let port = TaskAuthoringPort {
+        name: "text".to_owned(),
+        label: "Text".to_owned(),
+        required: true,
+        accepts_artifacts: true,
+        media_type: Some("text/plain".to_owned()),
+        max_bytes: 1024,
+    };
+    TaskAuthoringContract {
+        label: "Configured model".to_owned(),
+        inputs: vec![port.clone()],
+        allows_additional_inputs: false,
+        outputs: vec![port],
+        default_output: Some("text".to_owned()),
+    }
+}
+
+#[test]
+fn invalid_authoring_metadata_never_starts_or_commits_and_releases_registration() -> TestResult {
+    let valid = authoring_contract();
+    let mut invalid_name = valid.clone();
+    invalid_name.inputs.first_mut().ok_or("missing input")?.name = "not a port".to_owned();
+    let mut zero_bytes = valid.clone();
+    zero_bytes
+        .outputs
+        .first_mut()
+        .ok_or("missing output")?
+        .max_bytes = 0;
+    let mut duplicate_input = valid.clone();
+    duplicate_input.inputs.extend(valid.inputs.clone());
+    let mut duplicate_output = valid.clone();
+    duplicate_output.outputs.extend(valid.outputs.clone());
+    let mut absent_default = valid.clone();
+    absent_default.default_output = Some("unpublished".to_owned());
+    let mut excessive_inputs = valid.clone();
+    let input = valid.inputs.first().ok_or("missing input")?.clone();
+    excessive_inputs.inputs = (0..513)
+        .map(|index| TaskAuthoringPort {
+            name: format!("input_{index}"),
+            ..input.clone()
+        })
+        .collect();
+
+    for (name, operation, contract) in [
+        ("invalid-name", "model.generate", invalid_name),
+        ("zero-bytes", "model.generate", zero_bytes),
+        ("duplicate-input", "model.generate", duplicate_input),
+        ("duplicate-output", "model.generate", duplicate_output),
+        ("absent-default", "model.generate", absent_default),
+        ("excessive-inputs", "model.generate", excessive_inputs),
+        ("unavailable-operation", "model.absent", valid.clone()),
+    ] {
+        let descriptor = descriptor(name, 1, "profile-authoring", 1)?;
+        let host = host(BTreeMap::new(), 1)?;
+        let mut adapter =
+            LifecycleProbeAdapter::new(descriptor.identity().clone(), LifecyclePanic::None);
+        adapter
+            .authoring
+            .insert(OperationId::new(operation)?, contract);
+        let adapter = Arc::new(adapter);
+        let commits = AtomicUsize::new(0);
+        assert!(matches!(
+            host.register_with_commit(descriptor.clone(), adapter.clone(), None, || {
+                commits.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, HostError>(())
+            }),
+            Err(HostError::Adapter(error)) if error.kind() == AdapterFailureKind::Rejected
+        ));
+        assert_eq!(commits.load(Ordering::SeqCst), 0, "{name}");
+        assert_eq!(adapter.starts.load(Ordering::SeqCst), 0, "{name}");
+        assert_eq!(adapter.shutdowns.load(Ordering::SeqCst), 0, "{name}");
+        let visible = CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown);
+        assert!(host.generations(&visible, 100)?.is_empty(), "{name}");
+
+        let mut valid_adapter =
+            LifecycleProbeAdapter::new(descriptor.identity().clone(), LifecyclePanic::None);
+        valid_adapter
+            .authoring
+            .insert(OperationId::new("model.generate")?, valid.clone());
+        assert_eq!(
+            host.register(descriptor, Arc::new(valid_adapter), None)?,
+            RegistrationOutcome::Registered,
+            "{name} left its reservation behind"
+        );
+        assert_eq!(
+            host.generations(&visible, 100)?
+                .first()
+                .ok_or("valid generation absent")?
+                .task_authoring
+                .get(&OperationId::new("model.generate")?),
+            Some(&valid)
+        );
+    }
+    Ok(())
+}
 
 #[test]
 fn standalone_lifecycle_shutdown_observes_deadline_and_adapter_cleanup() -> TestResult {
@@ -82,6 +180,7 @@ fn registration_and_lifecycle_failures_are_contained_without_partial_visibility(
 
     for (identity, panic_at, expected_shutdowns) in [
         ("cap-authority-panic", LifecyclePanic::Authority, 0),
+        ("cap-authoring-panic", LifecyclePanic::Authoring, 0),
         ("cap-start-panic", LifecyclePanic::Start, 1),
     ] {
         let descriptor = descriptor(identity, 1, "profile-lifecycle", 1)?;
@@ -91,11 +190,23 @@ fn registration_and_lifecycle_failures_are_contained_without_partial_visibility(
             panic_at,
         ));
         assert!(matches!(
-            host.register(descriptor, adapter.clone(), None),
+            host.register(descriptor.clone(), adapter.clone(), None),
             Err(HostError::AdapterPanicked)
         ));
         assert!(host.generations(&visible, 100)?.is_empty());
         assert_eq!(adapter.shutdowns.load(Ordering::SeqCst), expected_shutdowns);
+        assert_eq!(adapter.starts.load(Ordering::SeqCst), expected_shutdowns);
+        assert_eq!(
+            host.register(
+                descriptor.clone(),
+                Arc::new(LifecycleProbeAdapter::new(
+                    descriptor.identity().clone(),
+                    LifecyclePanic::None,
+                )),
+                None,
+            )?,
+            RegistrationOutcome::Registered
+        );
     }
 
     let health_descriptor = descriptor("cap-health-panic", 1, "profile-lifecycle", 1)?;
@@ -313,6 +424,7 @@ fn adapter_calls_run_without_the_registry_lock() -> TestResult {
 enum LifecyclePanic {
     None,
     Authority,
+    Authoring,
     Start,
     Health,
     Drain,
@@ -324,6 +436,8 @@ struct LifecycleProbeAdapter {
     panic_at: LifecyclePanic,
     fail_start: bool,
     wrong_health_time: bool,
+    authoring: BTreeMap<OperationId, TaskAuthoringContract>,
+    starts: AtomicUsize,
     shutdowns: AtomicUsize,
     start_gate: Option<Arc<(Mutex<AdapterControl>, Condvar)>>,
 }
@@ -335,6 +449,8 @@ impl LifecycleProbeAdapter {
             panic_at,
             fail_start: false,
             wrong_health_time: false,
+            authoring: BTreeMap::new(),
+            starts: AtomicUsize::new(0),
             shutdowns: AtomicUsize::new(0),
             start_gate: None,
         }
@@ -355,6 +471,7 @@ impl CapabilityAdapter for LifecycleProbeAdapter {
     }
 
     fn start(&self) -> Result<(), AdapterError> {
+        self.starts.fetch_add(1, Ordering::SeqCst);
         assert_ne!(self.panic_at, LifecyclePanic::Start, "start panic");
         if let Some((lock, changed)) = self.start_gate.as_deref() {
             let mut state = lock
@@ -373,6 +490,11 @@ impl CapabilityAdapter for LifecycleProbeAdapter {
         } else {
             Ok(())
         }
+    }
+
+    fn task_authoring(&self) -> BTreeMap<OperationId, TaskAuthoringContract> {
+        assert_ne!(self.panic_at, LifecyclePanic::Authoring, "authoring panic");
+        self.authoring.clone()
     }
 
     fn execute(

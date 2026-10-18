@@ -20,7 +20,7 @@ version and redb format below.
 | Daemon configuration | 14 | Existing version-14 files remain valid; optional `name` seeds absent metadata and defaults to `Milkdrift`. |
 | CLI JSON output | 2 | Exact owning reader; incompatible input refused. |
 | Managed resource request / inventory | 3 | Exact owning reader; incompatible input refused. |
-| External control / authenticated cursor | 3.2 / 2 | Exact owning reader; incompatible input refused. |
+| External control / authenticated cursor | 3.3 / 2 | Exact owning reader; incompatible input refused. |
 | Peer protocol and catalog messages | 1.6 | Exact owning reader; incompatible input refused. |
 
 Opening a physical-schema-19 store is supported only when its internal document format is exactly
@@ -37,3 +37,8 @@ mismatch code; daemon and clients upgrade together. Grant schema 5 is unchanged,
 `RenameDaemon` changes the Controller preset's grant content. Existing immutable grant claims are
 not rewritten by store adoption. Follow the [authority upgrade guidance](../operations/daemon.md#configuration-and-startup)
 before changing configured grant revisions or continuing work with an older frozen claim.
+
+Control 3.3 adds safe task-authoring contracts, permitted project-root choices, named published
+outputs, bounded shared-source reads and an optional authoring-generation guard. Daemon and clients
+upgrade together. Stored task definitions and descriptor digests are unchanged; existing canonical
+requests and receipts remain exactly recoverable.
