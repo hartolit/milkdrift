@@ -24,12 +24,163 @@ use were not established. Naming and visual preference acceptance also remain op
 After the 02c delivery at `f71be73`/`4f21982`, the user rejected the remaining interface as too
 complicated and bloated, specifically naming input-binding/policy/source, task-identity/alias,
 output-name and project-path forms. They requested a canvas beside navigation, compact selected
-information on the left and direct input connections. Source inspection confirms these forms remain
-in the shared definition and batch editors; the delivered composer only hides part of that model.
-Prepared [02d](virtual-office/daemon-workflows-implementation/02d-canvas-and-direct-authoring.md)
-records the replacement and its required daemon support. It has not been assigned or implemented.
+information on the left and direct input connections. Inspection of that checkpoint confirmed the
+forms in the shared definition and batch editors; the composer hid only part of that model.
+The subsequently assigned [02d](virtual-office/daemon-workflows-implementation/02d-canvas-and-direct-authoring.md)
+implements the replacement and its required daemon support. The user also identified unclear
+model/agent selection and setup. The visible task selector and setup guidance address that finding;
+the user has not yet rechecked them.
 The exact browser asset load and click sequence were not captured. Earlier passing tests remain
 functional evidence for 02c and do not overrule this rejection or validate the proposed canvas.
+
+## Prompt 02d canvas and direct authoring verification
+
+Implementation checkpoint `25bcdda` contains the tested canvas, daemon contracts and their consumers.
+The assigned correction replaces the composer, definition forms and staged JSON editor with one
+canvas, compact left selection, real source/result connections and an atomic drawing submission.
+The daemon exposes adapter-owned input/output choices, current authorized project roots, bounded
+shared-input projections and named retained results. Historical undeclared outputs use shared
+publication/authority validation and prospective correction compatibility. These are local Linux
+checks with controlled Rust fixtures. Actual user acceptance and prompt 07's integrated gate remain
+open. The assigned focused verification is complete with the full-run and affected-rerun accounting
+below; it does not establish integrated system or actual-user acceptance.
+
+Frontend type/accessibility checks, ESLint, all 88 unit cases and the production build pass.
+The maintained package scripts are recorded in `target/prompt02d-{check,lint,unit,build}.log`.
+The task selector lists daemon-configured models/processes, and the setup path explains operator
+registration without collecting provider API keys or claiming an installer. The old composer,
+definition form and JSON batch editor are removed. Source review confirms their raw authoring
+labels occur only in tests asserting absence. Final production assets are `index-BB7kJsB3.js` and
+`index-DdkwNSHG.css`.
+
+The complete 36-case production Chromium run is retained in
+`target/prompt02d-browser-verified.log`, using the actual Rust fixture under
+`target/daemon-workflows/prompt02d-browser-verified` with `serve --canvas-cases` and browser port 5173.
+It finished with 33 passes and three test timing/cleanup failures. The multi-client rename reached
+its cumulative 60-second deadline; an unfinished session interception leaked from the metadata
+test into the following failure-policy case; the start/edit race checked for the refusal before
+the HTTP reply arrived. The affected tests now await route cleanup and the actual 409 response;
+the two long multi-client scenarios have finite 120-second total allowances. Individual action
+and transport limits remain unchanged. Final focused reruns are recorded separately rather than
+representing this full invocation as a 36/36 pass.
+
+All six final affected cases pass in `target/prompt02d-final-focused-browser.log` on the same populated
+fixture and exact final assets. They cover enlarged-text hit targets, frozen pending-create metadata,
+multi-client rename, metadata interception cleanup, explicit failed-outcome selection and the actual
+start/edit 409 refusal with unchanged history. This completes passing evidence for all 36 scenarios
+across the 33 full-run passes and six focused passes; no failing case was skipped.
+
+The browser cases exercise two workflows and isolated additions, captured Cargo input and real named
+results after reconnect, one atomic four-task drawing with observed parallel starts, deliberate
+failed outcomes, shared-source replacement with original frozen inputs, correction and rejected
+proposal repair/dismissal. They cover stale generations, start races, exact pending recovery across
+daemon switching, changed executor metadata, cycles, bounded drafts, partial graphs and a valid
+restricted actor. The scope case observes masked source values, an actual artifact-route 404,
+unavailable project choices and refused source reuse without an accepted mutation. The historical
+oversize browser case compares a 1,024-byte declared output against a 2,048-byte correction; the
+absolute 2 MiB historical allowance is established by runtime tests.
+
+Inspected renders in `target/prompt02d-visuals/final/` include desktop and phone results, left
+selection, the actual four-task drawing and 200% text. The final enlarged-text check verifies actual
+hit targets for the view tabs, camera and connections controls, as well as toolbar/footer bounds.
+These are Chromium, emulated touch and enlarged-text checks, not physical-device or screen-reader
+qualification. Actual user review remains open.
+
+Affected adapter/host/protocol suites pass in `target/prompt02d-metadata-owners.log`. The generated
+TypeScript comes from the Rust DTO owner; `target/prompt02d-output-limit-codegen.log` and
+`target/prompt02d-output-limit-protocol.log` record generation and five protocol cases after adding
+the shared task-output allowance. Protocol 3.3 upgrades clients and daemon together. The optional
+authoring guard is omitted from old canonical requests; storage formats and frozen descriptors
+are unchanged.
+
+`target/prompt02d-runtime-focused.log` records passing blueprint, control, eight model-admission
+cases and three runtime unit cases, followed by one failed durable-runtime regression. After its
+repair, `target/prompt02d-runtime-final.log` records all 49 durable-runtime cases passing. Final
+review added a native typed-batch replay regression; all 50 cases pass in
+`target/prompt02d-runtime-review-final.log`, and the control suites pass in
+`target/prompt02d-control-review-final.log`. Typed model proposals retain their existing 1 MiB
+canonical bound; public requests retain their existing 1,000,000-byte bound. Exact replay and
+changed-payload conflict are both exercised near these limits.
+Historical-output cases exercise restart, actual publication and
+current source scope, failed-producer blocking, larger compatible correction and atomic media/size
+refusal. `target/prompt02d-runtime-materialization.log` proves combined artifact input bounds before
+external entry. These tests distinguish retained publication evidence from arbitrary artifact IDs.
+
+Materialization review found that the daemon's storage credential could release selected artifact
+bytes for a task actor whose valid execution grant lacked artifact-read scope. The negative test in
+`target/prompt02d-materialization-authority-before.log` demonstrated this with the real grant
+evaluator. Local task reads now evaluate the accepted actor/grant against the actual stored artifact,
+sensitivity, byte budget and current time before releasing bytes. The host tests cover missing read
+permission, wrong identity or sensitivity, insufficient budget, expired authority and an empty
+artifact, alongside permitted reads. This is an absent initial permission, not evidence of a grant
+replacement bypass; the final execution check already rejects changed grants. Independent direct
+and peer invocation paths retain their existing admission owners. All host suites, including seven
+materialization cases, pass in `target/prompt02d-host-authority-final.log`.
+
+All 19 host registry cases pass in `target/prompt02d-authoring-refusals.log`. Invalid, duplicate,
+unbounded and undeclared-operation metadata refuses before adapter start or registration commit;
+a metadata callback panic remains contained and releases its registration reservation. A valid
+same-generation retry proves that refusal leaves no partial catalog entry.
+
+The complete native client/CLI suites pass in `target/prompt02d-native-clients-final.log`, including
+23 automation cases. The full daemon library and control-plane suites pass with 41 and 44 cases in
+`target/prompt02d-daemon-authority-lib-final.log` and
+`target/prompt02d-daemon-authority-control.log`. They cover generation changes with exact replay, project-root
+scope, shared-source sensitivity, independent clients, restart and source/frozen-input separation.
+An earlier expected-DTO assertion was updated to include actual named outputs; another now separates
+the intentionally current shared-input projection from immutable started-task facts. Their earlier
+failure logs remain retained.
+The unavailable-model replacement test failed once at its CLI assertion without a useful diagnostic,
+then passed in isolation. Review identified a readiness update racing its next captured generation.
+The test now waits for the required-input reason before the next edit and reports CLI JSON on
+failure. The full 41-case daemon library rerun passes; no production timing was changed.
+
+The initial repository-contract run passed 29 of 30 cases and exposed authoring projections growing
+two adapter modules beyond the cohesion policy. The projection code was moved into private named
+modules; all 30 contracts then passed. The final changed-source run also passes all 30 in
+`target/prompt02d-repository-contracts-complete.log`.
+Initial browser rendering also exposed overlapping cards, connector click handling and inspector
+sizing issues. Further checks repaired stale acceptance notices, frozen-input labels that followed
+the current shared source, empty-search loading during stream refreshes, and editing controls that
+could display unsent changes while an exact request was pending. Tests retain their corresponding
+runtime, authority and recovery assertions.
+
+The actual CLI/daemon journey passes in
+`target/daemon-workflows/prompt02d-cli-verified/check.json`, with log
+`target/prompt02d-cli-verified.log`. It observes eight retained tasks from one initial planner,
+three model batches, zero client continuation batches, native tools, parallel timing, failed-outcome
+composition, correction/rebinding and exact replay after restart. Shutdown is confirmed before
+report publication. Two earlier fresh-root runs timed out during animation reads with the fixture's
+two-second request deadline. Instrumentation measured a successful workflow read taking 2,611 ms;
+an independent CLI discovery read took 2,051 ms. The fixture request deadline is now ten seconds,
+still within the existing 60-second animation and 90-second scenario deadlines. Production request
+and queue behavior are unchanged. A separate browser failure exposed the controlled planner's
+assumption that its single input was literally named `brief`. Canvas-generated keys now reach the
+fixture through the actual input section, preserving its text and refusing malformed or missing
+input. Six fixture unit cases pass in `target/prompt02d-fixture-final.log`. The earlier browser
+fixture stopped serving after that parser error; it had not exhausted its finite call allowance.
+Controlled responses establish integration, not model quality.
+
+Scoped all-target/all-feature Clippy and warning-denying rustdoc pass in
+`target/prompt02d-clippy-complete.log` and `target/prompt02d-rustdoc.log`; the changed host/daemon/fixture
+owners pass again in `target/prompt02d-clippy-authority-final.log` and
+`target/prompt02d-rustdoc-authority-final.log`. The final formatting check passes in
+`target/prompt02d-fmt-final.log`. Clippy found checked-access and redundant-clone issues
+in new fixtures/tests, which were repaired without suppressions. No dependency or manifest changed.
+
+Default and all-feature API inventories were generated with `cargo public-api -sss --color never`
+for blueprint, runtime, control, capability-host, control-protocol, local-process and model-provider.
+The 14 reports are under `target/public-api/prompt02d/`. Review traced the new authoring types and
+callback to adapter/host/daemon consumers, output validation to runtime, receipt preflight to control
+and daemon, and transport fields to CLI/Svelte. Private projection modules stay private. Feature
+differences remain the existing explicit test/evidence exposures; production dependency separation
+also passes the repository contracts. These inventories are local API review, not a stability promise.
+
+All eight final documentation contracts pass in `target/prompt02d-doc-contracts-final.log`, and
+staged diff whitespace checks pass. The separate review instance uses the tested production build
+and normal fixture choices; automated fixtures are stopped with their stores preserved. Its current
+addresses and the remaining actual-user review are recorded in the single sprint handoff. Prompt 04
+was not started; prompt 07 retains the integrated gate. No hosted CI or real-model qualification is claimed.
 
 ## Prompt 02c workspace and task creation verification
 

@@ -13,8 +13,8 @@ visual direction and exact logo across the maintained client. The subsequent use
 the interaction design: excessive forms, disruptive navigation and unclear workflow creation.
 [02c](02c-workspace-and-task-creation.md) was subsequently assigned and implements those corrections.
 The October 18 user recheck rejects that interaction as still bloated and asks for a canvas with
-left-side details and direct input connections. Prepared [02d](02d-canvas-and-direct-authoring.md)
-owns the replacement and its necessary daemon support; it remains unassigned. Naming acceptance
+left-side details and direct input connections. Assigned [02d](02d-canvas-and-direct-authoring.md)
+implements the replacement and its necessary daemon support; its focused verification is complete. Naming acceptance
 and the substantive task journey remain open. Prompts 04–07 remain unassigned.
 Prompt 07 owns the integrated full-system gate. No push, history rewrite, external service change or
 paid model use occurred.
@@ -64,9 +64,9 @@ batch alias,” “new output name” and “project path,” among other fields
 not an agent-observed click trace or proof of the exact assets loaded in their tab. No completed
 substantive output journey, naming acceptance or visual preference acceptance was reported.
 
-Source inspection confirms those fields in `TaskDefinitionEditor.svelte`, reached through the
-compact composer's advanced section and the future-batch editor. `App.svelte` still combines a
-workflow page with a separate composer; task details occupy a right-side or stacked inspector.
+Inspection of the pre-02d source confirmed those fields in `TaskDefinitionEditor.svelte`, reached through the
+compact composer's advanced section and the future-batch editor. `App.svelte` combined a
+workflow page with a separate composer; task details occupied a right-side or stacked inspector.
 The previous correction reduced the first form but retained the protocol-shaped editing model.
 The user's new left-panel requirement supersedes the older mockup's inspector placement.
 
@@ -76,16 +76,23 @@ named-result and queued-input read projections, the declaration-only output bind
 native-path selection requirements and the race if accepted tasks start before wiring finishes.
 The selected design resolves these in the existing owners; the ADR owns the rules and tradeoffs.
 This review is planning evidence, not a working canvas demonstration or independent user acceptance.
-The prepared 02d removes the product schema editors, retains their useful actions through direct
+The selected 02d removes the product schema editors, retains their useful actions through direct
 selection and keeps draft graphs local until one explicit guarded submission. No production code,
-store, running service or dependency changed in this planning response.
+store, running service or dependency changed in that planning response.
+
+The user subsequently assigned 02d and added that selecting or assigning a model/agent to a task,
+and adding a connection, are unclear. The implementation makes **Model or agent** a visible task
+choice and adds **Models & agents** navigation with an explicit setup path. Current connections
+remain operator-configured daemon profiles; this change does not add a dynamic installer, inference
+or a new provider family. The setup guidance distinguishes these facts from selecting an existing
+connection. No actual model/agent endpoint or paid invocation was supplied or exercised.
 
 | Finding | Owner and acceptance |
 | --- | --- |
 | Setup requires users to invent a local name and supply a technical identity. | [02a](02a-daemon-connection-identity.md) implemented address/credential setup, learned identity pin, durable shared name and authorized rename across clients/restart; the user's recheck is pending. |
 | Original appearance is rejected and the supplied brand is absent. | [02b](02b-visual-design-and-brand.md) implements the supplied visual direction and real logo. The subsequent feedback rejects interaction usability; visual preference acceptance is not reported. |
 | Too many authoring forms, disruptive navigation and unclear creation of multiple workflows. | Assigned [02c](02c-workspace-and-task-creation.md) implemented explicit New workflow/Add task actions and bounded navigation. Its subsequent user recheck rejects the remaining forms and page layout. |
-| The workspace remains bloated; input/output relationships require protocol knowledge. | Prepared [02d](02d-canvas-and-direct-authoring.md) replaces the product authoring forms with a canvas, compact left selection and direct source/result connections, including the required daemon contracts. Not assigned or implemented; usability unverified. |
+| The workspace remains bloated; input/output relationships require protocol knowledge. | Assigned [02d](02d-canvas-and-direct-authoring.md) replaces the product authoring forms with a canvas, compact left selection and direct source/result connections, including the required daemon contracts. Implementation and focused checks are complete; the actual user's recheck remains open. |
 | No successful substantive journey has been reported. | Resume [02](02-early-user-review.md) after assigned 02d: create two workflows, connect useful inputs/results, add to one, closure/reconnect, switching, missing-input repair, failure and stop understanding remain open. |
 
 The [retained mockup](assets/milkdrift-ui-sample.png) is byte-identical to the user's
@@ -99,13 +106,28 @@ The mockup's old controls do not
 authorize features. The original corrective planning changed no executable code; the subsequently
 assigned 02a changes connection and naming behavior, and 02b changes the client presentation.
 
-Next sequence: assign 02d, finish the actual 02 review including naming and interaction rechecks,
-then separately assign 04. The 02c implementation and this planning response preserve existing
+Next sequence: finish the actual 02 review including naming, interaction and model-assignment rechecks,
+then separately assign 04. The 02c checkpoint and 02d implementation preserve existing
 stores and tested checkpoints. Its automated checks do not settle the actual user's rejection.
 Preserve the completed 03 work and 04–07 numbering. Prompt 07 remains the sole integrated gate;
 this partial feedback is not user acceptance of the journey or the proposed corrections.
 
 ## Tested checkpoints and evidence
+
+Implementation checkpoint `25bcdda` contains the tested 02d code and current owner documentation.
+The implemented 02d replaces the product forms with one canvas and compact left selection, direct
+file/text/result connections, visible task executor selection and contextual corrections. Daemon
+metadata supplies real input/output choices, scoped source previews and project roots. The
+[02d verification evidence](../../verification-evidence.md#prompt-02d-canvas-and-direct-authoring-verification)
+records frontend check/lint/build and 88 unit cases; 50 durable runtime cases; 41 daemon library and
+44 control-plane cases; adapter/host/protocol/native-client suites; the actual CLI journey; scoped
+Clippy/rustdoc, API review and 30 repository contracts. The complete browser run executed 36 cases:
+33 passed and three had test timing/cleanup failures. All six affected cases then passed on the
+same populated fixture and final assets, covering those failures and final layout/pending-state
+repairs. This is passing evidence for all required scenarios, not a single 36/36 full-suite pass.
+Inspected desktop, phone and 200% text renders are under `target/prompt02d-visuals/final/`.
+Automated fixture owners were stopped through maintained control and their stores retained.
+The separate review instance below remains available. These checks do not establish user acceptance.
 
 The 02d planning change was checked against the current source and the ordinary/parallel/correction
 journeys. All eight documentation contracts pass in `target/prompt02d-planning-doc-contracts.log`;
@@ -130,7 +152,7 @@ existing advanced and automatic-work cases. The Rust fixture correction at `dcf5
 unit cases and the actual CLI/daemon journey. Its controlled planner now consumes the task's actual
 input brief instead of depending on the old composer's shared workflow input. Production runtime
 semantics are unchanged. These are implementation checks; the subsequent user recheck rejects the
-remaining interaction. They are not verification of the prepared canvas replacement.
+remaining interaction. They are not verification of the canvas replacement.
 
 The 02b implementation checkpoint is `90ce1ff`. It replaces the pale theme and literal brand mark,
 groups instructions/context/execution, adds responsive daemon navigation and a desktop side inspector,
@@ -184,13 +206,16 @@ capabilities. Methods, remote administration and rolling retention remain later 
 
 The latest bounded fixture root is:
 
-`/tmp/milkdrift-prompt02c-user-review-20261018/`
+`/tmp/milkdrift-prompt02d-user-review-20261018-b/`
 
-It was started on October 18 for the 02c recheck with immutable daemon/fixture copies and a four-hour
-lifetime. The preceding 02a review fixture had expired; its root
-`/tmp/milkdrift-prompt02a-user-review-20261017-b/` and stores remain preserved. The new fixture uses
+It was started on October 18 for the 02d recheck with immutable daemon/fixture copies and a four-hour
+lifetime. The preceding roots `/tmp/milkdrift-prompt02c-user-review-20261018/` and
+`/tmp/milkdrift-prompt02a-user-review-20261017-b/` and their stores remain preserved. The new fixture uses
 new development stores and endpoints, separate from automated browser/CLI evidence. The rebuilt
 production client is served at `http://127.0.0.1:4173/`.
+Its daemon/client protocol is 3.3; an old 3.2 review daemon needs its matching older client. The
+normal review fixture offers one configured process and two controlled model choices; the additional
+canvas boundary-test executors are enabled only in automated fixtures with `--canvas-cases`.
 This temporary root may disappear at host reboot; verify readiness rather than assuming it still runs. Its `ready.json`
 records endpoints and process paths; `browser.json` is private. Start the independent production
 static preview from the repository root when needed:
@@ -204,8 +229,8 @@ and matching credential below. No connection name or installation identity field
 
 | Name returned by daemon | Daemon URL | Private credential file under the fixture root |
 | --- | --- | --- |
-| Studio A | `http://127.0.0.1:38733` | `daemon-a/operator.token` |
-| Studio B | `http://127.0.0.1:35229` | `daemon-b/operator.token` |
+| Studio A | `http://127.0.0.1:35437` | `daemon-a/operator.token` |
+| Studio B | `http://127.0.0.1:46031` | `daemon-b/operator.token` |
 
 Paste the matching credential from its local file; never put it in a URL, screenshot or committed
 document. The browser retains it only in memory. The two daemons have separate actors and stores.
@@ -221,24 +246,30 @@ To check restart, keep both browser tabs and run the maintained fixture control:
 
 ```sh
 target/debug/connected-tasks control \
-  --root /tmp/milkdrift-prompt02c-user-review-20261018 restart-a
+  --root /tmp/milkdrift-prompt02d-user-review-20261018-b restart-a
 ```
 
 The name should return unchanged after reconnect. A saved profile from the previous review can
 remain disconnected; its last observed name is cached. Forgetting that browser profile does not
 delete the daemon's work. These newly allocated endpoints use new development stores.
 
-For input-dependent process work, choose **cargo-report · process.execute**, supply a brief and upload
-the root or runtime `Cargo.toml`. Results describe the supplied manifest. Close the client while work
-runs, reconnect and discover the retained result.
+For input-dependent process work, choose **New workflow**, then **Add task**. Write what the task
+should do and choose **cargo report profile** under **Model or agent**. **Attach file** captures the root or
+runtime `Cargo.toml` and connects it to the configured manifest input. **Start workflow** accepts
+the drawing. Results describe the supplied manifest. Close the client while work runs, reconnect
+and discover the retained result.
 
-For the controlled automatic journey, choose **controlled-planner · model.generate**, enable
-**Allow model to propose future work**, supply an animation-research brief and use instructions
-starting with `Animation fixture role: planner`. Leave **Finish when required work settles** unchecked;
-the model review requests finish. Observe parallel research, failed render research and its correction.
-Select tasks to inspect frozen inputs, source admission and results. Use **Edit future batch** to stage
-and preview a guarded batch. Conflicts retain drafts for explicit review; lost replies retain the exact
-request identity.
+For instructions alone, **controlled-brief-review** returns a controlled response based on the
+submitted text. For the controlled automatic journey, select **controlled-animation-a** on Studio A
+or **controlled-animation-b** on Studio B. Use `Animation fixture role: planner` as the instructions.
+Choose **Add input** on that task and write the animation-research brief into its connected text
+source. Select the task again and, under **Tools & autonomy**, enable
+**Let this model propose follow-up tasks**. Open
+**Workflow** and uncheck **Finish when required work settles** before starting; the model review
+requests finish later. Observe parallel research, failed render research
+and its correction. Select cards for results and contextual actions; the compact left panel keeps
+the graph visible. Draw prospective tasks and connections, then use **Apply changes** for one guarded
+submission. Conflicts retain the drawing for explicit review; lost replies retain the exact request.
 
 If the fixture expires, preserve its root and choose an unused new root:
 
@@ -246,7 +277,7 @@ If the fixture expires, preserve its root and choose an unused new root:
 cargo build -p milkdrift-daemon --bin milkdrift-daemon \
   -p milkdrift-cli --bin milkdrift -p milkdrift-evidence --bin connected-tasks
 target/debug/connected-tasks serve \
-  --root target/daemon-workflows/prompt02c-review-new \
+  --root target/daemon-workflows/prompt02d-review-new \
   --daemon target/debug/milkdrift-daemon --lifetime-secs 14400
 ```
 
@@ -261,27 +292,24 @@ leaves prompt 02 open and stops before prompt 04.
 
 ## Resume the visual and task review
 
-The current 02c client is the rejected baseline. Implement 02d only when explicitly assigned before
-asking the user to repeat the journey. Preserve the fixture roots and verify readiness at that time;
-the recorded four-hour endpoints are not a promise of an indefinitely running service.
+The 02c client is the rejected baseline. Review the rebuilt 02d client, whose focused checks are complete.
+Preserve fixture roots and check readiness; a four-hour endpoint is not an indefinitely running service.
 
-Reload the production preview to load the rebuilt client. Review the dark rail, warm text, supplied
-logo, compact workflow header and side inspector against the visual direction. The mockup's obsolete
-canvas, revision controls and event table are not present. The ordinary task timeline and public
-daemon actions retain their meaning. The [frontend README](../../../../apps/web/README.md#maintain-and-verify)
-owns shared style/component conventions for the later feature assignments.
+The first useful review is to create two workflows, add another task to the first, switch between
+them and inspect a result without a protocol tutorial. Connect a Cargo manifest to the process task,
+then connect its real result to a model task. Selecting cards should change only the compact left
+panel; closing it should return focus to the same canvas. Include the visible **Model or agent**
+selector and **Models & agents** setup guidance in this review. Record whether the distinction
+between selecting a configured connection and asking the daemon operator to add one is clear.
 
-First let the user create two workflows, add another task to the first, switch between them and
-inspect the result without coaching through protocol fields. Record where they hesitate or become
-confused. For the remaining substantive journey, submit instructions with optional context and a
-Cargo manifest. Check its result, close the client while another task runs, reconnect and find that
-work again. Switch to Studio B and back. Leave **Supply context now** unchecked under **Add context**
-for a queued task, then use its inspector to supply the missing input. Check whether failed,
-uncertain and stop-requested work communicate what actually happened. **Hide inspector** keeps
-selection and edit drafts; on narrow screens **Workspace navigation** opens the rail.
+Close the client while another task runs, reconnect and find that work again. Switch to Studio B
+and back. Use a task's **Wait for a required input** action to create queued work, then supply its
+input from the source card. Check whether failed, uncertain and stop-requested work communicate
+what happened. On narrow screens, **Navigate** opens the rail; the closable panel, accessible list
+and **Connect to…** provide alternatives to precise dragging.
 
-The latest feedback above rejects the implemented 02c creation/navigation path and proposes the
-canvas/direct-authoring replacement. After 02d, include connecting a file and a real task result,
-then selecting other tasks without losing the canvas or opening protocol forms.
-Record the user's own actions and remaining objections here. Passing agent checks does not settle
-visual preference or complete this substantive review; no actual-user acceptance has been reported.
+Review the supplied logo, dark rail, warm text and compact canvas controls against the visual
+direction. The mockup's retired revision/controller controls are not product requirements. The
+[frontend README](../../../../apps/web/README.md#maintain-and-verify) owns maintained component and
+style conventions. Record the user's actions, hesitations and remaining objections here. Automated
+checks establish behavior, not visual preference or usability acceptance; actual review stays open.
