@@ -6,8 +6,9 @@ They have since connected Studio A and requested simpler setup, daemon-owned nam
 visual direction and the real logo. The subsequently assigned 02a correction implements simpler
 connection and shared daemon naming. Subsequently assigned 02b applies the supplied dark visual
 direction and exact logo throughout the client. The user then rejected the forms/navigation and
-could not discover multiple-workflow creation. Prepared 02c addresses that interaction design; it
-remains unassigned. Naming acceptance and the remaining substantive early review are pending.
+could not discover multiple-workflow creation. Subsequently assigned 02c implements compact creation,
+task addition and workflow navigation. Its actual user recheck, naming acceptance and the remaining
+substantive early review are pending.
 Prompts 04–07 remain unassigned.
 The consumer/CI retirement,
 required-input absence and cumulative-time defects pass focused regressions and the complete strict
@@ -64,7 +65,7 @@ service permissions. Missing real-user/external prerequisites remain explicit ev
 
 Prompt 03 has completed its focused acceptance. Assigning one prompt authorizes its whole
 responsibility and local coherent commits; it does not silently assign its successor.
-After the latest review, the next execution order is **02c → finish 02 review → 04 → 05 → 06 → 07**.
+After the 02c handoff, the next execution order is **finish 02 review → 04 → 05 → 06 → 07**.
 The correction labels preserve the original phase numbers; 03 is already done. Existing 04–07
 prompts included review/repair but did not explicitly assign this visual reference, real logo or
 browser onboarding change. Prompt 05's shared connections concern execution hosts, not browser labels.
@@ -125,11 +126,11 @@ scope when their prompt is explicitly assigned. Inference, new provider families
 remote workflow ownership, permanent knowledge systems and unrelated primitives remain excluded.
 Do not ask the user to choose routine implementation organization already settled by this packet.
 
-The next implementation assignment, only when explicitly requested, is:
+First finish the actual prompt-02 recheck on the implemented 02c client. Once that checkpoint is
+complete, the next feature assignment, only when explicitly requested, is:
 
-> Execute `docs/development/virtual-office/daemon-workflows-implementation/02c-workspace-and-task-creation.md`.
+> Execute `docs/development/virtual-office/daemon-workflows-implementation/04-local-methods.md`.
 > You are authorized to implement that prompt end to end and make regular tested local commits.
 > Follow this sprint's focused-check schedule; prompt 07 owns final full-system acceptance.
-> Preserve existing stores, services and Git checkpoints. Stop at the prompt 02c handoff; do not
-> start later feature prompts automatically. Actual prompt-02 review remains open until its remaining
-> journey and user recheck of the corrections are complete.
+> Preserve existing stores, services and Git checkpoints. Stop at the prompt 04 handoff; do not
+> start later feature prompts automatically.

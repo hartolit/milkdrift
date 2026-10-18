@@ -46,6 +46,17 @@
   let followupOrigins = $derived(selected?.origin ? [selected.origin] : []);
   let suppliedNames = $derived([...new Set(Object.values(selected?.definition.inputs ?? {}).flatMap((input) => input.kind === 'supplied' ? [input.name] : []))]);
 
+  /** Keep advanced edits and exact recovery in their owning workflow until explicitly closed. */
+  export function canNavigate(): boolean {
+    if (pending || batchOpen || editing) {
+      error = pending
+        ? 'Recover this workflow’s unconfirmed change before leaving. Its exact request is retained here.'
+        : 'Finish or close the advanced editor before leaving this workflow. Your draft is still open here.';
+      return false;
+    }
+    return true;
+  }
+
   $effect(() => {
     const target = summary;
     const workflowId = workflow.id;

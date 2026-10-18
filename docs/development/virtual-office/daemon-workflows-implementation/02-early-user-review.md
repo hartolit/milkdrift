@@ -10,8 +10,8 @@ The user authorized 03 with this review pending, then connected Studio A and sup
 corrective prompts rather than immediate code changes. Subsequently assigned
 [02a](02a-daemon-connection-identity.md) and [02b](02b-visual-design-and-brand.md) are implemented.
 The next feedback rejects the forms/navigation and cannot discover multiple-workflow creation.
-Implement prepared [02c](02c-workspace-and-task-creation.md) only when assigned, then resume this
-substantive journey on the repaired client. Connection success alone does not complete this checkpoint. Keep
+Subsequently assigned [02c](02c-workspace-and-task-creation.md) implements compact creation and
+navigation. Resume this substantive journey on the repaired client. Connection success alone does not complete this checkpoint. Keep
 03's completed work; the next feature assignment after successful review is 04.
 
 Read [AGENTS](../../../../AGENTS.md), canonical docs, [sprint README](README.md),

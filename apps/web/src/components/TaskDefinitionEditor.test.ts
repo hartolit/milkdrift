@@ -16,13 +16,13 @@ function edited(): TaskDefinitionDto {
 it('preserves model choices between models and removes them before selecting a process', async () => {
   const task = definition();
   render(TaskDefinitionEditorTestHarness, { initial: task, capabilities: [task.capability, { id: 'another-model', operation: 'model.generate' }, { id: 'process', operation: 'process.execute' }] });
-  await fireEvent.change(screen.getByLabelText('Configured capability'), { target: { value: 'another-model/model.generate' } });
+  await fireEvent.change(screen.getByLabelText('Configured capability'), { target: { value: JSON.stringify(['another-model', 'model.generate']) } });
   expect((screen.getByLabelText('Allow automatic feedback after refused proposals') as HTMLInputElement).checked).toBe(true);
   expect((screen.getByLabelText('Permit bounded file reads in declared paths') as HTMLInputElement).checked).toBe(true);
-  await fireEvent.change(screen.getByLabelText('Configured capability'), { target: { value: 'process/process.execute' } });
+  await fireEvent.change(screen.getByLabelText('Configured capability'), { target: { value: JSON.stringify(['process', 'process.execute']) } });
   expect(screen.queryByLabelText('Allow model to propose future work')).toBeNull();
   expect(edited()).toMatchObject({ capability: { id: 'process', operation: 'process.execute' }, actions: null, tools: [] });
-  await fireEvent.change(screen.getByLabelText('Configured capability'), { target: { value: 'model/model.generate' } });
+  await fireEvent.change(screen.getByLabelText('Configured capability'), { target: { value: JSON.stringify(['model', 'model.generate']) } });
   expect((screen.getByLabelText('Allow model to propose future work') as HTMLInputElement).checked).toBe(false);
   expect((screen.getByLabelText('Permit bounded file reads in declared paths') as HTMLInputElement).checked).toBe(false);
 });

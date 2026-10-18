@@ -102,6 +102,35 @@ code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size
 .connection-detail .connection-address { color: var(--muted); }
 .connection-detail button { padding: 5px 0; font-size: .75rem; }
 .sidebar-footer { margin: 16px 10px 0; color: var(--muted); font-size: .75rem; }
+.daemon-switcher { margin: 0; }
+.saved-connections { margin: 8px 0 14px; }
+.saved-connections > summary { font-size: .75rem; color: var(--muted); }
+.new-workflow { width: 100%; text-align: left; margin-block: 2px 24px; }
+.recent-workflows { display: grid; grid-auto-rows: max-content; gap: 4px; max-height: 30dvh; overflow-y: auto; flex-shrink: 0; scrollbar-color: var(--line) transparent; }
+.recent-workflows .eyebrow { padding-inline: 10px; }
+.recent-workflows button, .workspace-drafts button { width: 100%; text-align: left; background: transparent; border-color: transparent; padding: 10px; overflow-wrap: anywhere; }
+.recent-workflows button.active { background: linear-gradient(105deg, #413057, #203b5f); border-color: #7e68a0; }
+.recent-workflows small, .workspace-drafts small { display: block; font-size: .7rem; margin-top: 3px; font-weight: 400; }
+.workspace-drafts { border-top: 1px solid var(--line); padding-top: 12px; }
+.work-and-composer { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; align-items: start; }
+.work-and-composer.composer-visible { grid-template-columns: minmax(0, 1fr) minmax(340px, 400px); }
+.work-content, .composer-dock { min-width: 0; }
+.composer-dock { position: sticky; top: 20px; }
+.workspace-actions { display: flex; justify-content: flex-end; margin-bottom: 12px; }
+.compact-composer { padding: 20px; border-color: #62537f; }
+.compact-composer h2 { font-size: 1.2rem; }
+.compact-composer .eyebrow { font-size: .68rem; }
+.compact-composer .authoring-footer { padding-top: 0; margin-top: 16px; }
+.compact-composer .form-actions { margin-top: 14px; }
+.compact-composer .advanced-options { padding: 12px; }
+.draft-title { gap: 4px; margin-bottom: 16px; color: var(--muted); font-size: .75rem; }
+.draft-title input { font-size: .95rem; border-color: transparent; background: transparent; padding: 4px 0; }
+.draft-title input:focus { border-color: var(--control-line); padding-inline: 9px; }
+.executor-choice { margin-block: 14px; }
+.composer-extras { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.compact-context { margin-top: 16px; }
+.attached-file { margin-top: 12px; padding: 10px; border: 1px solid var(--line); border-radius: 6px; font-size: .8rem; overflow-wrap: anywhere; }
+.attached-file button { padding: 4px 6px; font-size: .75rem; }
 main { grid-column: 2; grid-row: 2; padding: 24px; min-width: 0; width: 100%; }
 .page-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 24px; }
 .page-heading > div { min-width: 0; }
@@ -172,6 +201,8 @@ main { grid-column: 2; grid-row: 2; padding: 24px; min-width: 0; width: 100%; }
   .sidebar { padding-inline: 10px; }
   main { padding: 20px; }
   .authoring-layout { grid-template-columns: 1fr; gap: 18px; }
+  .work-and-composer.composer-visible { grid-template-columns: minmax(0, 1fr); }
+  .composer-dock { position: static; grid-row: 1; }
 }
 @media (max-width: 760px) {
   .workspace { display: block; }
@@ -186,7 +217,7 @@ main { grid-column: 2; grid-row: 2; padding: 24px; min-width: 0; width: 100%; }
   .brand-lockup { min-height: 0; padding-block: 4px 16px; }
   .connection-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr)); gap: 6px; }
   .connection-list li { min-width: 0; }
-  .workspace-navigation { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .workspace-navigation { grid-template-columns: minmax(0, 1fr); }
   .workspace-navigation + .connection-detail { margin-top: 16px; }
   .sidebar-footer { display: none; }
   main { padding: 20px 16px 36px; }

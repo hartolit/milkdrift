@@ -12,10 +12,10 @@ now implements simple connection and shared names, with the user's recheck pendi
 The subsequently assigned
 [02b](../development/virtual-office/daemon-workflows-implementation/02b-visual-design-and-brand.md)
 implements the supplied dark visual direction and exact logo across the client. The user subsequently
-rejects its forms, navigation and unclear workflow creation. Prepared
+rejects its forms, navigation and unclear workflow creation. Subsequently assigned
 [02c](../development/virtual-office/daemon-workflows-implementation/02c-workspace-and-task-creation.md)
-corrects ordinary task creation and workflow navigation; it remains unassigned. That correction and
-the remaining actual user journey precede prompt 04. Prompt 03 stays complete and is not replayed.
+implements contextual task creation, explicit workflow/addition actions and bounded navigation.
+The actual user recheck and remaining journey precede prompt 04. Prompt 03 stays complete and is not replayed.
 Earlier checkpoints and stores remain preserved; no corrected hosted run is claimed.
 Prompts 04–07 remain unassigned; 07 owns the named
 final full-system test-and-repair gate. The superseded remedial P00–P09 is historical evidence only.
@@ -28,8 +28,8 @@ The new program delivers these outcomes in order:
    reconnects from a fresh client; the ordinary workflow replacement is adopted end to end.
 2. An actual early user review tests that journey and repairs behavior and usability findings.
    Its implemented 02a correction simplifies connection and shares the daemon's name; 02b applies the
-   supplied visual direction and logo. Prepared 02c addresses the rejected authoring/navigation
-   experience. Implement it when assigned, then recheck naming and resume the substantive review
+   supplied visual direction and logo. Implemented 02c addresses the rejected authoring/navigation
+   experience. Recheck the working result and naming, then complete the substantive review
    before adding methods. This insertion preserves the remaining prompt numbers and final gate.
 3. Models and humans build parallel research, composition and corrective future work through the
    same commands, with explicit readiness, authority and cumulative limits.

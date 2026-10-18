@@ -3,7 +3,7 @@
 **Standing:** selected engineering design, 2026-10-12, with the October 17 connection correction
 below selected after partial user review. Implementation through prompt 03 and the assigned 02a/02b
 connection and visual corrections is recorded in status. The subsequent workspace interaction
-correction below is selected for a prepared assignment; later phases require their own assignments.
+correction below is implemented in assigned 02c; later phases require their own assignments.
 [Vision](../product/vision.md) owns the requirements;
 [status](../product/status.md) owns implemented facts. The
 [implementation sprint](../development/virtual-office/daemon-workflows-implementation/README.md)
@@ -254,7 +254,7 @@ Adding persisted empty workflows would change runtime semantics without fixing t
 correction reuses current operations and retains their refusal/recovery behavior. Its extra client
 responsibility is bounded draft/location state through navigation. This is a selected design, not a
 claim that users have accepted it; [02c](../development/virtual-office/daemon-workflows-implementation/02c-workspace-and-task-creation.md)
-owns the prepared implementation and user recheck.
+owns the implemented correction and pending user recheck.
 
 ## Execution-host connections
 

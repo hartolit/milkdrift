@@ -1,164 +1,178 @@
 <script lang="ts">
-  import type { CreateWorkflowRequest, TaskActionPolicyDto, TaskSessionDto, TaskToolDto, TaskUploadReceipt, TaskUploadRequest, WorkflowReceipt } from '../lib/protocol.generated';
+  import { onMount } from 'svelte';
+  import type { TaskCapability, TaskSessionDto, TaskUploadReceipt, WorkflowReadDto, WorkflowReceipt } from '../lib/protocol.generated';
   import { DaemonClient, DaemonError } from '../lib/transport';
-  import TaskModelOptions from './TaskModelOptions.svelte';
+  import TaskDefinitionEditor from './TaskDefinitionEditor.svelte';
   import { captureTextRequest } from '../lib/task-input';
+  import { capabilityKey, freezeTaskSubmission, updateDraftContext, updateDraftInstructions, type TaskDraft } from '../lib/task-composer';
 
-  let { client, session, oncreated, oncancel, onerror }: {
+  let { client, session, draft = $bindable(), onaccepted, onclose, ondiscard, onerror, oncapabilitychoice, onreviewed }: {
     client: DaemonClient;
     session: TaskSessionDto;
-    oncreated: (receipt: WorkflowReceipt) => Promise<void>;
-    oncancel: () => void;
+    draft: TaskDraft;
+    onaccepted: (receipt: WorkflowReceipt) => Promise<void>;
+    onclose: () => void;
+    ondiscard: () => void;
     onerror: (error: unknown) => void;
+    oncapabilitychoice?: (capability: TaskCapability) => void;
+    onreviewed?: (workflow: WorkflowReadDto) => void;
   } = $props();
-  let title = $state('');
-  let description = $state('');
-  let instructions = $state('');
-  let brief = $state('');
-  let supplyBrief = $state(true);
-  let capabilityIndex = $state(0);
-  let files: FileList | undefined = $state();
-  let upload = $state<TaskUploadReceipt | null>(null);
-  let path = $state('');
-  let pathWrite = $state(false);
-  let actions = $state<TaskActionPolicyDto | null>(null);
-  let tools = $state<TaskToolDto[]>([]);
-  let finishWhenSettled = $state(true);
-  let error = $state('');
-  let busy = $state(false);
-  let pending = $state<CreateWorkflowRequest | null>(null);
-  let pendingUpload = $state<TaskUploadRequest | null>(null);
+  let instructionsElement: HTMLTextAreaElement;
+  let attachmentElement: HTMLInputElement;
+  let composerElement: HTMLElement;
+  onMount(() => instructionsElement?.focus());
+  const selectedCapability = $derived(session.capabilities.find((item) => capabilityKey(item) === capabilityKey(draft.definition.capability)));
+  const contextBinding = $derived(draft.definition.inputs.brief);
+  const contextIsCompact = $derived(!contextBinding || (contextBinding.kind === 'inline' && contextBinding.value.kind === 'text') || (contextBinding.kind === 'supplied' && contextBinding.name === `context_${draft.id.replaceAll('-', '')}`));
+  const supplyingContext = $derived(!contextBinding || contextBinding.kind === 'inline');
+  const attachedFile = $derived(draft.definition.inputs.file?.kind === 'inline' && draft.definition.inputs.file.value.kind === 'uploaded' && draft.definition.inputs.file.value.input_id === draft.upload?.input_id ? draft.upload : null);
+  const limitLabels = {
+    tasks: 'Total admitted tasks', concurrent_tasks: 'Concurrent tasks', model_batches: 'Total model batches',
+    rejected_responses: 'Consecutive rejected responses', corrective_failures: 'Failures on one corrective lineage',
+    active_execution_ms: 'Cumulative execution milliseconds', tool_calls_per_task: 'Tool calls per task',
+  };
 
   function selectCapability(event: Event) {
-    capabilityIndex = Number((event.currentTarget as HTMLSelectElement).value);
-    if (session.capabilities[capabilityIndex]?.operation !== 'model.generate') {
-      actions = null;
-      tools = [];
-    }
+    const capability = session.capabilities.find((item) => capabilityKey(item) === (event.currentTarget as HTMLSelectElement).value);
+    if (!capability) return;
+    draft.definition.capability = { ...capability };
+    if (capability.operation !== 'model.generate') { draft.definition.actions = null; draft.definition.tools = []; }
+    oncapabilitychoice?.({ ...capability });
   }
 
-  async function captureFile() {
-    const reportError = onerror;
-    const file = files?.[0];
-    if (!file) return;
-    busy = true;
-    error = '';
-    upload = null;
-    pendingUpload = null;
+  async function captureFile(event?: Event) {
+    const current = draft, connection = client, reportError = onerror;
+    if (current.busy || current.disposed || current.pending) return;
+    const file = event ? (event.currentTarget as HTMLInputElement).files?.[0] : undefined;
+    if (event && !file) return;
+    current.busy = true; current.error = '';
     try {
-      pendingUpload = await captureTextRequest(file, session.input_limit_bytes);
-      upload = await client.request<TaskUploadReceipt>('/v1/task-inputs', pendingUpload);
-      pendingUpload = null;
+      if (file) {
+        const request = await captureTextRequest(file, session.input_limit_bytes);
+        if (current.disposed) return;
+        current.pendingUpload = request;
+      }
+      if (!current.pendingUpload) return;
+      const captured = await connection.request<TaskUploadReceipt>('/v1/task-inputs', current.pendingUpload);
+      if (current.disposed) return;
+      current.upload = captured;
+      current.definition.inputs = { ...current.definition.inputs, file: { kind: 'inline', value: { kind: 'uploaded', input_id: captured.input_id } } };
+      current.pendingUpload = null;
     } catch (failure) {
-      error = failure instanceof Error ? failure.message : 'The file upload failed.';
+      if (current.disposed) return;
+      current.error = failure instanceof Error ? failure.message : 'The file upload failed.';
+      if (failure instanceof DaemonError && failure.status >= 400 && failure.status < 500) current.pendingUpload = null;
       reportError(failure);
-    } finally { busy = false; }
-  }
-
-  async function retryUpload() {
-    const reportError = onerror;
-    if (!pendingUpload) return;
-    busy = true;
-    try {
-      upload = await client.request<TaskUploadReceipt>('/v1/task-inputs', pendingUpload);
-      pendingUpload = null;
-      error = '';
-    } catch (failure) { error = failure instanceof Error ? failure.message : 'The file upload failed.'; reportError(failure); }
-    finally { busy = false; }
+    } finally { if (!current.disposed) current.busy = false; }
   }
 
   async function submit(event?: SubmitEvent) {
-    const reportCreated = oncreated;
-    const reportError = onerror;
     event?.preventDefault();
-    const capability = session.capabilities[capabilityIndex];
-    if (!capability) return;
-    if (!pending) {
-      pending = {
-        request_id: crypto.randomUUID(), title, description, finish_when_settled: finishWhenSettled, limits: null,
-        inputs: { ...(supplyBrief ? { brief: { kind: 'text' as const, text: brief } } : {}), ...(upload ? { file: { kind: 'uploaded' as const, input_id: upload.input_id } } : {}) },
-        tasks: [{ alias: 'task', definition: {
-          title, description, instructions, capability, actions, tools,
-          inputs: { brief: { kind: 'supplied', name: 'brief', optional: false }, ...(upload ? { file: { kind: 'supplied' as const, name: 'file', optional: false } } : {}) },
-          dependencies: [], outputs: {}, required: true, corrective_of: null,
-          paths: path.trim() ? [{ path: path.trim(), write: pathWrite }] : [],
-        } }],
-      };
-    }
-    busy = true;
-    error = '';
+    const current = draft, connection = client, reportAccepted = onaccepted, reportError = onerror;
+    if (current.busy || current.disposed || current.accepted || current.conflict || current.pendingUpload) return;
+    current.busy = true; current.error = '';
     try {
-      const receipt = await client.request<WorkflowReceipt>('/v1/workflows', pending);
-      pending = null;
-      await reportCreated(receipt);
+      current.pending ??= freezeTaskSubmission(current, session);
+      const receipt = await connection.request<WorkflowReceipt>(current.pending.path, current.pending.request);
+      if (current.disposed) return;
+      current.pending = null; current.accepted = true;
+      await reportAccepted(receipt);
     } catch (failure) {
-      error = failure instanceof Error ? failure.message : 'The submission outcome is unknown.';
-      if (failure instanceof DaemonError && failure.status >= 400 && failure.status < 500) pending = null;
+      if (current.disposed) return;
+      current.error = failure instanceof Error ? failure.message : 'The submission outcome is unknown.';
+      if (failure instanceof DaemonError && failure.status >= 400 && failure.status < 500) {
+        current.pending = null;
+        current.conflict = current.target.kind === 'existing' && failure.status === 409;
+      }
       reportError(failure);
-    } finally { busy = false; }
+    } finally { if (!current.disposed) current.busy = false; }
   }
 
   async function findReceipt() {
-    const reportCreated = oncreated;
-    const reportError = onerror;
-    if (!pending) return;
-    busy = true;
+    const current = draft, connection = client, reportAccepted = onaccepted, reportError = onerror;
+    if (!current.pending || current.busy || current.disposed) return;
+    const requestId = current.pending.request.request_id;
+    current.busy = true; current.error = '';
     try {
-      const receipt = await client.request<WorkflowReceipt>(`/v1/workflow-requests/${encodeURIComponent(pending.request_id)}`);
-      pending = null;
-      await reportCreated(receipt);
-    } catch (failure) { error = failure instanceof Error ? failure.message : 'No receipt could be read.'; reportError(failure); }
-    finally { busy = false; }
+      const receipt = await connection.request<WorkflowReceipt>(`/v1/workflow-requests/${encodeURIComponent(requestId)}`);
+      if (current.disposed) return;
+      current.pending = null; current.accepted = true;
+      await reportAccepted(receipt);
+    } catch (failure) {
+      if (current.disposed) return;
+      current.error = failure instanceof Error ? failure.message : 'No receipt could be read.';
+      reportError(failure);
+    } finally { if (!current.disposed) current.busy = false; }
+  }
+
+  async function refreshConflict() {
+    const current = draft, connection = client, reportError = onerror, reportReviewed = onreviewed;
+    if (current.target.kind !== 'existing' || current.busy || current.disposed) return;
+    const workflowId = current.target.workflowId;
+    current.busy = true; current.error = '';
+    try {
+      const workflow = await connection.request<WorkflowReadDto>(`/v1/workflows/${encodeURIComponent(workflowId)}`);
+      if (current.disposed || current.target.kind !== 'existing') return;
+      current.target.generation = workflow.generation;
+      current.conflict = false;
+      reportReviewed?.(workflow);
+    } catch (failure) {
+      if (current.disposed) return;
+      current.error = failure instanceof Error ? failure.message : 'The workflow could not be refreshed.';
+      reportError(failure);
+    } finally { if (!current.disposed) current.busy = false; }
   }
 </script>
 
-<section class="panel task-composer" aria-labelledby="task-composer-heading">
-  <div class="section-heading"><div><p class="eyebrow">{session.daemon_name} / New work</p><h1 id="task-composer-heading">Start a task</h1></div><button class="icon-button" onclick={oncancel} aria-label="Close task form">×</button></div>
-  <p class="muted">Set the outcome, then add the context your task needs. Work continues on your daemon when this page closes.</p>
+<svelte:window onkeydown={(event) => {
+  if (event.key === 'Escape' && !event.defaultPrevented && event.target instanceof Node && composerElement?.contains(event.target) && !(event.target instanceof HTMLSelectElement)) {
+    event.preventDefault(); onclose();
+  }
+}} />
+
+<section bind:this={composerElement} class="panel task-composer compact-composer" aria-label="Task composer">
+  <div class="section-heading"><div><p class="eyebrow">{session.daemon_name} / {draft.target.kind === 'new' ? 'Unsaved workflow' : draft.target.title}</p><h2 id="task-composer-heading">{draft.target.kind === 'new' ? 'New workflow' : 'Add task'}</h2></div><button class="icon-button" onclick={onclose} aria-label="Close composer">×</button></div>
+  <p class="field-hint">{draft.target.kind === 'new' ? 'Create a workflow with its first task. Nothing is created until you submit.' : `Add work to ${draft.target.title}. Its current work and completion policy stay in place.`}</p>
   <form onsubmit={submit}>
-    <fieldset disabled={busy || pending !== null}>
-      <div class="authoring-layout">
-        <div class="authoring-main">
-          <fieldset class="form-section"><legend>Task instructions</legend>
-            <p class="field-hint">What should the task do, and what should it produce?</p>
-            <label>Task title<input bind:value={title} placeholder="Compare Rust animation approaches" required maxlength="256" /></label>
-            <label>Short description<input bind:value={description} placeholder="What this work is for" maxlength="4096" /></label>
-            <label>Instructions<textarea bind:value={instructions} placeholder="Explain the work to perform, the expected output, and any constraints." required rows="6"></textarea></label>
-          </fieldset>
-          <fieldset class="form-section"><legend>Supplied context</legend>
-            <p class="field-hint">Provide the brief and source material separately from the task’s instructions.</p>
-            <label class="checkbox-label"><input type="checkbox" bind:checked={supplyBrief} /> Supply brief now</label>
-            {#if supplyBrief}<label>Brief input<textarea bind:value={brief} placeholder="Project details, a question, or data the task should use." rows="4"></textarea></label>{:else}<p class="notice warning">The task requires a brief. It will stay queued until you supply that input in its inspector.</p>{/if}
-            <label>Text file input<input type="file" bind:files accept="text/*,.md,.toml,.json,.csv,.rs,.txt" onchange={captureFile} /></label>
-            <p class="field-hint">UTF-8 text up to {(session.input_limit_bytes / 1024).toLocaleString()} KiB. The daemon also checks the combined instructions and selected inputs.</p>
-            {#if upload}<p class="notice">Captured {upload.name} · {upload.bytes.toLocaleString()} bytes</p><details class="advanced-options"><summary>Captured file identity</summary><p class="field-hint">This digest identifies the exact file content retained by the daemon.</p><code>{upload.digest}</code></details>{/if}
-          </fieldset>
-        </div>
-        <aside class="authoring-aside" aria-label="Task execution options">
-          <fieldset class="form-section"><legend>Execution</legend>
-            <label>Capability<select aria-label="Capability" value={capabilityIndex} onchange={selectCapability} required>{#each session.capabilities as capability, index (`${capability.id}/${capability.operation}`)}<option value={index}>{capability.id} · {capability.operation}</option>{/each}</select></label>
-            <p class="field-hint">Choose a configured model or tool available on this daemon.</p>
-            <label class="checkbox-label"><input type="checkbox" bind:checked={finishWhenSettled} /> Finish when required work settles</label>
-            {#if session.capabilities[capabilityIndex]?.operation === 'model.generate'}<TaskModelOptions bind:actions bind:tools capabilities={session.capabilities} />{/if}
-          </fieldset>
-          <details class="advanced-options"><summary>Project filesystem access</summary><p class="field-hint">Declare a project root for configured processes or model file tools. The daemon validates the path against your grant.</p><label>Absolute project root<input bind:value={path} placeholder="/home/you/projects/animation" /></label><label class="checkbox-label"><input type="checkbox" bind:checked={pathWrite} /> Allow writes within this root</label></details>
-          <details class="advanced-options"><summary>Workflow limits</summary><p class="field-hint">These daemon defaults bound the work created by this submission.</p><div class="limits" aria-label="Effective workflow limits">
-            <span>{session.limits.tasks} tasks</span><span>{session.limits.concurrent_tasks} concurrent</span>
-            <span>{session.limits.model_batches} model batches</span><span>{session.limits.tool_calls_per_task} tool calls per task</span>
-            <span>{session.limits.active_execution_ms / 60000} active minutes</span>
-            <span>{session.limits.rejected_responses} consecutive rejected responses</span><span>{session.limits.corrective_failures} corrective failures</span>
-          </div></details>
-        </aside>
-      </div>
+    <fieldset disabled={draft.busy || draft.pending !== null || draft.accepted}>
+      <label>What should this task do?<textarea bind:this={instructionsElement} value={draft.definition.instructions} oninput={(event) => updateDraftInstructions(draft, event.currentTarget.value)} placeholder="Describe the outcome, expected output and any constraints." required maxlength={session.input_limit_bytes} rows="5"></textarea></label>
+      <label class="draft-title">Task title<input value={draft.definition.title} oninput={(event) => { draft.definition.title = event.currentTarget.value; draft.titleEdited = true; }} placeholder="Suggested from your instructions" maxlength="256" /></label>
+      <label class="executor-choice">Executor<select value={selectedCapability ? capabilityKey(selectedCapability) : ''} onchange={selectCapability} required><option value="" disabled>Choose an executor</option>{#each session.capabilities as capability (capabilityKey(capability))}<option value={capabilityKey(capability)}>{capability.id} · {capability.operation}</option>{/each}</select></label>
+      {#if !selectedCapability}<p class="field-hint">{session.capabilities.length ? 'Choose who will perform this task. A changed or unavailable selection is never replaced automatically.' : 'No permitted executors are available. Ask the daemon administrator to configure a capability and your execution allowance.'}</p>{/if}
+      <div class="composer-extras"><button type="button" class="quiet" onclick={() => { draft.contextOpen = !draft.contextOpen; }} aria-expanded={draft.contextOpen}>{draft.contextOpen ? 'Hide context' : 'Add context'}</button><button type="button" class="quiet" onclick={() => attachmentElement.click()} disabled={draft.pendingUpload !== null} title={`UTF-8 text, up to ${(session.input_limit_bytes / 1024).toLocaleString()} KiB`}>Attach text file</button><input class="visually-hidden" tabindex="-1" bind:this={attachmentElement} aria-label="Attach text file" type="file" accept="text/*,.md,.toml,.json,.csv,.rs,.txt" onchange={captureFile} disabled={draft.pendingUpload !== null} /></div>
+      {#if draft.contextOpen}
+        <fieldset class="form-section compact-context"><legend>Optional context</legend>
+          {#if contextIsCompact}
+            <label class="checkbox-label"><input type="checkbox" checked={supplyingContext} onchange={(event) => { if (contextBinding?.kind === 'inline' && contextBinding.value.kind === 'text') draft.contextText = contextBinding.value.text; draft.supplyContext = event.currentTarget.checked; updateDraftContext(draft); }} /> Supply context now</label>
+            {#if supplyingContext}<label>Context<textarea value={contextBinding?.kind === 'inline' && contextBinding.value.kind === 'text' ? contextBinding.value.text : draft.contextText} oninput={(event) => { draft.contextText = event.currentTarget.value; draft.supplyContext = true; updateDraftContext(draft); }} maxlength={session.input_limit_bytes} rows="3" placeholder="Source material, facts or a brief for this task."></textarea></label>
+            {:else}<p class="notice warning">This task will wait for its own required context. Supply it later from the task inspector.</p>{/if}
+            {#if contextBinding}<button type="button" class="quiet" onclick={() => { const inputs = { ...draft.definition.inputs }; delete inputs.brief; draft.definition.inputs = inputs; draft.contextText = ''; draft.supplyContext = true; }}>Remove context requirement</button>{/if}
+          {:else}<p class="field-hint">This task's brief binding uses an advanced rule. Edit it under Named inputs below.</p>{/if}
+          <p class="field-hint">Context stays separate from instructions and belongs only to this task. The executor may require named inputs; its daemon validation still applies.</p>
+        </fieldset>
+      {/if}
+      {#if attachedFile}<p class="attached-file">{attachedFile.name} <span class="field-hint">· {attachedFile.bytes.toLocaleString()} bytes</span> <button class="quiet" type="button" onclick={() => { const inputs = { ...draft.definition.inputs }; delete inputs.file; draft.definition.inputs = inputs; draft.upload = null; }}>Remove attachment</button></p>{/if}
+      <details class="advanced-options" bind:open={draft.advancedOpen}><summary>Advanced task options</summary>
+        <label>Short description<input bind:value={draft.definition.description} maxlength="4096" /></label>
+        {#if draft.target.kind === 'new'}<label>Workflow name<input bind:value={draft.workflowTitle} placeholder={draft.definition.title || 'Same as the task title'} maxlength="256" /></label>{/if}
+        <TaskDefinitionEditor bind:definition={draft.definition} bind:editor={draft.editor} capabilities={session.capabilities} compact />
+        {#if draft.target.kind === 'new'}
+          <label class="checkbox-label"><input type="checkbox" bind:checked={draft.finishWhenSettled} /> Finish when required work settles</label>
+          <details class="advanced-options"><summary>Workflow limits</summary>
+            <label class="checkbox-label"><input type="checkbox" checked={draft.limits !== null} onchange={(event) => draft.limits = event.currentTarget.checked ? { ...session.limits } : null} /> Set tighter workflow limits</label>
+            <div class="form-grid">{#each Object.entries(limitLabels) as [name, label] (name)}{#if draft.limits}<label>{label}<input type="number" min="1" max={session.limits[name as keyof typeof limitLabels]} step="1" required bind:value={draft.limits[name as keyof typeof limitLabels]} /></label>{:else}<span>{label}: {session.limits[name as keyof typeof limitLabels]}</span>{/if}{/each}</div>
+          </details>
+        {/if}
+      </details>
     </fieldset>
-    {#if !session.capabilities.length}<p class="notice warning">No permitted capabilities are available. Ask the daemon administrator to configure a capability and your execution allowance.</p>{/if}
-    {#if error}<p class="notice error" role="alert">{error}</p>{/if}
-    {#if pendingUpload}<button type="button" onclick={retryUpload} disabled={busy}>Retry exact upload</button>{/if}
-    <div class="authoring-footer">{#if pending}
-      <p class="notice warning">The submission may have been accepted. Look up its receipt or replay the exact request. Both use request <code>{pending.request_id}</code>.</p>
-      <div class="form-actions"><button type="button" class="primary" disabled={busy} onclick={findReceipt}>Find submission receipt</button><button type="button" disabled={busy} onclick={() => submit()}>Replay exact submission</button></div>
-    {:else}
-      <div class="form-actions"><button class="primary" disabled={busy || !session.capabilities.length || pendingUpload !== null}>{busy ? 'Submitting…' : 'Submit task'}</button><button type="button" class="quiet" onclick={oncancel}>Cancel</button></div>
-    {/if}</div>
+    {#if draft.target.kind === 'new'}<p class="field-hint">{draft.finishWhenSettled ? 'Finishes when required work settles. You can add more tasks later.' : 'Leaves completion open for a later decision.'}</p>{/if}
+    {#if draft.error}<p class="notice error" role="alert">{draft.error}</p>{/if}
+    {#if draft.conflict}<p class="notice warning">This workflow changed before the task could be accepted. Your draft is retained. Refresh its current state and review before making a new submission.</p><button type="button" disabled={draft.busy} onclick={refreshConflict}>Refresh workflow for review</button>{/if}
+    {#if draft.pendingUpload}<p class="notice warning">The attachment reply is unconfirmed. Recover the exact upload before submitting.</p><button type="button" onclick={() => captureFile()} disabled={draft.busy}>Retry exact upload</button>{/if}
+    <div class="authoring-footer">{#if draft.pending}
+      <p class="notice warning">The submission may have been accepted. This draft retains its exact destination and request. Look up its receipt or replay it safely.</p>
+      <div class="form-actions"><button type="button" class="primary" disabled={draft.busy} onclick={findReceipt}>Find submission receipt</button><button type="button" disabled={draft.busy} onclick={() => submit()}>Replay exact submission</button></div>
+    {:else if draft.accepted}<p class="notice">The daemon accepted this task.</p>
+    {:else}<div class="form-actions"><button class="primary" disabled={draft.busy || !selectedCapability || draft.pendingUpload !== null || draft.conflict}>{draft.busy ? 'Submitting…' : draft.target.kind === 'new' ? 'Create workflow' : 'Add task'}</button><button type="button" class="quiet" onclick={onclose}>Keep draft</button><button type="button" class="quiet" onclick={ondiscard} disabled={draft.busy || draft.pendingUpload !== null}>Discard draft</button></div>{/if}</div>
   </form>
 </section>

@@ -67,7 +67,9 @@ The October 17 partial review adds the prepared [02a](02a-daemon-connection-iden
 with only an address and credential, recognize the daemon's shared name, and observe an authorized
 rename in another client and after reconnect. Exercise wrong-installation refusal separately.
 Recheck the real logo and the supplied visual direction in the working task/timeline/inspector,
-including a narrow layout. Then finish the substantive journey above. These remain acceptance
+including a narrow layout. The later [02c](02c-workspace-and-task-creation.md) correction also requires
+the user to create two workflows, switch between them and add a second task to the first without
+coaching through technical fields. Then finish the substantive journey above. These remain acceptance
 requirements; the initial connection report and mockup are not evidence that the corrections work.
 
 ## Growing the same workflow: phases 03–05

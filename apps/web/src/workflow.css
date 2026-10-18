@@ -10,6 +10,9 @@
 .workflow-header .detail-meta { margin: 0; gap: 16px; }
 .workflow-workspace { display: grid; gap: 16px; align-items: start; }
 .workflow-workspace.has-inspector { grid-template-columns: minmax(0, 1fr) minmax(320px, 360px); }
+.composer-visible .workflow-workspace.has-inspector { grid-template-columns: minmax(0, 1fr); }
+.composer-visible .task-inspector, .composer-visible .inspector-loading { grid-column: 1; grid-row: auto; }
+.composer-visible .workflow-heading { flex-wrap: wrap; }
 .workflow-workspace > * { min-width: 0; }
 .task-workspace { grid-column: 1; grid-row: 1; min-height: 500px; padding: 20px; background: radial-gradient(circle, #5b699326 1px, transparent 1px) 0 0 / 22px 22px, var(--surface); }
 .task-toolbar { align-items: center; gap: 12px; margin-bottom: 22px; }

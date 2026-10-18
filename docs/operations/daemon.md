@@ -89,10 +89,16 @@ cached. First-use trust comes from the configured endpoint and transport, not th
 See [web hosting](../../apps/web/README.md) for build commands and connection setup.
 
 The client shows the daemon's shared name in its navigation and contextual header. On a narrow
-screen, open **Daemon navigation** to switch daemons or reach **Daemon settings**. Selected task
+screen, open **Workspace navigation** to switch daemons or reach **Daemon settings**. **New workflow**
+creates a workflow with its first task; **Add task** submits to the selected workflow. Both use a
+compact composer with instructions, optional context/files and a visible executor. The rail keeps
+current/recent workflows available, while **All workflows** provides discovery and search. Selected task
 details sit beside the timeline on wide screens and below it on narrow screens. Hiding the inspector
 preserves an unfinished edit; it does not stop or change daemon work. Results and technical facts
 use labeled disclosures, while execution state and stop requests remain visible.
+Task drafts remain in memory across navigation, bounded to eight per authenticated connection;
+disconnect or lost authority clears them. See [client authoring and recovery](../../apps/web/README.md)
+for exact replay, advanced editing and draft disposal.
 
 For phone/LAN use, terminate browser-trusted HTTPS for both the static site and daemon proxy.
 Keep the daemon's listener private, forward bearer/identity headers and disable buffering on the

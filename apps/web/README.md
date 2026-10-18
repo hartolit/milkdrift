@@ -19,24 +19,44 @@ If a saved address points to a different daemon, reconnect stops before loading 
 address, deliberately forget the saved connection, then connect afresh. **Connection details**
 explains the stable identity; it identifies the daemon, not a device, and is not a setup field.
 
-The task form supplies instructions, a named `brief` input and an optional captured UTF-8 `file`
-input. Captured files are bounded by the connected daemon's advertised limit, currently 16 KiB.
-The daemon also bounds the combined instructions and selected input text before admission.
-Select a capability offered by the connected daemon. The form shows the daemon's effective
-workflow limits before submission. A configured trusted process can inspect a supplied project;
-model capabilities receive the same named context through their maintained adapter.
-Open **Model continuation and permitted tools** to opt in to structured future-work proposals and,
+Choose **New workflow** to compose its first task, or **Add task** within a workflow to add to that
+workflow. Both use the same composer alongside the existing work. Write **What should this task do?**;
+the editable title is suggested from those instructions. A new workflow uses that title unless you
+change its name in **Advanced task options**. Nothing is created until submission.
+
+Choose an **Executor** from the connected daemon's permitted capabilities. A sole available executor
+or your last deliberate choice on this authenticated connection can be selected for you; the choice
+is always visible. A missing or removed choice is never replaced with another executor automatically.
+Instructions alone are sufficient for authoring; an executor that needs particular inputs can still
+refuse work that does not supply them. Its requirements are not inferred from its name.
+
+**Add context** supplies a task-local `brief`; **Attach text file** captures a task-local UTF-8 `file`
+input. Adding either to another task does not replace values used by earlier queued tasks. Captured
+files are bounded by the daemon's advertised limit, currently 16 KiB, and the daemon checks combined
+instructions and selected input text. Under context, uncheck **Supply context now** to deliberately
+queue a task awaiting its own required context. The inspector can later supply that input.
+
+**Advanced task options** retains named inputs, dependencies, output contracts, project paths and
+workflow limits. Open **Model continuation and permitted tools** there to opt in to future-work proposals and,
 separately, automatic feedback after a refused proposal. Select file tools only with declared paths
 and select process tools from configured capabilities. The daemon rechecks the category and grant;
 the browser does not authorize a capability by showing it. Turn off **Finish when required work
 settles** when the model will explicitly request completion after creating its follow-up work.
-Leave **Supply brief now** unchecked to submit work that waits for its required input. The queued
-task inspector can then supply that input; the daemon decides when the task becomes ready.
+An ordinary addition sends one guarded change; it never implicitly resumes a waiting workflow,
+changes its completion choice or enlarges its limits.
 
-The dark workspace keeps daemon navigation in the left rail and the current work in the top bar.
-On narrow screens, **Daemon navigation** opens the rail. Task creation separates **Task instructions**,
-**Supplied context** and **Execution**; filesystem access and limits remain available in labeled
-disclosures. The supplied Milkdrift logo is used unchanged.
+The dark workspace keeps a daemon switcher, **New workflow**, the current workflow and up to eight
+recent workflows in the left rail. **All workflows** opens paged discovery and search; the recent
+list is not the whole collection. On narrow screens, **Workspace navigation** opens the rail.
+Browser Back/Forward restores location with authenticated reads, without submitting work.
+The supplied Milkdrift logo is used unchanged.
+
+Each authenticated connection retains up to eight task drafts in memory. Switching workflows or
+opening settings preserves them. **Keep draft**, **Close composer** and Escape hide the composer;
+reopen it through **Add task**, **New workflow** or the rail's **Drafts** list. **Discard draft** frees
+its slot. At capacity, new drafts refuse without dropping existing work. Disconnect, authority loss
+and identity replacement dispose of inaccessible drafts. Reloading the browser loses unsent drafts;
+neither draft text nor credentials are saved in browser storage or URLs.
 
 The timeline orders dependency columns from left to right. A shared time axis also shows actual
 overlapping starts and settlements, with open bars for tasks without recorded ends. Queued tasks
@@ -61,6 +81,8 @@ policies, dependencies, required obligations, output contracts and scoped projec
 producer outputs wait for success; optional outputs wait for settlement; a **Settled task outcome**
 binding explicitly accepts failure. Inspect the exact batch preview before **Submit reviewed batch**.
 The daemon validates and accepts the complete batch atomically. A preview itself sends no changes.
+Finish or close an advanced editor before navigating away from its workflow; the client keeps it
+open instead of silently discarding the draft. An unconfirmed change must be recovered before leaving.
 
 If a concurrent human/model edit wins, the editor retains the draft and requires a refreshed
 generation and explicit review. Reload affected task definitions before staging their new versions;
@@ -105,8 +127,10 @@ The client retains at most 16 connections. **Forget** disconnects a connection a
 its saved non-secret settings, so another connection can be added without dropping existing connections.
 
 If a submission reply is lost, use **Find submission receipt** or **Replay exact submission**.
-The current form retains the exact request while it is open. A confirmed receipt opens its workflow
-before waiting for the general discovery list to refresh. After a complete browser restart,
+The draft retains the exact destination and request across navigation. A confirmed receipt opens
+its workflow if that draft is still current; it never pulls you away from another workflow or daemon.
+A generation conflict keeps the draft for **Refresh workflow for review** and a new explicit
+submission. After a complete browser restart,
 authenticate and discover the accepted work through the workflow list and search instead.
 
 ## Host independently

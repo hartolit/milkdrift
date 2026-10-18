@@ -1,6 +1,6 @@
 # 02c — Make workflows and ordinary task creation understandable
 
-**Prepared, not assigned.** The user reviewed the 02b delivery and rejected its interaction design:
+**Assigned; implemented locally, actual user recheck pending.** The user reviewed the 02b delivery and rejected its interaction design:
 too many fields/forms, disruptive navigation, and no discoverable way to create multiple workflows.
 The [handoff](handoff.md#actual-user-review-and-corrections) records the actual feedback and source
 findings. Preserve 02a's naming behavior and 02b's supplied brand and visual direction. Complete this
@@ -20,8 +20,8 @@ workflow will receive the work before submitting. Existing tasks, results and cu
 visible while they compose. This is the acceptance case; recoloring or renaming the current forms
 alone is incomplete.
 
-Current `App.svelte` exposes **+ New task** only on workflow discovery. `TaskComposer.svelte` sends
-`POST /v1/workflows`, creating a workflow with one initial task. Adding to an existing workflow goes
+Before this correction, `App.svelte` exposed **+ New task** only on workflow discovery. `TaskComposer.svelte` sent
+`POST /v1/workflows`, creating a workflow with one initial task. Adding to an existing workflow went
 through `WorkflowView.svelte` and `FutureBatchEditor.svelte`: alias, full definition, staging, JSON
 preview and submission. The backend already supports multiple workflows and ordinary guarded task
 additions. Runtime admission requires 1–32 initial tasks; an empty durable workflow is not supported.
@@ -133,5 +133,5 @@ in the single handoff. Agent action counts and browser passes establish implemen
 not user acceptance. If the user is unavailable, finish authorized repairs and leave review open.
 
 Update frontend/operator explanations, status, evidence and this sprint's handoff. Run documentation
-contracts and diff checks, and make coherent tested local commits. Stop before 04. This prepared
-prompt authorizes no implementation until assigned.
+contracts and diff checks, and make coherent tested local commits. Stop before 04. This assignment
+does not authorize later feature prompts.

@@ -10,9 +10,10 @@ current visual design. Completion of the substantive task journey has not been r
 implements shared daemon naming and address/credential setup; the user has not rechecked it yet.
 The assigned 02b correction applies the supplied dark visual direction and real logo throughout the
 client, with responsive navigation and a desktop task inspector. The user then rejected interaction
-usability: too many forms, disruptive navigation and unclear creation of multiple workflows. A
-prepared 02c correction addresses those paths; it is not implemented or assigned. Prompt 04 waits
-for those corrections and the completed early review. Prompt 07 retains the final integrated gate. Hosted quality run 227
+usability: too many forms, disruptive navigation and unclear creation of multiple workflows. The
+assigned 02c correction implements distinct creation/addition actions, contextual authoring and
+workflow navigation. Its actual user recheck remains open. Prompt 04 waits for the completed early
+review. Prompt 07 retains the final integrated gate. Hosted quality run 227
 failed on the earlier `e720bb9`; no later hosted pass is claimed.
 
 ## Implemented now
@@ -60,6 +61,15 @@ connections have separate selection, settings and caches. Exact-origin CORS, aut
 streams, identity checks and snapshot
 resynchronization belong to the production daemon/client path.
 
+**New workflow** creates the workflow and its first task together; **Add task** sends a single guarded
+addition to the current workflow. The shared composer requires instructions, suggests an editable
+title, exposes its executor and offers optional task-local context/files. Ordinary additions need no
+batch staging or JSON preview and preserve explicit waits and limits. The rail keeps current/recent
+work available; **All workflows** owns paged discovery. Up to eight drafts per authenticated
+connection survive navigation in memory, including exact pending requests. Stale reads cannot
+replace a newer selection. Advanced editors remain in their workflow until explicitly closed or
+their pending changes recovered.
+
 The task scheduler uses existing external preparation, final-entry and effect-lifetime mechanisms.
 Durable native path claims coordinate declared project reads/writes, including aliases and
 uncertain writers. Task storage reserves settlement/control headroom before accepting work.
@@ -70,11 +80,10 @@ stop requests, uncertainty and restart cannot refund unresolved work.
 
 ## Limitations now
 
-The dark workspace and real brand are implemented, but the user rejects the authoring/navigation
-experience. **+ New task** creates another workflow; adding to an existing workflow requires the
-advanced batch editor. These operations work through the daemon, yet the distinction is hard to
-discover and ordinary authoring exposes too many fields. The prepared interaction correction and
-actual user recheck remain open. Naming and visual preference acceptance have not been reported.
+The dark workspace, real brand and compact authoring/navigation correction are implemented. The
+user has not yet rechecked the 02c result; earlier feedback rejected its predecessor. Naming and
+visual preference acceptance also remain unreported. Drafts are memory-only and are lost on reload
+or disconnect; accepted work remains daemon-owned. A new workflow still requires its first task.
 Rename receipts have a fixed capacity of 1,024; new renames refuse at capacity while reads and exact
 replay remain available.
 
@@ -105,6 +114,14 @@ Native model file tools currently require Linux; other platforms refuse that cat
 task supports at most 16 tool calls, bounded UTF-8 file content and a finite provider request envelope.
 
 ## Current validation/evidence snapshot
+
+Prompt 02c passes frontend check/lint, 89 unit cases, production build and all 22 real-daemon
+Chromium cases. The added cases cover separate workflow creation, ordinary additions, retained
+drafts and focus, task-local context/files, exact recovery, explicit waits, stale generations and
+authority loss. The affected Rust fixture passes five unit cases, scoped Clippy and the actual
+CLI/daemon journey, retaining eight tasks and three accepted model batches without client
+continuation. Desktop and narrow renders were inspected. These focused checks establish the
+implemented behavior; the user's interaction recheck remains pending.
 
 Prompt 02b passes frontend check/lint, 67 unit cases, production build and all 16 real-daemon
 Chromium cases, with focused reruns for the final render corrections. Desktop and 390-pixel views
