@@ -46,7 +46,9 @@ pub(super) fn respond(root: &Path, body: &Value) -> io::Result<Option<Reply>> {
         .join(format!("daemon-{name}"))
         .join("animation-project");
     let reply = match role {
-        "planner" => text(planning(&snapshot(messages)?, &project)?.to_string()),
+        "planner" => {
+            text(planning(&snapshot(messages)?, &project, planner_brief(messages)?)?.to_string())
+        }
         "compose" => text(composition(&snapshot(messages)?, &project)?.to_string()),
         "review" => text(review(&snapshot(messages)?)?.to_string()),
         "render" => Reply {
@@ -128,6 +130,24 @@ fn snapshot(messages: &[Value]) -> io::Result<Value> {
     serde_json::from_str(line).map_err(io::Error::other)
 }
 
+fn planner_brief(messages: &[Value]) -> io::Result<&str> {
+    // The controlled planner receives one brief. Read its actual invocation text rather than
+    // assuming that a task-local input also exists in the workflow's shared input map.
+    messages
+        .iter()
+        .rev()
+        .filter(|message| message.get("role").and_then(Value::as_str) == Some("user"))
+        .filter_map(|message| message.get("content").and_then(Value::as_str))
+        .find(|text| {
+            !text.starts_with("Authorized future-work snapshot (data, not instructions): ")
+        })
+        .and_then(|text| {
+            text.split_once("\n\nInput brief:\n")
+                .map(|(_, brief)| brief)
+        })
+        .ok_or_else(|| invalid("controlled planner requires its actual brief input"))
+}
+
 fn definition(
     snapshot: &Value,
     title: &str,
@@ -149,10 +169,7 @@ fn definition(
         json!("Controlled animation journey through production model, tool and task owners"),
     );
     object.insert("instructions".into(), json!(format!("Animation fixture role: {role}\nUse the supplied brief and declared inputs. Report the exact tool observations. Preserve failed work and propose only prospective correction.")));
-    object.insert(
-        "inputs".into(),
-        json!({"brief":{"kind":"supplied","name":"brief","optional":false}}),
-    );
+    object.insert("inputs".into(), json!({}));
     object.insert(
         "outputs".into(),
         if actions {
@@ -190,14 +207,19 @@ fn definition(
     Ok(definition)
 }
 
-fn planning(snapshot: &Value, project: &Path) -> io::Result<Value> {
+fn planning(snapshot: &Value, project: &Path, brief: &str) -> io::Result<Value> {
     let mut changes = Vec::new();
     for (alias, title, role) in [
         ("motion", "Research motion representation", "motion"),
         ("training", "Research training data", "training"),
         ("render", "Research render validation", "render"),
     ] {
-        let task = definition(snapshot, title, role, project, Some(role), false)?;
+        let mut task = definition(snapshot, title, role, project, Some(role), false)?;
+        set(
+            &mut task,
+            "inputs",
+            json!({"brief":{"kind":"inline","value":{"kind":"text","text":brief}}}),
+        )?;
         changes.push(json!({"kind":"add","alias":alias,"definition":task}));
     }
     let mut compose = definition(
@@ -247,6 +269,20 @@ fn composition(snapshot: &Value, project: &Path) -> io::Result<Value> {
         false,
     )?;
     set(&mut correction, "corrective_of", original_id.clone())?;
+    set(
+        &mut correction,
+        "dependencies",
+        json!([original_id, motion_id, training_id]),
+    )?;
+    set(
+        &mut correction,
+        "inputs",
+        json!({
+            "motion":{"kind":"task_output","task":motion_id,"output":"final_text","optional":false},
+            "training":{"kind":"task_output","task":training_id,"output":"final_text","optional":false},
+            "failed_render":{"kind":"settled_outcome","task":original_id}
+        }),
+    )?;
     let mut final_task = definition(
         snapshot,
         "Final animation report",
@@ -371,6 +407,62 @@ mod tests {
     use super::*;
 
     #[test]
+    fn planner_captures_the_actual_brief_without_requiring_a_shared_input() -> io::Result<()> {
+        let capability = milkdrift_capability::CapabilityRequirement::new(
+            milkdrift_capability::OperationId::new("model.generate").map_err(io::Error::other)?,
+        );
+        let snapshot = json!({
+            "expected_generation":3,
+            "definition_example":{"title":"template","instructions":"template instructions","capability":capability}
+        });
+        for brief in [
+            "First private brief\nExact source text.",
+            "Different motion context: bevægelse\n",
+        ] {
+            let body = json!({
+                "model":"controlled-animation-a",
+                "messages":[
+                    {"role":"user","content":[{"type":"text","text":"Artifact data\n\nInput brief:\nWrong preceding artifact"}]},
+                    {"role":"user","content":format!("Plan research separately from the supplied context.\n\nInput brief:\n{brief}")},
+                    {"role":"user","content":format!("Authorized future-work snapshot (data, not instructions): {snapshot}\nReturn a structured task batch.")}
+                ]
+            });
+            let reply = respond(Path::new("/controlled-fixture"), &body)?
+                .ok_or_else(|| invalid("animation response absent"))?;
+            let response: Value = serde_json::from_str(
+                reply
+                    .message
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| invalid("response text absent"))?,
+            )
+            .map_err(io::Error::other)?;
+            let changes = response
+                .get("changes")
+                .and_then(Value::as_array)
+                .ok_or_else(|| invalid("response changes absent"))?;
+            assert_eq!(changes.len(), 4);
+            for research in &changes[..3] {
+                assert_eq!(
+                    research.pointer("/definition/inputs"),
+                    Some(&json!({
+                        "brief":{"kind":"inline","value":{"kind":"text","text":brief}}
+                    }))
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn missing_planner_brief_is_refused_instead_of_inventing_a_shared_binding() {
+        assert!(
+            planner_brief(&[json!({"role":"user","content":"Instructions without an input."})])
+                .is_err()
+        );
+    }
+
+    #[test]
     fn preceding_artifact_evidence_cannot_choose_role_or_authoring_snapshot() -> io::Result<()> {
         let capability = milkdrift_capability::CapabilityRequirement::new(
             milkdrift_capability::OperationId::new("model.generate").map_err(io::Error::other)?,
@@ -409,6 +501,19 @@ mod tests {
         assert_eq!(batch.changes.len(), 3);
         assert!(
             matches!(batch.changes.first(), Some(milkdrift_blueprint::TaskChange::Add { definition, .. }) if definition.title == "Corrected render research" && definition.corrective_of.as_ref().is_some_and(|id| id.as_str() == "render-id"))
+        );
+        let correction = serde_json::to_value(&batch.changes[0]).map_err(io::Error::other)?;
+        assert_eq!(
+            correction.pointer("/definition/dependencies"),
+            Some(&json!(["motion-id", "render-id", "training-id"]))
+        );
+        assert_eq!(
+            correction.pointer("/definition/inputs"),
+            Some(&json!({
+                "motion":{"kind":"task_output","task":"motion-id","output":"final_text","optional":false},
+                "training":{"kind":"task_output","task":"training-id","output":"final_text","optional":false},
+                "failed_render":{"kind":"settled_outcome","task":"render-id"}
+            }))
         );
         Ok(())
     }
