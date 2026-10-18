@@ -11,15 +11,86 @@ The [single sprint handoff](virtual-office/daemon-workflows-implementation/hando
 retains the environment, source material, finding owners and resume procedure.
 
 After the 02b delivery at `90ce1ff`/`2840937`, the user reported excessive fields/forms, disruptive
-navigation and an inability to discover creation of multiple workflows. Source inspection confirms
-that **+ New task** creates a workflow, while adding to an existing workflow requires the advanced
-batch editor. The prepared 02c correction addresses this rejected interaction design; it has no
-implementation or usability acceptance evidence yet. The actual browser asset load/click sequence
+navigation and an inability to discover creation of multiple workflows. Source inspection at that
+checkpoint confirmed that **+ New task** created a workflow, while adding to an existing workflow
+required the advanced batch editor. The subsequently assigned 02c correction addresses this rejected
+interaction design; its actual user acceptance remains open. The earlier browser asset load/click sequence
 was not captured. Earlier automated passes below remain functional evidence, not usability acceptance.
 
 Useful task output, close/reconnect, daemon switching, missing-input repair, failure and stop
 understanding have not yet been reported as completed by this user. Browser engine and physical-phone
 use were not established. Naming and visual preference acceptance also remain open.
+
+## Prompt 02c workspace and task creation verification
+
+Checkpoint `f71be73` delivers the assigned 02c correction: explicit **New workflow** and **Add task**
+actions using one compact contextual composer. A bounded rail keeps current/recent work and paged
+discovery available.
+Task drafts retain their authenticated connection and intended destination through navigation, while
+ordinary additions use the existing generation-guarded public change operation. These October 18
+checks ran locally on Linux with the maintained frontend dependencies, pinned Rust toolchain and
+controlled Rust daemon fixture. No production protocol, persistence schema or runtime owner changed.
+
+`npm --prefix apps/web run check`, `run lint`, `run test:unit` and `run build` pass. The unit run has
+89 cases across 13 files. Logs are `target/prompt02c-{check,lint,unit}.log` and
+`target/prompt02c-browser-layout-build.log`. Unit coverage includes deterministic UTF-8 title bounds,
+stable executor selection, task-local context, draft capacity and disposal, stale asynchronous reads,
+connection switching, generation review, and pending-request recovery. The final production assets
+are `index-BN9njclz.js` and `index-BMDa_p0g.css`.
+
+The complete production Chromium suite passes all 22 cases with
+`MILKDRIFT_BROWSER_CONFIG=/tmp/milkdrift-prompt02c-browser-final-b-20261018/browser.json` and
+`MILKDRIFT_BROWSER_PORT=5173` using `npm --prefix apps/web run test:browser`. Its log is
+`target/prompt02c-browser-final-b.log`. The independent test port keeps the user preview untouched.
+The new cases create two workflows, add only to the selected workflow, reopen both after reconnect,
+retain drafts through switching and browser history, and verify successful-submit and close focus.
+Separate context and uploaded files do not alter earlier queued inputs; missing input and explicit
+waits remain visible. Real daemon refusals exercise stale generations and lost authorization.
+Dropped accepted replies exercise both public receipt lookup and exact replay after navigation,
+without moving the request to another workflow or daemon. Existing input-dependent results,
+advanced batches, cycle refusals, parallel model-authored work and shared naming still pass.
+
+After constraining the recent list's height, three affected browser cases pass again in
+`target/prompt02c-browser-layout.log`, including viewport assertions for **New workflow** and
+**All workflows** with populated recents. Inspected screenshots under
+`target/prompt02c-browser-results/full/` and `target/prompt02c-browser-results/layout/` cover desktop,
+390-pixel narrow screens, enlarged text, new/add composition and retained workflow context.
+Keyboard checks include Escape, reopening drafts, discarding and focus after acceptance/recovery.
+These are Chromium and enlarged-text checks, not physical-phone or screen-reader qualification.
+
+The compact path exposed an old assumption in the controlled planner fixture: descendants expected
+a workflow-global `brief`. Rust checkpoint `dcf5d17` instead captures the actual invocation brief
+for each child, refuses a missing brief and keeps failure/correction bindings explicit. All five
+`connected-tasks` unit cases, the fixture build, scoped warning-denying Clippy and workspace format
+check pass; logs are `target/prompt02c-fixture-{unit,build,clippy,fmt}.log`. The commands are:
+
+```sh
+cargo test -p milkdrift-evidence --bin connected-tasks --all-features
+cargo build -p milkdrift-evidence --bin connected-tasks --all-features
+cargo clippy -p milkdrift-evidence --bin connected-tasks --all-features -- -D warnings
+cargo fmt --all -- --check
+target/debug/connected-tasks check \
+  --root /tmp/milkdrift-prompt02c-cli-final-20261018 \
+  --daemon target/debug/milkdrift-daemon --cli target/debug/milkdrift
+```
+
+The actual CLI/daemon check passes with its report at
+`/tmp/milkdrift-prompt02c-cli-final-20261018/check.json` and log at
+`target/prompt02c-fixture-cli-check.log`. It retains eight tasks from one initial planner through
+three accepted model batches, with zero client continuation batches, actual parallel timing,
+failed-outcome composition, correction/rebinding, native tools, restart and exact replay.
+The report confirms shutdown before publication. Controlled responses establish integration and
+input isolation, not real-model quality.
+
+`cargo test -p milkdrift-evidence --test repository_contracts --all-features documentation::` passes
+all eight documentation contracts in `target/prompt02c-doc-contracts.log`. Diff whitespace checks
+pass, and an independent source/documentation review found no remaining actionable issue.
+
+Automated fixture owners were stopped and their roots preserved. The separate four-hour user-review
+fixture and production preview are recorded in the
+[handoff](virtual-office/daemon-workflows-implementation/handoff.md#local-review-fixture).
+Prompt 07 still owns the integrated full gate. No hosted CI, deployed HTTPS, real-model quality or
+actual-user acceptance is claimed; the interaction and substantive journey review remain open.
 
 ## Prompt 02b visual design verification
 
