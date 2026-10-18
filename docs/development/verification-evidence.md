@@ -14,12 +14,22 @@ After the 02b delivery at `90ce1ff`/`2840937`, the user reported excessive field
 navigation and an inability to discover creation of multiple workflows. Source inspection at that
 checkpoint confirmed that **+ New task** created a workflow, while adding to an existing workflow
 required the advanced batch editor. The subsequently assigned 02c correction addresses this rejected
-interaction design; its actual user acceptance remains open. The earlier browser asset load/click sequence
+interaction design; its subsequent user recheck is described below. The earlier browser asset load/click sequence
 was not captured. Earlier automated passes below remain functional evidence, not usability acceptance.
 
 Useful task output, close/reconnect, daemon switching, missing-input repair, failure and stop
 understanding have not yet been reported as completed by this user. Browser engine and physical-phone
 use were not established. Naming and visual preference acceptance also remain open.
+
+After the 02c delivery at `f71be73`/`4f21982`, the user rejected the remaining interface as too
+complicated and bloated, specifically naming input-binding/policy/source, task-identity/alias,
+output-name and project-path forms. They requested a canvas beside navigation, compact selected
+information on the left and direct input connections. Source inspection confirms these forms remain
+in the shared definition and batch editors; the delivered composer only hides part of that model.
+Prepared [02d](virtual-office/daemon-workflows-implementation/02d-canvas-and-direct-authoring.md)
+records the replacement and its required daemon support. It has not been assigned or implemented.
+The exact browser asset load and click sequence were not captured. Earlier passing tests remain
+functional evidence for 02c and do not overrule this rejection or validate the proposed canvas.
 
 ## Prompt 02c workspace and task creation verification
 
@@ -90,7 +100,8 @@ Automated fixture owners were stopped and their roots preserved. The separate fo
 fixture and production preview are recorded in the
 [handoff](virtual-office/daemon-workflows-implementation/handoff.md#local-review-fixture).
 Prompt 07 still owns the integrated full gate. No hosted CI, deployed HTTPS, real-model quality or
-actual-user acceptance is claimed; the interaction and substantive journey review remain open.
+actual-user acceptance is claimed; the subsequent user interaction review rejected 02c and the
+substantive journey remains open.
 
 ## Prompt 02b visual design verification
 

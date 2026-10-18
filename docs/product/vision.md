@@ -73,10 +73,17 @@ and credential. The client learns and remembers the daemon's stable identity, ex
 replacement, and keeps technical identity details out of ordinary setup. A display name is not an
 identity or a permission.
 
-The timeline runs left to right with titles, short descriptions, actual start and end times, and
-clear queued, running, completed, failed and stopped states. Parallel work and dependencies remain
-visible. Queued tasks have no fabricated start time. Method copies show origin; corrective tasks
-show what they address. An accessible list and inspector provide the same actions and information.
+The main workspace is a canvas for the selected workflow, beside persistent navigation. Task and
+input cards show work and its connections; selecting one opens compact details on the left without
+replacing the canvas. Text, captured files and task results connect directly to the work that uses
+them. People select recognizable sources and destinations instead of typing binding names or IDs.
+Keyboard and touch actions provide the same connection choices as dragging.
+
+Cards show clear queued, running, completed, failed and stopped states. Parallel work and dependencies
+remain visible. Spatial placement does not represent elapsed time: actual starts and settlements
+remain available in details and a secondary timeline, with no fabricated start for queued work.
+Method copies show origin; corrective tasks show what they address. An accessible list provides the
+same actions and information.
 
 Humans and agents can browse recent workflows and tasks and search retained results on their
 selected daemon without already knowing an ID. A fresh authorized client can discover ongoing work.
@@ -84,9 +91,11 @@ Closing a phone changes only observation, not execution.
 
 Creating a workflow and adding a task to an existing workflow are distinct, obvious actions. The
 client keeps the current daemon, workflow and nearby work visible while a person writes instructions
-and optionally supplies context. Ordinary task creation should not require technical identifiers,
-staging a batch or interpreting JSON. Advanced controls remain available when the work needs them;
-simpler presentation never silently changes the destination, executor or permissions.
+and optionally connects context. Ordinary task creation should not require technical identifiers,
+staging a batch or interpreting JSON. Connections, corrections and resource choices remain direct
+actions when work becomes more complex; they must not reveal a protocol form as the price of using
+those capabilities. Draft tasks and connections are submitted deliberately before they can execute.
+Simpler presentation never silently changes the destination, executor, failure handling or permissions.
 
 ## Keep the useful history, protect the necessary state
 

@@ -1,6 +1,6 @@
 # Roadmap
 
-The product account and technical choices are finished for the
+The product account and selected implementation choices are recorded for the
 [daemon-workflows implementation sprint](../development/virtual-office/daemon-workflows-implementation/README.md).
 **Prompt 03 is complete locally**: model-authored future batches, bounded tools, parallel research,
 correction and guarded human editing pass the assigned focused checks. The user's October 17
@@ -15,7 +15,12 @@ implements the supplied dark visual direction and exact logo across the client. 
 rejects its forms, navigation and unclear workflow creation. Subsequently assigned
 [02c](../development/virtual-office/daemon-workflows-implementation/02c-workspace-and-task-creation.md)
 implements contextual task creation, explicit workflow/addition actions and bounded navigation.
-The actual user recheck and remaining journey precede prompt 04. Prompt 03 stays complete and is not replayed.
+The user rejects its remaining page/form model and requests a canvas with left-side details and
+direct input connections. Prepared
+[02d](../development/virtual-office/daemon-workflows-implementation/02d-canvas-and-direct-authoring.md)
+replaces that authoring model and supplies the narrow daemon contracts needed for truthful connectors.
+It remains unassigned. That correction and the remaining actual journey precede prompt 04.
+Prompt 03 stays complete and is not replayed.
 Earlier checkpoints and stores remain preserved; no corrected hosted run is claimed.
 Prompts 04–07 remain unassigned; 07 owns the named
 final full-system test-and-repair gate. The superseded remedial P00–P09 is historical evidence only.
@@ -29,8 +34,10 @@ The new program delivers these outcomes in order:
 2. An actual early user review tests that journey and repairs behavior and usability findings.
    Its implemented 02a correction simplifies connection and shares the daemon's name; 02b applies the
    supplied visual direction and logo. Implemented 02c addresses the rejected authoring/navigation
-   experience. Recheck the working result and naming, then complete the substantive review
-   before adding methods. This insertion preserves the remaining prompt numbers and final gate.
+   experience, but its user recheck rejects the remaining protocol forms. Prepared 02d replaces them
+   with canvas authoring and compact left-side selection. Implement it when assigned, then recheck
+   the working result and naming and complete the substantive review before adding methods.
+   These insertions preserve the remaining prompt numbers and final gate.
 3. Models and humans build parallel research, composition and corrective future work through the
    same commands, with explicit readiness, authority and cumulative limits.
 4. A daemon-wide method library expands its current saved templates into editable local future tasks,

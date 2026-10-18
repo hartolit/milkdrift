@@ -10,6 +10,11 @@ the original visual design during the partial
 assignment repairs the maintained production Svelte client before more feature surfaces are added.
 It does not authorize 04 or revive the superseded frontend program.
 
+The later rejection of 02c prepares [02d](02d-canvas-and-direct-authoring.md). Once assigned, 02d
+supersedes this historical prompt's right-hand/stacked inspector and exclusion of graph authoring.
+The supplied brand and visual direction remain; the latest user request places selection on the
+left and makes the workflow canvas the main workspace.
+
 Read [AGENTS](../../../../AGENTS.md), canonical docs, [README](README.md),
 [ADR 0051](../../../decisions/0051-daemon-task-workflows.md), [journey](journey.md),
 [implementation](../../practices/implementation.md), [documentation](../../practices/documentation.md),

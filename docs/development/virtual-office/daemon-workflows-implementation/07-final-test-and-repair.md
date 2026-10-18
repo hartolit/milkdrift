@@ -1,6 +1,6 @@
 # 07 — Final full-system test and repair
 
-**Prepared, not assigned.** Prerequisites: 01–06 and corrective prompts 02a/02b/02c complete, both actual
+**Prepared, not assigned.** Prerequisites: 01–06 and corrective prompts 02a/02b/02c/02d complete, both actual
 user checkpoints recorded, focused checks passing, no known deferred in-scope defects. This is the
 named final acceptance owner
 under the [sprint schedule](README.md) and [verification policy](../../workflow.md).
@@ -42,7 +42,9 @@ mobile claims require recorded device/browser evidence beyond viewport dimension
 navigation, accessible labels and readable parallel/blocked/uncertain states in rendered UI.
 Include [02a's](02a-daemon-connection-identity.md) shared-name/reconnect/replay and identity-replacement
 regressions, and [02b's](02b-visual-design-and-brand.md) real-logo, responsive inspector and visual
-review evidence. Later method/host surfaces must use the same design. Passing automation does not
+review evidence. Include [02d's](02d-canvas-and-direct-authoring.md) direct source/result wiring,
+canvas/left-panel navigation, accessible connection actions, bounded partial graphs, retained-output
+validation and exact draft/batch recovery. Later method/host surfaces must use the same design. Passing automation does not
 replace the user's recorded response to these corrections.
 
 Exercise retention with controlled time, enough turnover to cross configured count/byte/page bounds,

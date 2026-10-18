@@ -12,7 +12,9 @@ The assigned 02b correction applies the supplied dark visual direction and real 
 client, with responsive navigation and a desktop task inspector. The user then rejected interaction
 usability: too many forms, disruptive navigation and unclear creation of multiple workflows. The
 assigned 02c correction implements distinct creation/addition actions, contextual authoring and
-workflow navigation. Its actual user recheck remains open. Prompt 04 waits for the completed early
+workflow navigation. The October 18 user recheck rejects it as still bloated and asks for a canvas,
+compact left-side details and direct input connections. Prepared 02d owns that replacement; it is
+not implemented or assigned. Prompt 04 waits for the correction and completed early
 review. Prompt 07 retains the final integrated gate. Hosted quality run 227
 failed on the earlier `e720bb9`; no later hosted pass is claimed.
 
@@ -81,8 +83,12 @@ stop requests, uncertainty and restart cannot refund unresolved work.
 ## Limitations now
 
 The dark workspace, real brand and compact authoring/navigation correction are implemented. The
-user has not yet rechecked the 02c result; earlier feedback rejected its predecessor. Naming and
-visual preference acceptance also remain unreported. Drafts are memory-only and are lost on reload
+user rejected 02c's remaining forms and page layout; the selected canvas/direct-authoring replacement
+is prepared in 02d. Current capability reads lack authoring ports, task results omit output-name
+mapping and queued supplied values lack a source read. Task-output validation still requires a
+producer declaration, including for already-published results. These gaps belong to 02d, not a
+browser-only drawing layer. Naming and visual preference acceptance remain unreported.
+Drafts are memory-only and are lost on reload
 or disconnect; accepted work remains daemon-owned. A new workflow still requires its first task.
 Rename receipts have a fixed capacity of 1,024; new renames refuse at capacity while reads and exact
 replay remain available.
@@ -121,7 +127,8 @@ drafts and focus, task-local context/files, exact recovery, explicit waits, stal
 authority loss. The affected Rust fixture passes five unit cases, scoped Clippy and the actual
 CLI/daemon journey, retaining eight tasks and three accepted model batches without client
 continuation. Desktop and narrow renders were inspected. These focused checks establish the
-implemented behavior; the user's interaction recheck remains pending.
+implemented behavior; the subsequent user recheck rejected the interaction. They do not validate the
+prepared canvas replacement or complete the substantive user journey.
 
 Prompt 02b passes frontend check/lint, 67 unit cases, production build and all 16 real-daemon
 Chromium cases, with focused reruns for the final render corrections. Desktop and 390-pixel views

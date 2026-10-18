@@ -14,8 +14,10 @@ locally, with the early user review in progress. The user's connection and visua
 corrective prompts 02a/02b before further feature work. Assigned 02a implements shared names and
 simpler setup. Assigned 02b applies the supplied visual direction and real logo. Subsequent feedback
 rejects its interaction design; subsequently assigned 02c implements compact authoring and workflow
-navigation. Prompts 04–07 remain unassigned. The actual user recheck, naming acceptance and the
-substantive early journey remain open.
+navigation. Its user recheck rejects the remaining page/form model. Prepared 02d replaces it with a
+workflow canvas, compact left selection panel and direct source connections; it remains unassigned.
+Prompts 04–07 remain unassigned. Acceptance of the correction, naming and the substantive early
+journey remain open.
 Its [handoff](daemon-workflows-implementation/handoff.md) records tested checkpoints,
 actual review observations and how to resume; the sprint README owns the next assignment.
 

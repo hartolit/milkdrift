@@ -11,7 +11,10 @@ corrective prompts rather than immediate code changes. Subsequently assigned
 [02a](02a-daemon-connection-identity.md) and [02b](02b-visual-design-and-brand.md) are implemented.
 The next feedback rejects the forms/navigation and cannot discover multiple-workflow creation.
 Subsequently assigned [02c](02c-workspace-and-task-creation.md) implements compact creation and
-navigation. Resume this substantive journey on the repaired client. Connection success alone does not complete this checkpoint. Keep
+navigation; the user then rejected its remaining page/form model. Prepared
+[02d](02d-canvas-and-direct-authoring.md) replaces that model with a canvas, compact left selection
+and direct input/result connections. Implement it when assigned before repeating the substantive
+journey. Connection success alone does not complete this checkpoint. Keep
 03's completed work; the next feature assignment after successful review is 04.
 
 Read [AGENTS](../../../../AGENTS.md), canonical docs, [sprint README](README.md),
@@ -37,8 +40,9 @@ fresh session and find both workflow and earlier result; switch to B and verify 
 resolve a missing input; inspect a failed task; request stop and understand whether it has stopped.
 Observe whether the user can identify the owner, selection/permissions, next available action and
 what persisted. Review intermediate results and authoring friction, not only appearance.
-After 02c, also have them create two workflows and add a second task to the first without coaching
-through internal terminology. Confirm they can find both workflows and understand the add destination.
+After 02d, also have them create two workflows, add a second task to the first and connect a real
+input/result without coaching through internal terminology. Confirm they can find both workflows,
+understand the destination and move between tasks while the canvas remains visible.
 
 Record who actually reviewed, environment, brief, actions, concrete findings and limitations in the
 single sprint handoff; retain redacted screenshots/logs under ignored evidence paths. Agent-only

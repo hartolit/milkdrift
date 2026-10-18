@@ -13,6 +13,9 @@ Recheck the early [02a connection](02a-daemon-connection-identity.md) and
 [02b visual](02b-visual-design-and-brand.md) findings across the added method/host/retention screens:
 simple setup, shared names across clients, real logo, visual fit, readable work and accessible
 navigation. Use the retained reference for appearance without reinstating its obsolete features.
+Recheck [02d's](02d-canvas-and-direct-authoring.md) canvas and direct-authoring correction across
+method-derived tasks and remote results: sources connect without protocol fields, selection keeps
+the workflow visible, and neither a new feature nor an error restores a long schema editor.
 
 ## Let the user perform the connected work
 

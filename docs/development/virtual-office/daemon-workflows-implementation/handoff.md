@@ -12,8 +12,10 @@ name with authorized rename and exact recovery. Subsequently assigned 02b applie
 visual direction and exact logo across the maintained client. The subsequent user recheck rejects
 the interaction design: excessive forms, disruptive navigation and unclear workflow creation.
 [02c](02c-workspace-and-task-creation.md) was subsequently assigned and implements those corrections.
-Its actual user recheck, naming acceptance and the substantive task journey remain open. Prompts 04–07 remain
-unassigned.
+The October 18 user recheck rejects that interaction as still bloated and asks for a canvas with
+left-side details and direct input connections. Prepared [02d](02d-canvas-and-direct-authoring.md)
+owns the replacement and its necessary daemon support; it remains unassigned. Naming acceptance
+and the substantive task journey remain open. Prompts 04–07 remain unassigned.
 Prompt 07 owns the integrated full-system gate. No push, history rewrite, external service change or
 paid model use occurred.
 
@@ -53,12 +55,38 @@ one. Runtime admission refuses empty workflows. These findings distinguish an un
 burdensome client path from missing multi-workflow support. The selected correction and its tradeoff
 are owned by [ADR 0051](../../../decisions/0051-daemon-task-workflows.md#browser-workspace-interaction).
 
+After the 02c delivery at `f71be73`/`4f21982`, the user reported that the interface is still
+“way too complicated and bloated.” They want the main workspace to be a canvas beside navigation,
+clicking between workflows/tasks while selected information appears on the left instead of taking
+over the view. They propose dragging input connectors to tasks and explicitly reject manually
+authoring “Input binding name,” “Input policy,” “Supplied input name,” “dependency task identity or
+batch alias,” “new output name” and “project path,” among other fields. This is direct user feedback,
+not an agent-observed click trace or proof of the exact assets loaded in their tab. No completed
+substantive output journey, naming acceptance or visual preference acceptance was reported.
+
+Source inspection confirms those fields in `TaskDefinitionEditor.svelte`, reached through the
+compact composer's advanced section and the future-batch editor. `App.svelte` still combines a
+workflow page with a separate composer; task details occupy a right-side or stacked inspector.
+The previous correction reduced the first form but retained the protocol-shaped editing model.
+The user's new left-panel requirement supersedes the older mockup's inspector placement.
+
+Two delegated source/interaction reviews, with the conversation and proposed direction available,
+challenged the ordinary and demanding paths. Inspection of actual owners identified required port,
+named-result and queued-input read projections, the declaration-only output binding restriction,
+native-path selection requirements and the race if accepted tasks start before wiring finishes.
+The selected design resolves these in the existing owners; the ADR owns the rules and tradeoffs.
+This review is planning evidence, not a working canvas demonstration or independent user acceptance.
+The prepared 02d removes the product schema editors, retains their useful actions through direct
+selection and keeps draft graphs local until one explicit guarded submission. No production code,
+store, running service or dependency changed in this planning response.
+
 | Finding | Owner and acceptance |
 | --- | --- |
 | Setup requires users to invent a local name and supply a technical identity. | [02a](02a-daemon-connection-identity.md) implemented address/credential setup, learned identity pin, durable shared name and authorized rename across clients/restart; the user's recheck is pending. |
 | Original appearance is rejected and the supplied brand is absent. | [02b](02b-visual-design-and-brand.md) implements the supplied visual direction and real logo. The subsequent feedback rejects interaction usability; visual preference acceptance is not reported. |
-| Too many authoring forms, disruptive navigation and unclear creation of multiple workflows. | Assigned [02c](02c-workspace-and-task-creation.md) implements explicit New workflow/Add task actions, a compact contextual composer and persistent workflow navigation. The user's recheck remains pending. |
-| No successful substantive journey has been reported. | Resume [02](02-early-user-review.md) after 02c: create two workflows and add to one, useful input-dependent work/results, closure/reconnect, switching, missing-input repair, failure and stop understanding remain open. |
+| Too many authoring forms, disruptive navigation and unclear creation of multiple workflows. | Assigned [02c](02c-workspace-and-task-creation.md) implemented explicit New workflow/Add task actions and bounded navigation. Its subsequent user recheck rejects the remaining forms and page layout. |
+| The workspace remains bloated; input/output relationships require protocol knowledge. | Prepared [02d](02d-canvas-and-direct-authoring.md) replaces the product authoring forms with a canvas, compact left selection and direct source/result connections, including the required daemon contracts. Not assigned or implemented; usability unverified. |
+| No successful substantive journey has been reported. | Resume [02](02-early-user-review.md) after assigned 02d: create two workflows, connect useful inputs/results, add to one, closure/reconnect, switching, missing-input repair, failure and stop understanding remain open. |
 
 The [retained mockup](assets/milkdrift-ui-sample.png) is byte-identical to the user's
 `/home/hartolit/Desktop/milkdrift-ui-sample.png`; SHA-256 is
@@ -71,13 +99,18 @@ The mockup's old controls do not
 authorize features. The original corrective planning changed no executable code; the subsequently
 assigned 02a changes connection and naming behavior, and 02b changes the client presentation.
 
-Next sequence: finish the actual 02 review including naming and interaction rechecks, then separately
-assign 04. The 02c implementation preserves existing stores and tested checkpoints. Automated
-verification does not establish that the usability rejection is resolved for the user.
+Next sequence: assign 02d, finish the actual 02 review including naming and interaction rechecks,
+then separately assign 04. The 02c implementation and this planning response preserve existing
+stores and tested checkpoints. Its automated checks do not settle the actual user's rejection.
 Preserve the completed 03 work and 04–07 numbering. Prompt 07 remains the sole integrated gate;
 this partial feedback is not user acceptance of the journey or the proposed corrections.
 
 ## Tested checkpoints and evidence
+
+The 02d planning change was checked against the current source and the ordinary/parallel/correction
+journeys. All eight documentation contracts pass in `target/prompt02d-planning-doc-contracts.log`;
+diff whitespace checks pass. These checks establish documentation consistency only. No canvas code,
+new contract or user-acceptance result was produced by this planning response.
 
 The 02c implementation checkpoint is `f71be73`. It provides a persistent bounded workflow rail and
 one compact composer for the first task of a new workflow or an ordinary addition to the selected
@@ -96,7 +129,8 @@ focus, receipt/replay recovery, stale generations, explicit waits and authority 
 existing advanced and automatic-work cases. The Rust fixture correction at `dcf5d17` passes five
 unit cases and the actual CLI/daemon journey. Its controlled planner now consumes the task's actual
 input brief instead of depending on the old composer's shared workflow input. Production runtime
-semantics are unchanged. These are implementation checks; actual user acceptance remains pending.
+semantics are unchanged. These are implementation checks; the subsequent user recheck rejects the
+remaining interaction. They are not verification of the prepared canvas replacement.
 
 The 02b implementation checkpoint is `90ce1ff`. It replaces the pale theme and literal brand mark,
 groups instructions/context/execution, adds responsive daemon navigation and a desktop side inspector,
@@ -227,6 +261,10 @@ leaves prompt 02 open and stops before prompt 04.
 
 ## Resume the visual and task review
 
+The current 02c client is the rejected baseline. Implement 02d only when explicitly assigned before
+asking the user to repeat the journey. Preserve the fixture roots and verify readiness at that time;
+the recorded four-hour endpoints are not a promise of an indefinitely running service.
+
 Reload the production preview to load the rebuilt client. Review the dark rail, warm text, supplied
 logo, compact workflow header and side inspector against the visual direction. The mockup's obsolete
 canvas, revision controls and event table are not present. The ordinary task timeline and public
@@ -242,6 +280,8 @@ for a queued task, then use its inspector to supply the missing input. Check whe
 uncertain and stop-requested work communicate what actually happened. **Hide inspector** keeps
 selection and edit drafts; on narrow screens **Workspace navigation** opens the rail.
 
-The latest feedback above rejects the predecessor to the implemented 02c creation/navigation path.
+The latest feedback above rejects the implemented 02c creation/navigation path and proposes the
+canvas/direct-authoring replacement. After 02d, include connecting a file and a real task result,
+then selecting other tasks without losing the canvas or opening protocol forms.
 Record the user's own actions and remaining objections here. Passing agent checks does not settle
 visual preference or complete this substantive review; no actual-user acceptance has been reported.

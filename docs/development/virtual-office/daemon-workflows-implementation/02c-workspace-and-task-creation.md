@@ -1,6 +1,12 @@
 # 02c — Make workflows and ordinary task creation understandable
 
-**Assigned; implemented locally, actual user recheck pending.** The user reviewed the 02b delivery and rejected its interaction design:
+**Implemented locally; user recheck rejected the remaining interaction.** This assignment was
+completed at `f71be73`; the subsequent user feedback requires the prepared
+[02d canvas replacement](02d-canvas-and-direct-authoring.md). Its instructions supersede this prompt's
+page/composer arrangement and preservation of protocol forms. Keep 02c's verified behavior and history;
+do not replay it as the current corrective assignment.
+
+The user reviewed the 02b delivery and rejected its interaction design:
 too many fields/forms, disruptive navigation, and no discoverable way to create multiple workflows.
 The [handoff](handoff.md#actual-user-review-and-corrections) records the actual feedback and source
 findings. Preserve 02a's naming behavior and 02b's supplied brand and visual direction. Complete this
