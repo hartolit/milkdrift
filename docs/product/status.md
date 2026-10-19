@@ -15,7 +15,10 @@ assigned 02c correction implements distinct creation/addition actions, contextua
 workflow navigation. The October 18 user recheck rejects it as still bloated and asks for a canvas,
 compact left-side details and direct input connections. The assigned 02d correction replaces the
 forms with that canvas and adds the daemon contracts needed by its connections. Its focused
-verification is complete; actual user acceptance remains open. Prompt 04 waits for completed early
+verification is complete; actual user acceptance remains open. The October 19 discussion selects
+daemon-owned projects, ordinary host folders and project-level execution settings. The resulting
+[02e correction](../development/virtual-office/daemon-workflows-implementation/02e-projects-and-execution-environments.md)
+is prepared, not assigned or implemented. Prompt 04 waits for this correction and completed early
 review. Prompt 07 retains the final integrated gate. Hosted quality run 227
 failed on the earlier `e720bb9`; no later hosted pass is claimed.
 
@@ -90,6 +93,13 @@ execution time includes simultaneous open attempts. Entry reserves enforceable a
 stop requests, uncertainty and restart cannot refund unresolved work.
 
 ## Limitations now
+
+There is no durable project catalog or workflow-to-project association yet. The current **Project**
+folder choices are filesystem grant roots, with file tools configured per task. Persistent process
+working directories are fixed by operator profiles. Managed Podman workers use installation-owned
+volumes and reject arbitrary host mounts. The selected project correction must make a user-chosen
+folder consistent across tools and add a verified attached-folder mode; selecting a model today does
+not provision a Rust project, toolchain or shared working directory automatically.
 
 The user rejected the earlier compact form layout. Canvas behavior and model assignment have
 focused verification; the actual user has not rechecked the replacement. Naming and visual

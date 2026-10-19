@@ -15,7 +15,9 @@ the interaction design: excessive forms, disruptive navigation and unclear workf
 The October 18 user recheck rejects that interaction as still bloated and asks for a canvas with
 left-side details and direct input connections. Assigned [02d](02d-canvas-and-direct-authoring.md)
 implements the replacement and its necessary daemon support; its focused verification is complete. Naming acceptance
-and the substantive task journey remain open. Prompts 04–07 remain unassigned.
+and the substantive task journey remain open. The October 19 project/environment discussion produces
+prepared [02e](02e-projects-and-execution-environments.md). Its design/preparation is authorized;
+production implementation is not assigned. Prompts 02e and 04–07 remain unassigned.
 Prompt 07 owns the integrated full-system gate. No push, history rewrite, external service change or
 paid model use occurred.
 
@@ -87,13 +89,39 @@ remain operator-configured daemon profiles; this change does not add a dynamic i
 or a new provider family. The setup guidance distinguishes these facts from selecting an existing
 connection. No actual model/agent endpoint or paid invocation was supplied or exercised.
 
+On October 19, the user asked where workflow work and generated project files live. They proposed
+daemon-owned projects containing workflows, using the attached desktop-app sidebar as an organizational
+reference, and questioned whether Podman-managed persistence conflicts with user-controlled folders.
+They approved preparing the correction after the explanation that project files can remain in ordinary
+host folders while Podman supplies an optional execution environment. This selects the product/design
+direction; it is not a report that the current UI supports projects or an instruction to implement 02e.
+
+Current source inspection found no project association in `WorkflowRecord` or workflow creation;
+session `project_roots` only projects filesystem grants. Process working directories are fixed by
+their profiles, native file tools address host paths, and managed workers accept one exact owned
+volume at `/workspace`. A separate delegated reviewer, with the conversation and proposed direction
+available, traced those boundaries and challenged the draft. The correction now requires one actual
+project binding across file/process/container tools, distinct inheritance versus empty permissions,
+exact replay before mutable-default resolution and honest directory-creation recovery. It preserves
+trusted-process limitations and excludes managed lifecycle commands from model tools. This is source
+and planning review, not executed project/Podman evidence or independent user acceptance.
+
+The selected semantics and alternatives are in
+[ADR 0051](../../../decisions/0051-daemon-task-workflows.md#projects-and-execution-environments).
+[02e](02e-projects-and-execution-environments.md) implements that boundary when assigned, including
+current-store adoption, shared project settings, verified Podman attachments and a real Rust
+create/edit/build/reconnect journey. The later method, remote and final-review prompts carry its
+dependencies without changing their numbers. This planning correction changes no production code,
+stores, running services or environment configuration.
+
 | Finding | Owner and acceptance |
 | --- | --- |
 | Setup requires users to invent a local name and supply a technical identity. | [02a](02a-daemon-connection-identity.md) implemented address/credential setup, learned identity pin, durable shared name and authorized rename across clients/restart; the user's recheck is pending. |
 | Original appearance is rejected and the supplied brand is absent. | [02b](02b-visual-design-and-brand.md) implements the supplied visual direction and real logo. The subsequent feedback rejects interaction usability; visual preference acceptance is not reported. |
 | Too many authoring forms, disruptive navigation and unclear creation of multiple workflows. | Assigned [02c](02c-workspace-and-task-creation.md) implemented explicit New workflow/Add task actions and bounded navigation. Its subsequent user recheck rejects the remaining forms and page layout. |
 | The workspace remains bloated; input/output relationships require protocol knowledge. | Assigned [02d](02d-canvas-and-direct-authoring.md) replaces the product authoring forms with a canvas, compact left selection and direct source/result connections, including the required daemon contracts. Implementation and focused checks are complete; the actual user's recheck remains open. |
-| No successful substantive journey has been reported. | Resume [02](02-early-user-review.md) after assigned 02d: create two workflows, connect useful inputs/results, add to one, closure/reconnect, switching, missing-input repair, failure and stop understanding remain open. |
+| Project location, daemon execution and Podman's role are unclear; related workflows need project grouping. | Prepared [02e](02e-projects-and-execution-environments.md) adds daemon-owned project registrations around user folders and consistent project-level environments. Design selected; implementation and user review remain open. |
+| No successful substantive journey has been reported. | Resume [02](02-early-user-review.md) after assigned 02e: select a project, locate real output files, create two workflows, connect useful inputs/results, add to one, closure/reconnect, switching, missing-input repair, failure and stop understanding remain open. |
 
 The [retained mockup](assets/milkdrift-ui-sample.png) is byte-identical to the user's
 `/home/hartolit/Desktop/milkdrift-ui-sample.png`; SHA-256 is
@@ -106,13 +134,24 @@ The mockup's old controls do not
 authorize features. The original corrective planning changed no executable code; the subsequently
 assigned 02a changes connection and naming behavior, and 02b changes the client presentation.
 
-Next sequence: finish the actual 02 review including naming, interaction and model-assignment rechecks,
-then separately assign 04. The 02c checkpoint and 02d implementation preserve existing
+The [project sidebar reference](assets/project-sidebar-reference.png) is the unchanged October 19
+attachment from `/tmp/codex-clipboard-6fa7640f-9192-45da-8023-b97f21a915b6.png`, SHA-256
+`e480cbd34fc683a7ae06b75856435f29595bf6657f34e145ec247fc2f8fb64b3`. It illustrates grouping only;
+its app controls and behavior are not Milkdrift requirements or implemented-product evidence.
+
+Next sequence: explicitly assign 02e, finish the actual 02 review including project/files/environment,
+naming, interaction and model-assignment rechecks, then separately assign 04. The 02c checkpoint and 02d implementation preserve existing
 stores and tested checkpoints. Its automated checks do not settle the actual user's rejection.
 Preserve the completed 03 work and 04–07 numbering. Prompt 07 remains the sole integrated gate;
 this partial feedback is not user acceptance of the journey or the proposed corrections.
 
 ## Tested checkpoints and evidence
+
+The 02e planning correction was reviewed against the current project, task, process and managed-worker
+owners, then reread by the delegated reviewer after the identified corrections. All eight documentation
+contracts pass with `cargo test -p milkdrift-evidence --test repository_contracts --all-features documentation::`;
+`git diff --check` passes. These are planning/documentation checks only. Production code remains at
+`25bcdda`, handed off in `a91e86f`; no new project execution or physical Podman evidence is claimed.
 
 Implementation checkpoint `25bcdda` contains the tested 02d code and current owner documentation.
 The implemented 02d replaces the product forms with one canvas and compact left selection, direct
@@ -292,10 +331,16 @@ leaves prompt 02 open and stops before prompt 04.
 
 ## Resume the visual and task review
 
-The 02c client is the rejected baseline. Review the rebuilt 02d client, whose focused checks are complete.
+The 02c client is the rejected baseline. The rebuilt 02d client has completed focused checks, but does
+not implement the selected project model. Execute 02e only when assigned, then rebuild its review
+environment before asking the user to assess project setup or execution location. The older fixture
+below remains useful only for its existing canvas/model-selection behavior.
 Preserve fixture roots and check readiness; a four-hour endpoint is not an indefinitely running service.
 
-The first useful review is to create two workflows, add another task to the first, switch between
+After 02e, first attach/create a folder on the named daemon, choose its environment and locate the
+real files from a useful coding task. Reconnect from a fresh client and find the same project and
+workflows. Verify that the user can explain the distinction between model selection and tool location.
+Then create two workflows, add another task to the first, switch between
 them and inspect a result without a protocol tutorial. Connect a Cargo manifest to the process task,
 then connect its real result to a model task. Selecting cards should change only the compact left
 panel; closing it should return focus to the same canvas. Include the visible **Model or agent**

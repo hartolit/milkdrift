@@ -11,10 +11,13 @@ corrective prompts rather than immediate code changes. Subsequently assigned
 [02a](02a-daemon-connection-identity.md) and [02b](02b-visual-design-and-brand.md) are implemented.
 The next feedback rejects the forms/navigation and cannot discover multiple-workflow creation.
 Subsequently assigned [02c](02c-workspace-and-task-creation.md) implements compact creation and
-navigation; the user then rejected its remaining page/form model. Prepared
+navigation; the user then rejected its remaining page/form model. Subsequently assigned
 [02d](02d-canvas-and-direct-authoring.md) replaces that model with a canvas, compact left selection
-and direct input/result connections. Implement it when assigned before repeating the substantive
-journey. Connection success alone does not complete this checkpoint. Keep
+and direct input/result connections; focused checks are complete. Prepared
+[02e](02e-projects-and-execution-environments.md) addresses the subsequent confusion about project
+folders and execution environments. Implement it when assigned before completing the substantive
+journey. Include selecting/creating a project and locating the actual files its tools changed.
+Connection success alone does not complete this checkpoint. Keep
 03's completed work; the next feature assignment after successful review is 04.
 
 Read [AGENTS](../../../../AGENTS.md), canonical docs, [sprint README](README.md),

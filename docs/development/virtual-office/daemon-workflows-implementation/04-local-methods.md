@@ -4,7 +4,8 @@
 limits, the [02a connection correction](02a-daemon-connection-identity.md),
 [02b visual correction](02b-visual-design-and-brand.md),
 [02c interaction correction](02c-workspace-and-task-creation.md),
-[02d canvas replacement](02d-canvas-and-direct-authoring.md) and completed early user review.
+[02d canvas replacement](02d-canvas-and-direct-authoring.md),
+[02e projects and environments](02e-projects-and-execution-environments.md) and completed early user review.
 Deliver the reusable project-setup method in the same production workflow and clients.
 No child workflow runtime, published method service or definition-time pinned copy supplies this use.
 
@@ -14,6 +15,15 @@ theme. This phase adds method behavior to the reviewed client rather than replac
 Extend 02d's canvas, source connectors and compact left selection panel. Choose method inputs from
 real sources and expose materialized tasks in that same canvas. Choosing or editing a method must
 not restore raw binding/alias/output forms, the full batch editor or a separate authoring wizard.
+
+Keep the library daemon-wide while each method use belongs to its consuming workflow's project.
+The queued use records the reviewed project settings generation; changes require an explicit refresh
+before activation can accept it. At accepted expansion, resolve those defaults through 02e's
+shared command boundary and retain them with the expansion snapshot; recovery never re-resolves
+newer settings. A template cannot grant filesystem access, select another project's folder by name
+or carry an author's absolute path as an implicit destination. Surface changed settings or unavailable
+tools before entry and require an explicit refreshed choice when needed. Project setup content creates
+source inside the selected project; it does not secretly register another project or move its folder.
 
 Read [AGENTS](../../../../AGENTS.md), canonical docs, [implementation](../../practices/implementation.md),
 [documentation](../../practices/documentation.md), [workflow](../../workflow.md),
@@ -79,6 +89,9 @@ then run documentation contracts and diff checks. The full workspace gate remain
 
 Prove through production operations:
 
+- A queued use blocks when its reviewed project settings change; explicit refresh permits activation.
+  An accepted expansion and restart retain the effective environment recorded at acceptance, while
+  current authority is still enforced before tool entry.
 - The same queued use expands saved body B after owner save A→B; renaming does not change identity.
 - Faults before acceptance, after snapshot acceptance, during atomic commit and after commit before
   reply never duplicate tasks or reselect body C for an accepted B expansion. Reopen the actual store.

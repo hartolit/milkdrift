@@ -5,7 +5,8 @@ below selected after partial user review. Implementation through prompt 03 and t
 connection and visual corrections is recorded in status. The subsequent workspace interaction
 correction was implemented in assigned 02c and rejected in the October 18 user recheck. The canvas
 replacement below is implemented and passes 02d's focused checks; it is not user-accepted. Later phases
-require their own assignments.
+require their own assignments. The October 19 project/environment correction below is selected for
+the prepared 02e assignment; its implementation has not been assigned.
 [Vision](../product/vision.md) owns the requirements;
 [status](../product/status.md) owns implemented facts. The
 [implementation sprint](../development/virtual-office/daemon-workflows-implementation/README.md)
@@ -28,9 +29,102 @@ generations explain changes without exposing a Git-like hierarchy to users.
 The following choices are engineering defaults, not quotations from the user. They are concrete
 enough to implement; evidence from the required user reviews can justify changing them.
 
+## Projects and execution environments
+
+The selected hierarchy is **daemon → project → workflow**, with tasks on a workflow's canvas.
+The October 19 user review asks for familiar project grouping, a clear execution location and
+control over ordinary project folders. The user approved preparing this correction after discussing
+Podman. That approval selects this design; it does not claim the behavior is implemented.
+
+A project is a durable daemon-owned registration of a name, one local folder and default execution
+settings. It has a daemon-issued identity, an authorization scope and a guarded generation. The
+folder belongs to the user and remains usable through ordinary editors and Git. **Project** is the
+user-facing term; temporary invocation directories, the canvas and containers do not introduce a
+second workspace hierarchy. New workflows name a project. Existing workflows remain discoverable
+under **Earlier workflows** until explicitly associated; association changes organization and defaults
+for new submissions without rewriting accepted definitions, provenance, artifacts or receipts.
+
+Project creation offers attaching an existing permitted folder or creating one new child beneath an
+existing permitted parent on the owning daemon. Authorized, bounded directory choices come from that
+daemon, with its name visible; a client folder picker cannot supply host authority. Registration is
+not a grant: project operations, root access and capabilities are checked through the existing
+authority owner. Discovery filters before returning names, paths, counts or defaults. Duplicate
+canonical folders cannot acquire independent coordination merely by registering another label.
+
+Resolve and pin native directory identity through the existing path owner. Missing, replaced or
+escaped roots refuse new execution without changing accepted facts. Folder creation records exact
+intent before exclusive creation and durable acceptance afterward; filesystem effects and redb are
+not one atomic transaction. An interrupted creation with unprovable ownership remains unresolved.
+Explicit reconciliation may attach the inspected existing folder or abandon registration while
+preserving its files. Retry never merges contents, chooses a second folder or deletes a disputed one.
+Project removal unregisters only an unused project; workflows and unresolved uses protect references.
+Rename changes its label, not its directory. Folder moves, deletion and Git lifecycle are outside this
+correction; an externally moved folder is reported unavailable rather than silently replaced.
+
+Project settings select configured **host tools** or a **Podman environment**, and establish the
+permitted default tool/file access. The initial setting grants no write tools; an authorized person
+can explicitly allow project changes once. The task shows its effective environment, project access
+and selected model/agent without requiring repeated paths or tool configuration. Models and agents
+remain separate capability choices: an external model may use tools on the owning daemon.
+
+The shared command path resolves reviewed project defaults into each newly accepted task definition,
+including human edits, model-created work and later method expansion. Omitted project defaults are
+not browser decisions. Guard the observed settings generation; reject stale submissions with the
+draft intact. Exact request lookup precedes current-default resolution, retaining the original public
+request and its accepted result. Default changes affect new submissions only. Already accepted queued
+tasks need explicit prospective edits; started work keeps its frozen selection. Current authority and
+resource availability remain checked at entry. Defaults never expand the actor's grant, enable model
+continuation or override workflow limits.
+
+Represent **use project settings** separately from explicit task settings: empty tool/access choices
+remain empty. Validate coupled environment, folder, access and tool choices together. Editing only
+instructions or a title preserves accepted selections instead of inheriting newer project defaults.
+
+One effective project binding must govern file tools, process working directory, model tool context
+and any container mount. Fixed-directory process profiles cannot silently run against a different
+project. Incompatible tools refuse before entry with a useful reason. Extend only the needed typed
+adapter/preparation contracts; keep one runtime and the existing capability registry. Record actual
+execution provenance separately from mutable project labels/settings.
+
+Podman remains an optional execution mechanism. A selected host project folder is an explicitly
+authorized attachment at `/project` with matching read/write access and working directory; existing
+installation-owned `/workspace` data may retain its separate tooling/cache role. Attached folders
+never become owned disposable volumes. Preserve existing owned-volume workers and their exact mount,
+generation, lifetime, uncertainty and cleanup protections. The new attachment mode must verify its
+actual mounts and identity rather than relaxing those checks for all workers. User-file ownership
+and permissions must survive execution: do not carry the owned volume's recursive `:U` ownership
+change onto attached projects or silently relabel them. Unsupported user mappings/host prerequisites
+refuse with an actionable setup explanation. No privileged fallback or engine socket reaches a worker.
+
+Removing/replacing an environment or collecting workflow history preserves project files. All local
+Milkdrift-managed writers, including host processes and containers in different workflows, use the
+same native path coordination. Uncertain writers retain their claims. Separate prepared worktrees support parallel
+alternatives; containers sharing one folder do not isolate changes from each other. Automatic Git
+checkout, branches, merging and rollback are not added here.
+
+Native claims coordinate declared operations; they do not lock out external editors or sandbox
+trusted host processes. A mutation-capable process or coding agent is a writer even when the native
+write-file tool is absent.
+Read-only work excludes such tools unless their execution boundary enforces read-only access. Keep
+the distinction visible rather than describing a host process as container-isolated. Bounded managed
+workers may remain model process tools; generic installation lifecycle operations remain excluded.
+
+The owning daemon is the default execution location. Remote tools in the later connection assignment
+need an explicit remote working location or bounded transferred inputs/results; a local path has no
+implied meaning on another host. No implicit shared filesystem, project synchronization or remote
+workflow ownership is introduced.
+
+This choice separates user file organization from replaceable tooling. Continuing with only per-task
+root fields would leave project organization and consistent working directories unresolved. Making
+every project an owned Podman volume would retain the current worker mechanism but obscure normal
+folder management; dropping Podman would lose its useful environment boundary. The selected correction
+retains host-folder projects and optional verified container execution. Current fixed process paths,
+task root permissions and owned-volume workers remain implementation facts until 02e replaces their
+project-facing composition. [Status](../product/status.md) records that gap.
+
 ## Tasks, inputs and files
 
-A workflow has a daemon-issued ID, title, brief, owner/access scope, project-root grant, monotonic
+A workflow has a daemon-issued ID, title, brief, owner/access scope, project association, monotonic
 edit generation, lifecycle and cumulative allowance. A task has a stable workflow-local ID, title,
 description, instructions, named bindings, explicit dependencies, configured capability selection,
 output declarations and optional origin/addresses links. Research and composition are roles, not
@@ -139,6 +233,12 @@ owner ACLs, save generation and canonical content digest. A save installs a comp
 body: parameters, ordinary tasks/dependencies, named result exports and nested local method refs.
 Consumers may use but not edit it. A queued use records ID and bindings, not a pinned body. Renames
 preserve identity. No published-version hierarchy is needed.
+
+Separately, the queued use records its reviewed project settings generation. Changed settings block
+activation until an authorized refresh; they cannot silently redirect work to another environment.
+Expansion resolves the reviewed project settings through the shared command path and records the
+effective folder, environment, tools and access with the accepted snapshot. Recovery uses those
+values without consulting newer defaults. This guard does not pin template content before activation.
 
 At activation resolve the latest saved root and reachable nested templates in one consistent library
 snapshot. Retain bodies, digests, origin identities and deterministic template-local-to-workflow ID

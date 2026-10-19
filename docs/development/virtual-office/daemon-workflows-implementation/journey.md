@@ -75,6 +75,40 @@ connections with compact left-side selection. Its focused checks are complete; f
 the substantive journey above. These remain acceptance
 requirements; the initial connection report and mockup are not evidence that the corrections work.
 
+## Give the work a project home: correction 02e
+
+Use [02e](02e-projects-and-execution-environments.md) after its explicit assignment. On daemon A,
+attach a disposable existing folder containing a small Rust project, then create a second project
+under an authorized existing parent. The UI identifies the daemon whose folders it is showing.
+Create two workflows under the first project and one under the second. Another daemon has a project
+with the same display name. A fresh authorized client must discover the correct grouping without
+retaining browser state or guessing an absolute path.
+
+Associate the earlier animation workflow deliberately without changing any of its accepted tasks
+or receipts. Submit new work using its reviewed project settings. A selected model invokes actual
+tools to create/edit source and compile it in the chosen folder. Reuse the same supported environment
+with another project so a fixed fixture directory cannot impersonate project selection. Observe both
+the files on disk and the retained result. Selecting a project must bind native file paths, process
+working directory and any container attachment consistently.
+
+Exercise a host environment and the explicit Podman project attachment. The latter exposes that
+same folder at `/project`; edits remain visible from the host after the worker exits and the environment
+is reapplied. Verify ownership/modes and preservation of unrelated existing content. Project defaults
+change only new submissions; an older queued task and a title-only edit retain their selections.
+Explicit no-tools/no-access settings stay empty. A stale settings submission preserves its draft.
+Read-only file/container boundaries deny writes; trusted host processes retain their documented limits.
+
+Interrupt folder creation around its external effect and durable acceptance, then restart. Inspect
+the exact original receipt or truthful unresolved creation; no alternate folder, silent adoption or
+deletion appears. Test hidden project discovery, root substitution and aliasing across competing
+workflows, including an uncertain writer. Removal of an unused project registration or its environment
+preserves user files. Missing physical Podman access remains a qualification gap, not a simulated pass.
+
+Have the actual user perform project setup and locate produced files without a protocol tutorial.
+Record whether the daemon/project/workflow navigation and model-versus-environment distinction are
+understandable. These observations join the still-open early review; they do not replace its useful
+result, reconnect, failure and stop cases. Carry the accepted project binding into the following phases.
+
 ## Growing the same workflow: phases 03–05
 
 Phase 03 extends the retained production task/client path with model-produced actions. Phases 04 and
@@ -136,6 +170,12 @@ are `project_name`, `brief` and `approach`; ordinary tasks create `Cargo.toml`, 
 `README.md` and `docs/architecture.md`, then validate the project and export `project_manifest`.
 Use a nested local method for one reusable documentation task. This is test library content, not
 special animation behavior in Milkdrift. Consumers can use it across workflows without edit rights.
+
+The consuming workflow already belongs to a project. Setup writes inside that folder and uses its
+reviewed execution settings through 02e's shared resolution; `project_name` is content for the generated
+application, not an instruction to register another project. A queued use whose reviewed project
+settings changed waits for explicit refresh. Accepted expansion records its effective settings so
+recovery cannot pick newer ones. A template cannot inherit its author's private absolute paths or grants.
 
 Hold `research-data-fix` at its external response so `setup` remains queued. The owner saves a new
 root body that adds a documented parser error case and saves a new nested documentation body.

@@ -16,8 +16,10 @@ simpler setup. Assigned 02b applies the supplied visual direction and real logo.
 rejects its interaction design; subsequently assigned 02c implements compact authoring and workflow
 navigation. Its user recheck rejects the remaining page/form model. Assigned 02d replaces it with a
 workflow canvas, compact left selection panel and direct source connections; its focused verification
-is complete.
-Prompts 04–07 remain unassigned. Acceptance of the correction, naming and the substantive early
+is complete. The October 19 project/environment discussion produces prepared
+[02e](daemon-workflows-implementation/02e-projects-and-execution-environments.md): daemon-owned projects,
+user-controlled folders and project-level host/Podman execution settings.
+Prompts 02e and 04–07 remain unassigned. Acceptance of the corrections, naming and the substantive early
 journey remain open.
 Its [handoff](daemon-workflows-implementation/handoff.md) records tested checkpoints,
 actual review observations and how to resume; the sprint README owns the next assignment.

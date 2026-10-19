@@ -1,6 +1,6 @@
 # 07 — Final full-system test and repair
 
-**Prepared, not assigned.** Prerequisites: 01–06 and corrective prompts 02a/02b/02c/02d complete, both actual
+**Prepared, not assigned.** Prerequisites: 01–06 and corrective prompts 02a/02b/02c/02d/02e complete, both actual
 user checkpoints recorded, focused checks passing, no known deferred in-scope defects. This is the
 named final acceptance owner
 under the [sprint schedule](README.md) and [verification policy](../../workflow.md).
@@ -46,6 +46,13 @@ review evidence. Include [02d's](02d-canvas-and-direct-authoring.md) direct sour
 canvas/left-panel navigation, accessible connection actions, bounded partial graphs, retained-output
 validation and exact draft/batch recovery. Later method/host surfaces must use the same design. Passing automation does not
 replace the user's recorded response to these corrections.
+
+Include [02e's](02e-projects-and-execution-environments.md) project discovery/adoption and exact
+creation recovery, consistent file/process/container working location, guarded settings resolution,
+cross-workflow path coordination and user-file preservation. Reopen a current sprint store and replay
+pre-project receipts. Carry any unperformed physical Podman attachment qualification into this gate;
+deterministic mechanism checks alone do not close it. Method expansion and remote tools must preserve
+project context without inheriting unavailable roots or treating local paths as remote paths.
 
 Exercise retention with controlled time, enough turnover to cross configured count/byte/page bounds,
 reference changes racing collection, accepted expansion holds, pending results, unresolved remote

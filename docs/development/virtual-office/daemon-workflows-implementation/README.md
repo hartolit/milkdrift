@@ -10,8 +10,11 @@ could not discover multiple-workflow creation. Subsequently assigned 02c impleme
 task addition and workflow navigation. The October 18 recheck rejects its remaining forms and page
 layout. Assigned 02d replaces them with canvas authoring, compact left-side selection and direct
 source connections backed by narrow daemon contracts; implementation and focused verification are complete. Naming acceptance and
-the remaining substantive early review are pending.
-Prompts 04–07 remain unassigned.
+the remaining substantive early review are pending. The October 19 discussion selects daemon-owned
+projects and user-controlled folders with project-level execution environments. Prepared
+[02e](02e-projects-and-execution-environments.md) owns that correction, including explicit Podman
+project attachments; the user approved its preparation, not production implementation.
+Prompts 02e and 04–07 remain unassigned.
 The consumer/CI retirement,
 required-input absence and cumulative-time defects pass focused regressions and the complete strict
 static gate at `c9e9809`. Publication and a corrected hosted run remain pending. Tested local
@@ -22,7 +25,7 @@ The former remedial P00–P09 is superseded and must not be resumed.
 
 ## Outcome and design
 
-A person starts meaningful work in standalone Svelte, closes the client, then reconnects and finds
+A person selects a project on a daemon, starts meaningful work in standalone Svelte, closes the client, then reconnects and finds
 its results. The owning daemon accepts model-created research, composition and corrective tasks,
 expands the current saved method locally, and uses remote environments as tools. The selected canvas
 explains work and its inputs; compact details and a secondary timeline expose actual progress,
@@ -68,7 +71,7 @@ service permissions. Missing real-user/external prerequisites remain explicit ev
 
 Prompt 03 has completed its focused acceptance. Assigning one prompt authorizes its whole
 responsibility and local coherent commits; it does not silently assign its successor.
-After the completed 02d correction, the next order is **finish 02 review → 04 → 05 → 06 → 07**.
+After the completed 02d correction, the next order is **02e → finish 02 review → 04 → 05 → 06 → 07**.
 The correction labels preserve the original phase numbers; 03 is already done. Existing 04–07
 prompts included review/repair but did not explicitly assign this visual reference, real logo or
 browser onboarding change. Prompt 05's shared connections concern execution hosts, not browser labels.
@@ -81,8 +84,9 @@ browser onboarding change. Prompt 05's shared connections concern execution host
 | 02b | [Visual direction and real brand](02b-visual-design-and-brand.md) | 02a focused checks; explicit assignment | Supplied dark visual direction and logo across the real client; user rechecks the result and resumes 02. |
 | 02c | [Workspace and ordinary task creation](02c-workspace-and-task-creation.md) | Rejected 02b interaction review; explicit assignment | Obvious New workflow/Add task actions, compact contextual authoring and stable navigation; actual user rechecks the journey. |
 | 02d | [Canvas and direct authoring](02d-canvas-and-direct-authoring.md) | Rejected 02c interaction review; explicit assignment | Persistent workflow canvas, compact left selection panel and direct source/result connections; protocol forms removed and real daemon metadata supports the interaction. |
+| 02e | [Projects and execution environments](02e-projects-and-execution-environments.md) | October 19 selected design; 02d focused checks; explicit assignment | Daemon-owned projects group workflows around ordinary user folders; project defaults bind host/Podman tools consistently and preserve files across environment changes. |
 | 03 | [Evolving work and parallel research](03-evolving-work.md) | User authorized proceeding with 02 pending | Ordinary model tasks admit parallel research, composition, correction and bounded continuation through the same commands as humans. |
-| 04 | [Reusable methods](04-local-methods.md) | 03; 02a/02b/02c/02d; completed 02 review | Current saved templates expand locally, with input repair, owner rights, import/export and exact interrupted recovery. |
+| 04 | [Reusable methods](04-local-methods.md) | 03; 02a/02b/02c/02d/02e; completed 02 review | Current saved templates expand locally, with input repair, owner rights, import/export and exact interrupted recovery. |
 | 05 | [Remote tools and retention](05-remote-tools-and-retention.md) | 04 | Persistent connection administration, remote uncertainty/recovery and protected rolling retention across clients. |
 | 06 | [Combined user review and repair](06-combined-user-review.md) | 05; actual user | The full animation journey and different-project reuse work in production UI; consequential feedback is fixed. |
 | 07 | [Final full-system test and repair](07-final-test-and-repair.md) | 06 and all focused checks | Full current Rust/frontend gates and combined journey pass on repaired code; accurate limits and handoff. |
@@ -97,7 +101,7 @@ refusal/recovery, all affected daemon/client consumers, removed superseded paths
 evidence. Listed files/cases do not limit in-scope correction. No foundational choice is deferred to
 implementation discovery; inspect source to implement the selected responsibilities and catch drift.
 
-Run focused checks with every changed boundary, including 02a/02b/02c/02d, and fix known failures immediately.
+Run focused checks with every changed boundary, including 02a/02b/02c/02d/02e, and fix known failures immediately.
 Compile affected packages/callers, test intended filters using discovery, run applicable documentation/example checks,
 and inspect the diff. Commit coherent tested changes regularly, with explicit staging and
 `git diff --cached --check`; preserve checkpoints without squashing, rebasing or pushing.
@@ -130,10 +134,12 @@ scope when their prompt is explicitly assigned. Inference, new provider families
 remote workflow ownership, permanent knowledge systems and unrelated primitives remain excluded.
 Do not ask the user to choose routine implementation organization already settled by this packet.
 
-The user assigned 02d and its implementation and focused checks are complete. Resume the actual
-[02 review](02-early-user-review.md) using the current environment and actions in the
-[handoff](handoff.md#resume-the-visual-and-task-review). Have the user create useful work, connect
-an input/result, switch between tasks and recheck naming and model assignment. Record what they
+The user assigned 02d and its implementation and focused checks are complete. The next prepared
+assignment is [02e](02e-projects-and-execution-environments.md). After its explicit assignment and
+focused checks, resume the actual [02 review](02-early-user-review.md) using the current environment
+and actions in the [handoff](handoff.md#resume-the-visual-and-task-review). Have the user choose a
+project, create useful work, locate its files, connect an input/result, switch between tasks and
+recheck naming, model assignment and execution environment. Record what they
 actually do and where the interface still gets in their way. Their earlier feedback remains valid;
 automated passes do not establish acceptance. Preserve existing stores, services and checkpoints.
 Prompt 04 still requires its own assignment after this review; prompt 07 owns the integrated gate.

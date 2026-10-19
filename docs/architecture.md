@@ -28,6 +28,19 @@ one atomic request. Mechanical `RunId`, `RevisionId`, `NodeId` and attempt coord
 frozen task provenance through independent capability and peer contracts; they do not identify
 an alternate graph scheduler.
 
+### Selected project boundary
+
+The next selected correction adds daemon-owned project registrations and a project reference on
+new workflows. The project identifies a user-controlled local folder and default execution settings;
+accepted task definitions retain the effective settings used for that work. The existing runtime,
+capability host and adapters continue to schedule and execute it. Host file access, process working
+directories and Podman attachments must resolve to the same authorized folder.
+
+This boundary is not implemented yet: current workflow records have no project association, session
+root choices reflect filesystem grants, process directories are profile configuration, and managed
+workers use owned volumes. [ADR 0051](decisions/0051-daemon-task-workflows.md#projects-and-execution-environments)
+owns the selected defaults, adoption and lifetime rules; [status](product/status.md) owns delivery.
+
 ## Owners and dependency direction
 
 | Owner | Responsibility |

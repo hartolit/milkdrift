@@ -19,11 +19,15 @@ The user rejects its remaining page/form model and requests a canvas with left-s
 direct input connections. Assigned
 [02d](../development/virtual-office/daemon-workflows-implementation/02d-canvas-and-direct-authoring.md)
 replaces that authoring model and supplies the narrow daemon contracts needed for truthful connectors.
-Its implementation and focused verification are complete. The remaining actual journey and user
-recheck precede prompt 04.
+Its implementation and focused verification are complete. The October 19 review identifies the
+missing project home and unclear relationship between folders and execution environments. Prepared
+[02e](../development/virtual-office/daemon-workflows-implementation/02e-projects-and-execution-environments.md)
+adds daemon-owned projects, workflow grouping, shared execution defaults and explicit Podman project
+attachments while preserving user folders. The user approved preparing this correction; implementation
+requires its own assignment. The next order is **02e → finish 02 review → 04 → 05 → 06 → 07**.
 Prompt 03 stays complete and is not replayed.
 Earlier checkpoints and stores remain preserved; no corrected hosted run is claimed.
-Prompts 04–07 remain unassigned; 07 owns the named
+Prompts 02e and 04–07 remain unassigned; 07 owns the named
 final full-system test-and-repair gate. The superseded remedial P00–P09 is historical evidence only.
 
 [Vision](vision.md) owns the intended experience, [ADR 0051](../decisions/0051-daemon-task-workflows.md)
@@ -36,7 +40,8 @@ The new program delivers these outcomes in order:
    Its implemented 02a correction simplifies connection and shares the daemon's name; 02b applies the
    supplied visual direction and logo. Implemented 02c addresses the rejected authoring/navigation
    experience, but its user recheck rejects the remaining protocol forms. Assigned 02d replaces them
-   with canvas authoring and compact left-side selection. Its focused checks are complete; recheck
+   with canvas authoring and compact left-side selection. Its focused checks are complete. Prepared
+   02e makes projects and their execution location explicit; implement it when assigned, then recheck
    the working result and naming and complete the substantive review before adding methods.
    These insertions preserve the remaining prompt numbers and final gate.
 3. Models and humans build parallel research, composition and corrective future work through the

@@ -10,6 +10,31 @@ experience. [Architecture](../architecture.md) distinguishes existing owners fro
 replacement design; [the roadmap](roadmap.md) identifies the remaining implementation assignments.
 The preceding vision remains in Git and the `milkdrift-pre-product-reset-2026-10-12` tag.
 
+## Projects give work a persistent home
+
+People navigate **daemon → project → workflow**. A project groups related workflows around an
+ordinary folder on the owning daemon's machine. A person attaches an existing folder or creates a
+new one in a permitted location there. The daemon remembers the project's name, location and
+execution settings so authorized clients see the same organization. The user can continue opening
+the folder in an editor and managing its files and Git repository outside Milkdrift.
+
+A workflow is an objective within that project; its canvas contains the tasks that carry it out.
+Use **Project** for this product concept. The canvas is a view, and an execution environment supplies
+tools; neither needs another user-facing workspace hierarchy. Project settings establish the usual
+environment and permitted file access once, with the effective choices visible when work is submitted.
+Selecting a model remains distinct from selecting where its tools run.
+
+An environment can use configured host tools or a managed Podman worker. With Podman, the selected
+project folder is explicitly exposed to the worker while the container supplies its toolchain and
+execution restrictions. Replacing an environment, removing a project registration or expiring workflow
+history preserves user project files. Writable project access permits real changes to those files;
+parallel coding alternatives need coordinated access or separate prepared worktrees.
+
+The owning daemon is the default execution location. Remote tools remain explicit: their working
+files need an authorized location or transfer on the remote host, and connection alone does not share
+a filesystem. These are intended product semantics; [status](status.md) distinguishes current folder
+permissions and managed volumes from the project experience still to be implemented.
+
 ## Work starts with tasks and can grow
 
 A task combines instructions with named input bindings. Instructions can be written before their

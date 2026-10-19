@@ -16,6 +16,11 @@ navigation. Use the retained reference for appearance without reinstating its ob
 Recheck [02d's](02d-canvas-and-direct-authoring.md) canvas and direct-authoring correction across
 method-derived tasks and remote results: sources connect without protocol fields, selection keeps
 the workflow visible, and neither a new feature nor an error restores a long schema editor.
+Recheck [02e's](02e-projects-and-execution-environments.md) project hierarchy and execution explanation.
+Have the user attach/create a daemon-local project, find its workflows from a fresh client and locate
+actual files created by its tools. They should distinguish the selected model from the tool environment
+and understand where a remote operation works. Include preserved project files after an environment
+change; do not substitute an agent explanation for observing whether the interface communicates this.
 
 ## Let the user perform the connected work
 

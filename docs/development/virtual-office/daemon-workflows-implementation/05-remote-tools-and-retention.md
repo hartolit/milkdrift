@@ -11,6 +11,14 @@ Carry forward the [02a connection](02a-daemon-connection-identity.md) and
 phase's shared execution-host connections are different from browser onboarding and daemon naming;
 do not restore local aliases as the daemon's name or weaken the independent expected-host check.
 
+Preserve [02e's](02e-projects-and-execution-environments.md) daemon/project/workflow organization and
+accepted execution bindings. Remote tool selection must identify the actual execution host and its
+independently authorized working location, or explicitly use bounded transferred inputs/results.
+An originating project's absolute path is not a remote directory. Expose an unavailable/incompatible
+remote project context before entry; connection alone grants no mount, checkout or synchronization.
+This phase adds no automatic project replication. Retention and environment/connection removal preserve
+user project folders and the project references needed by unfinished or uncertain work.
+
 Read `AGENTS.md`, the canonical product documents in their required order, the relevant
 [implementation](../../practices/implementation.md) and
 [documentation](../../practices/documentation.md) practices, and the
