@@ -2,6 +2,7 @@
 use super::faults::ControlledPeerClock;
 use super::support::*;
 use milkdrift_capability_host::PreparedAdapterExecution;
+use milkdrift_persistence::NativePathClaimStore;
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 
 #[derive(Clone, Copy)]
@@ -21,6 +22,7 @@ enum Interruption {
 }
 
 struct PreparingAdapter {
+    native_path: Option<std::path::PathBuf>,
     inner: TerminalAdapter,
     preparations: AtomicUsize,
     prepared: SyncSender<()>,
@@ -30,6 +32,25 @@ struct PreparingAdapter {
 }
 
 impl CapabilityAdapter for PreparingAdapter {
+    fn accepts_direct_inputs(&self) -> bool {
+        self.inner.accepts_direct_inputs()
+    }
+
+    fn native_path_claims(
+        &self,
+        _invocation: &AdapterInvocation<'_>,
+    ) -> Result<Vec<milkdrift_capability_host::NativePathScope>, AdapterError> {
+        Ok(self
+            .native_path
+            .as_ref()
+            .map(|path| milkdrift_capability_host::NativePathScope {
+                path: path.clone(),
+                write: true,
+            })
+            .into_iter()
+            .collect())
+    }
+
     fn prepare(
         self: Arc<Self>,
         invocation: &AdapterInvocation<'_>,
@@ -113,13 +134,20 @@ impl CapabilityAdapter for PreparingAdapter {
 }
 
 fn exercise(interruption: Interruption) -> TestResult {
+    exercise_for(interruption, false)
+}
+
+fn exercise_for(interruption: Interruption, client: bool) -> TestResult {
     let directory = tempfile::tempdir()?;
+    let native = directory.path().join("configured-working-directory");
+    std::fs::create_dir(&native)?;
     let store = Arc::new(RedbStore::open(directory.path())?);
     let clock = Arc::new(ControlledPeerClock::new(now()));
     let calls = Arc::new(AtomicUsize::new(0));
     let (prepared, prepared_receiver) = sync_channel(1);
     let (release, release_receiver) = sync_channel(1);
     let adapter = Arc::new(PreparingAdapter {
+        native_path: cfg!(unix).then_some(native.clone()),
         inner: TerminalAdapter {
             capability: CapabilityId::new("test-capability")?,
             delay: Duration::ZERO,
@@ -135,16 +163,30 @@ fn exercise(interruption: Interruption) -> TestResult {
         identities: Mutex::new(Vec::new()),
     });
     let (host, descriptor) = host_with_adapter(adapter.clone())?;
+    host.install_native_path_store(store.clone(), Vec::new())?;
     let peer = PeerId::new("preparation-client")?;
     let target = PeerId::new("preparation-host")?;
-    let service = PeerService::new(
-        server_config(peer.clone(), target.clone(), 1, 2)?,
-        host.clone(),
-        store.clone(),
-        clock.clone(),
-    )?;
+    let actor = ActorRef::new("preparation-client")?;
+    let config = server_config(peer.clone(), target.clone(), 1, 2)?;
+    let service = if client {
+        PeerService::with_clients(
+            config,
+            host.clone(),
+            store.clone(),
+            milkdrift_capability_host::conformance::disabled_artifact_store(),
+            None,
+            Some(super::direct::client_policy(std::slice::from_ref(&actor))?),
+            clock.clone(),
+        )?
+    } else {
+        PeerService::new(config, host.clone(), store.clone(), clock.clone())?
+    };
     service.recover(1_024)?;
-    let catalog = service.catalog(&peer)?;
+    let catalog = if client {
+        service.client_catalog(&actor)?
+    } else {
+        service.catalog(&peer)?
+    };
     let request = request(
         &peer,
         &target,
@@ -154,16 +196,36 @@ fn exercise(interruption: Interruption) -> TestResult {
         "preparation-request",
         "preparation-invocation",
     )?;
-    let InvocationAcceptance::Accepted { execution, .. } =
+    let acceptance = if client {
+        service.invoke_client(
+            &actor,
+            &milkdrift_peer_protocol::DirectInvocationRequest {
+                host: target.clone(),
+                request_id: request.request_id.clone(),
+                catalog_generation: request.catalog_generation,
+                catalog_digest: request.catalog_digest.clone(),
+                selection: request.selection.clone(),
+                request: request.request.clone(),
+                limits: request.limits.clone(),
+                deadline_unix_ms: request.deadline_unix_ms,
+            },
+        )?
+    } else {
         service.invoke(&peer, request.clone())?
-    else {
+    };
+    let InvocationAcceptance::Accepted { execution, .. } = acceptance else {
         return Err("preparation fixture was not accepted".into());
     };
     prepared_receiver.recv_timeout(Duration::from_secs(5))?;
-    let Some(PeerExecutionSnapshot::Hot(claimed)) = store.peer_execution(
-        &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
-        &execution,
-    )?
+    let caller = if client {
+        milkdrift_peer_protocol::ServingCaller {
+            host: target,
+            principal: milkdrift_peer_protocol::ServingPrincipal::Client { actor },
+        }
+    } else {
+        milkdrift_peer_protocol::ServingCaller::peer(&target, &peer)
+    };
+    let Some(PeerExecutionSnapshot::Hot(claimed)) = store.peer_execution(&caller, &execution)?
     else {
         return Err("preparing claim disappeared".into());
     };
@@ -172,6 +234,20 @@ fn exercise(interruption: Interruption) -> TestResult {
         PeerExecutionPhase::DispatchClaimed { .. }
     ));
     assert_eq!(calls.load(Ordering::SeqCst), 0);
+    #[cfg(unix)]
+    {
+        let claim = store
+            .native_path_claim(claimed.managed_invocation()?.as_str())?
+            .ok_or("configured writer claim absent")?;
+        assert_eq!(claim.roots.len(), 1);
+        let competing = milkdrift_persistence::NativePathClaim {
+            owner: "project-reader".into(),
+            roots: vec![milkdrift_capability_host::capture_native_project_root(
+                &native, false,
+            )?],
+        };
+        assert!(store.claim_native_paths(&competing).is_err());
+    }
     match interruption {
         Interruption::Cancel => {
             service.cancel(
@@ -200,10 +276,7 @@ fn exercise(interruption: Interruption) -> TestResult {
     release.send(())?;
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     let terminal = loop {
-        let Some(PeerExecutionSnapshot::Hot(record)) = store.peer_execution(
-            &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
-            &execution,
-        )?
+        let Some(PeerExecutionSnapshot::Hot(record)) = store.peer_execution(&caller, &execution)?
         else {
             return Err("preparation result disappeared".into());
         };
@@ -221,12 +294,7 @@ fn exercise(interruption: Interruption) -> TestResult {
         calls.load(Ordering::SeqCst),
         usize::from(matches!(interruption, Interruption::None))
     );
-    let observations = store.peer_observations(
-        &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
-        &execution,
-        0,
-        PageSize::new(8)?,
-    )?;
+    let observations = store.peer_observations(&caller, &execution, 0, PageSize::new(8)?)?;
     let final_status = observations
         .observations
         .last()
@@ -242,6 +310,11 @@ fn exercise(interruption: Interruption) -> TestResult {
         }
     );
     assert_eq!(terminal.last_observation_sequence, 1);
+    assert!(
+        store
+            .native_path_claim(claimed.managed_invocation()?.as_str())?
+            .is_none()
+    );
     // A completed or refused preparation releases the exact generation permit.
     assert!(host.shutdown().is_ok());
     Ok(())
@@ -255,6 +328,7 @@ fn different_callers_cannot_collide_in_the_adapter_invocation_namespace() -> Tes
     let (prepared, prepared_receiver) = sync_channel(2);
     let (release, release_receiver) = sync_channel(2);
     let adapter = Arc::new(PreparingAdapter {
+        native_path: None,
         inner: TerminalAdapter {
             capability: CapabilityId::new("test-capability")?,
             delay: Duration::ZERO,
@@ -349,6 +423,10 @@ fn different_callers_cannot_collide_in_the_adapter_invocation_namespace() -> Tes
 #[test]
 fn serving_enters_the_prepared_handle_once() -> TestResult {
     exercise(Interruption::None)
+}
+#[test]
+fn direct_serving_claims_configured_writer_and_releases_after_terminal() -> TestResult {
+    exercise_for(Interruption::None, true)
 }
 #[test]
 fn unknown_prepared_duration_has_no_external_entry() -> TestResult {

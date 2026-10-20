@@ -1,4 +1,12 @@
 //! Regenerate the standalone client's transport types from their Rust owner.
+use milkdrift_control_protocol::projects::{
+    ProjectCommandDto, ProjectCommandRequest, ProjectDirectoryDto, ProjectDirectoryPageDto,
+    ProjectDto, ProjectEnvironmentChoiceDto, ProjectEnvironmentDto, ProjectEnvironmentPageDto,
+    ProjectPageDto, ProjectReceiptDto, ProjectSettingsDto,
+};
+use milkdrift_control_protocol::task_execution::{
+    TaskExecutionDto, TaskProjectAccessDto, TaskProjectBindingDto, TaskProjectFolderDto,
+};
 use milkdrift_control_protocol::tasks::{
     ChangeWorkflowRequest, CreateWorkflowRequest, FrozenInputDto, FrozenTaskDto, InputBinding,
     InputValue, ModelAdmissionDto, NewTaskDto, PathAccess, TaskActionPolicyDto,
@@ -15,6 +23,21 @@ use ts_rs::TS;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = ts_rs::Config::default();
     let declarations = [
+        ProjectEnvironmentDto::decl(&config),
+        ProjectSettingsDto::decl(&config),
+        ProjectDto::decl(&config),
+        ProjectPageDto::decl(&config),
+        ProjectDirectoryDto::decl(&config),
+        ProjectDirectoryPageDto::decl(&config),
+        ProjectEnvironmentChoiceDto::decl(&config),
+        ProjectEnvironmentPageDto::decl(&config),
+        ProjectCommandDto::decl(&config),
+        ProjectCommandRequest::decl(&config),
+        ProjectReceiptDto::decl(&config),
+        TaskExecutionDto::decl(&config),
+        TaskProjectBindingDto::decl(&config),
+        TaskProjectFolderDto::decl(&config),
+        TaskProjectAccessDto::decl(&config),
         InputValue::decl(&config),
         InputBinding::decl(&config),
         TaskCapability::decl(&config),

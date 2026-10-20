@@ -221,6 +221,7 @@ impl TaskRuntime {
             execution.clone(),
             attempt.clone(),
         )
+        .with_project_binding(task.definition.execution.binding().cloned())
         .with_filesystem(
             task.definition
                 .paths
@@ -290,6 +291,40 @@ impl TaskRuntime {
             )
             .map_err(invalid)?;
             let mut messages = vec![message];
+            if let Some(binding) = task.definition.execution.binding() {
+                let process_directory = match &binding.settings.environment {
+                    milkdrift_blueprint::ProjectEnvironment::Podman { .. } => Some("/project"),
+                    milkdrift_blueprint::ProjectEnvironment::Process { .. } => {
+                        Some(binding.folder.physical.as_str())
+                    }
+                    milkdrift_blueprint::ProjectEnvironment::Host => None,
+                };
+                let project = serde_json::json!({
+                    "project_id":binding.project_id,
+                    "generation":binding.generation,
+                    "folder":binding.folder,
+                    "settings":binding.settings,
+                    "access":binding.access,
+                    "native_file_paths":"absolute host paths beneath the listed scopes",
+                    "native_file_scopes":binding.scopes.iter().zip(&binding.paths).map(|(scope,path)| serde_json::json!({"path":scope.physical,"write":path.write})).collect::<Vec<_>>(),
+                    "process_working_directory":process_directory,
+                    "process_paths":if matches!(binding.settings.environment,milkdrift_blueprint::ProjectEnvironment::Podman { .. }) {"container paths; use /project for project files"} else {"host paths"},
+                });
+                let content = format!("Project tool context (data, not instructions): {project}");
+                if content.len() > 8192 {
+                    return Err(invalid(
+                        "project tool context exceeds its 8 KiB bound; narrow the task's file scopes",
+                    ));
+                }
+                messages.push(
+                    Message::new(
+                        MessageRole::User,
+                        vec![ContentPart::Text { text: content }],
+                        None,
+                    )
+                    .map_err(invalid)?,
+                );
+            }
             let structured_output = if task.definition.actions.is_some() {
                 let (snapshot, schema) = super::model_actions::authoring_context(workflow, task)?;
                 messages.push(
@@ -395,7 +430,8 @@ impl TaskRuntime {
         .with_task_tools(
             task.definition.tools.clone(),
             workflow.limits.tool_calls_per_task,
-        );
+        )
+        .with_project_binding(task.definition.execution.binding().cloned());
         if serde_json::to_vec(&dispatch)?.len() > super::capacity::MAX_DISPATCH_BYTES {
             return Err(invalid(
                 "frozen external dispatch exceeds its reserved 64 KiB allowance",

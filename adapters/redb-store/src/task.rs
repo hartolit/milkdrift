@@ -176,6 +176,17 @@ impl WorkflowStore for RedbStore {
                 actual,
             });
         }
+        if let Some(project) = &commit.project_id {
+            if commit.expected_generation.is_some() {
+                return Err(bounds(
+                    "project association on task commit is only valid for a new workflow",
+                ));
+            }
+            crate::project::associate_new(&write, &commit.snapshot.workflow, project)?;
+        }
+        if let Some((project, generation)) = &commit.project_guard {
+            crate::project::guard_generation(&write, project, *generation)?;
+        }
         if old
             .as_ref()
             .is_some_and(|old| old.owner_actor != commit.snapshot.owner_actor)
@@ -451,6 +462,8 @@ pub(crate) fn validate_snapshot_row(key: &str, bytes: &[u8]) -> Result<(), Persi
     }
     let expected_generation = snapshot.generation.checked_sub(1).filter(|n| *n != 0);
     validate(&WorkflowCommit {
+        project_guard: None,
+        project_id: None,
         expected_generation,
         snapshot,
         command: None,

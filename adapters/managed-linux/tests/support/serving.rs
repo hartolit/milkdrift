@@ -116,7 +116,8 @@ pub(crate) fn entered_reference(
         ExecutionLimits {
             nested_invocations: None,
             artifact_bytes: 16_777_216,
-            duration_ms: 300_000,
+            // The worker reserves its process deadline plus finite inspection and cleanup.
+            duration_ms: 3_600_000,
             cost_micros: 0,
             cost_currency: None,
             input_units: (*descriptor.category()

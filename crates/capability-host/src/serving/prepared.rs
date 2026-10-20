@@ -10,6 +10,8 @@ use crate::{AdapterError, AdapterExecutionContext, AdapterReporter, CapabilityHo
 /// Holds an exact generation while its serving owner commits the final entry decision.
 /// Dropping it before entry releases the permit and all prepared data without an effect.
 pub(crate) struct PreparedServingExecution {
+    host: CapabilityHost,
+    native_owner: Option<String>,
     accepted: PeerExecutionRecord,
     context: AdapterExecutionContext,
     prepared: PreparedHostInvocation,
@@ -30,6 +32,8 @@ impl CapabilityHost {
         }
         let context = context.with_serving_preparation(accepted);
         let request = serving_request(accepted)?;
+        let paths = self.declared_native_paths(&accepted.request.selection, &request, &context)?;
+        let native_owner = self.claim_serving_paths(accepted, &paths)?;
         let prepared =
             self.prepare_invocation(&accepted.request.selection, &request, Some(&context))?;
         let input_bytes = accepted
@@ -47,6 +51,8 @@ impl CapabilityHost {
             ));
         }
         Ok(PreparedServingExecution {
+            host: self.clone(),
+            native_owner,
             accepted: accepted.clone(),
             context,
             prepared,
@@ -80,6 +86,9 @@ impl PreparedServingExecution {
             original: entered.request.request.invocation(),
             reporter,
         };
+        if let Some(owner) = &self.native_owner {
+            self.host.revalidate_native_owner(owner)?;
+        }
         self.prepared.enter(Some(&context), &bridge)
     }
 }

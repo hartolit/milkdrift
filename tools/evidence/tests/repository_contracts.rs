@@ -21,11 +21,7 @@ struct CohesionException {
     rationale: &'static str,
 }
 
-const PRODUCTION_COHESION_EXCEPTIONS: &[CohesionException] = &[CohesionException {
-    path: "adapters/local-process/src/config.rs",
-    ceiling: 1_006,
-    rationale: "profile decoding checks executable identity, substitution/input references, filesystem access, stream secrecy, and aggregate output bounds before registration",
-}];
+const PRODUCTION_COHESION_EXCEPTIONS: &[CohesionException] = &[];
 
 fn root() -> TestResult<PathBuf> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))

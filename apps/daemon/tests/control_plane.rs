@@ -22,6 +22,8 @@ mod operations;
 mod process;
 #[path = "control_plane/process_cleanup.rs"]
 mod process_cleanup;
+#[path = "control_plane/projects.rs"]
+mod projects;
 #[path = "control_plane/required_inputs.rs"]
 mod required_inputs;
 #[path = "control_plane/resources.rs"]
@@ -32,5 +34,7 @@ mod roles;
 mod streams;
 #[path = "control_plane/support.rs"]
 mod support;
+#[path = "control_plane/task_projects.rs"]
+mod task_projects;
 #[path = "control_plane/tasks.rs"]
 mod tasks;

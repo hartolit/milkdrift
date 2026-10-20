@@ -134,11 +134,13 @@ impl ModelFixture {
             )?,
         );
         let request = WorkflowCreate {
+            project_id: None,
             title: "Model session task".into(),
             description: "Actual ordinary runtime to provider".into(),
             tasks: vec![NewTask {
                 alias: TaskId::new("model")?,
                 definition: TaskDefinition {
+                    execution: milkdrift_blueprint::TaskExecution::Legacy,
                     title: "Inspect the captured project".into(),
                     description: String::new(),
                     instructions: instructions.into(),
@@ -366,9 +368,11 @@ fn model_host_with_tools(
         },
         CapabilitySelectionPolicy::priorities(BTreeMap::new()),
     )?);
-    host.install_native_path_store(store)?;
+    host.install_native_path_store(store, Vec::new())?;
     #[cfg(target_os = "linux")]
     if authority.is_some() {
+        let process_directory = directory.join("process-project");
+        std::fs::create_dir_all(&process_directory)?;
         let executable = std::path::Path::new("/bin/echo").canonicalize()?;
         let bytes = std::fs::read(&executable)?;
         let mut document: Value = serde_json::from_str(include_str!(
@@ -389,6 +393,10 @@ fn model_host_with_tools(
         *document
             .pointer_mut("/profile/arguments")
             .ok_or("profile arguments absent")? = json!(["real process tool result"]);
+        *document
+            .pointer_mut("/profile/working_directory")
+            .ok_or("profile working directory absent")? =
+            json!({"type":"authorized_host_path","path":process_directory});
         *document
             .pointer_mut("/profile/stdout")
             .ok_or("profile stdout absent")? = json!({"max_capture_bytes":1024,"stream_progress":false,"max_progress_events":0,"overflow_action":"terminate","artifact_name":"stdout"});

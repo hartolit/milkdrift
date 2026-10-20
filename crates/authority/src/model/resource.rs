@@ -34,6 +34,10 @@ impl BoundaryTimeMillis {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthorityOperation {
+    /// Discover/read project registrations under current filesystem scope.
+    InspectProject,
+    /// Register, edit or reconcile a project under current filesystem scope.
+    ManageProject,
     /// Inspect durable run or registry facts.
     Inspect,
     /// Apply a checked future-task edit.

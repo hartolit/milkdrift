@@ -11,10 +11,11 @@ task addition and workflow navigation. The October 18 recheck rejects its remain
 layout. Assigned 02d replaces them with canvas authoring, compact left-side selection and direct
 source connections backed by narrow daemon contracts; implementation and focused verification are complete. Naming acceptance and
 the remaining substantive early review are pending. The October 19 discussion selects daemon-owned
-projects and user-controlled folders with project-level execution environments. Prepared
+projects and user-controlled folders with project-level execution environments. Assigned
 [02e](02e-projects-and-execution-environments.md) owns that correction, including explicit Podman
-project attachments; the user approved its preparation, not production implementation.
-Prompts 02e and 04–07 remain unassigned.
+project attachments. Implementation and focused checks are complete; positive physical Podman
+attachment qualification remains open on this host. Resume the actual early user review.
+Prompts 04–07 remain unassigned.
 The consumer/CI retirement,
 required-input absence and cumulative-time defects pass focused regressions and the complete strict
 static gate at `c9e9809`. Publication and a corrected hosted run remain pending. Tested local
@@ -71,7 +72,7 @@ service permissions. Missing real-user/external prerequisites remain explicit ev
 
 Prompt 03 has completed its focused acceptance. Assigning one prompt authorizes its whole
 responsibility and local coherent commits; it does not silently assign its successor.
-After the completed 02d correction, the next order is **02e → finish 02 review → 04 → 05 → 06 → 07**.
+After the completed 02e correction's focused checks, the next order is **finish 02 review → 04 → 05 → 06 → 07**.
 The correction labels preserve the original phase numbers; 03 is already done. Existing 04–07
 prompts included review/repair but did not explicitly assign this visual reference, real logo or
 browser onboarding change. Prompt 05's shared connections concern execution hosts, not browser labels.
@@ -134,9 +135,9 @@ scope when their prompt is explicitly assigned. Inference, new provider families
 remote workflow ownership, permanent knowledge systems and unrelated primitives remain excluded.
 Do not ask the user to choose routine implementation organization already settled by this packet.
 
-The user assigned 02d and its implementation and focused checks are complete. The next prepared
-assignment is [02e](02e-projects-and-execution-environments.md). After its explicit assignment and
-focused checks, resume the actual [02 review](02-early-user-review.md) using the current environment
+The user assigned [02e](02e-projects-and-execution-environments.md) after 02d's implementation and
+focused checks. After the project correction's focused checks, resume the actual
+[02 review](02-early-user-review.md) using the current environment
 and actions in the [handoff](handoff.md#resume-the-visual-and-task-review). Have the user choose a
 project, create useful work, locate its files, connect an input/result, switch between tasks and
 recheck naming, model assignment and execution environment. Record what they

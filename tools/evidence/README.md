@@ -24,12 +24,15 @@ cargo connected-tasks serve --root target/connected-browser --daemon target/debu
 The owner writes a private `browser.json` only after both daemons are ready. Supply its absolute path
 as `MILKDRIFT_BROWSER_CONFIG` to the [web browser suite](../../apps/web/README.md). The fixture's
 `control --root DIRECTORY` subcommand requests bounded restart/crash/stop actions from its live Rust
-owner. Tokens and private request bodies must not be printed or retained in browser traces.
+owner. Restart and crash commands wait for the replacement daemon's authenticated readiness before
+returning, so a fresh client can reconnect without racing startup. Tokens and private request bodies
+must not be printed or retained in browser traces.
 
 For canvas acceptance, start `serve` with `--canvas-cases` to enable the extra controlled executors.
 This mode also permits the browser suite at `http://127.0.0.1:6173` for isolated parallel verification;
 set `MILKDRIFT_BROWSER_PORT=6173` when ports 4173 and 5173 are already in use.
-Ordinary CLI and user-review fixtures keep the process and two model choices. After checking empty
+Ordinary CLI and user-review fixtures keep the captured-input process, one project-aware Cargo
+environment and two model choices. After checking empty
 discovery, `connected-tasks seed --root DIRECTORY` creates bounded canvas
 review cases through that daemon's public API and writes private identities to `canvas-seeds.json`.
 The cases cover a paged graph, a rejected follow-up proposal with a separate human wait, and a failed
@@ -51,7 +54,13 @@ target/debug/milkdrift-external-evidence --daemon target/debug/milkdrift-daemon 
 `check` uploads a Cargo manifest through the real CLI, edits the local source after capture,
 submits and replays a task, restarts its daemon, and uses a fresh public client to discover the
 same result and receipt. It checks changed-request refusal, daemon isolation and the controlled
-model's selected input bytes. A redacted `check.json` appears only after both daemon children and
+model's selected input bytes. Public project commands attach and create folders, replay accepted
+creation, rename and remove unused registrations while preserving files. One project-aware Cargo
+profile executes controlled model file edits and actual Rust tests in two distinct projects;
+the report checks their source files, build outputs and unchanged unrelated content and ownership.
+The browser creates its registrations through the visible project setup actions. Fixture setup
+prepares only ordinary folders and operator configuration, never project database records.
+A redacted `check.json` appears only after both daemon children and
 the model fixture have shut down successfully. The private root also contains credentials and
 model request captures: retain only the explicitly redacted report in shared CI artifacts.
 

@@ -33,6 +33,7 @@ grant access, and corruption remains an error rather than an empty result.
 | --- | --- |
 | Accept or change ordinary work | [`WorkflowStore`](src/task.rs) saves one generation and its exact command result atomically. |
 | Name the daemon | [`DaemonMetadataStore`](src/daemon.rs) binds one shared display name to the installation, with guarded changes and exact actor-scoped replay. A startup seed never overwrites an accepted rename. |
+| Register a project | [`ProjectStore`](src/project.rs) saves pinned user folders, guarded execution defaults, exact creation intent/recovery and workflow association. Removing a registration never deletes files. |
 | Publish or read artifact content | [`ArtifactStore`](src/artifact.rs) owns resumable chunks, verified publication, accounting and bounded reads. Content integrity and read authorization are separate requirements. |
 | Hold a native directory | [`NativePathClaimStore`](src/native_paths.rs) atomically claims complete physical path sets; equal or nested writers conflict, while readers may share. |
 | Protect a managed installation | [Managed resource ports](src/managed.rs) preserve frozen descriptor bindings, active uses, physical fences, independent evaluation evidence and update/removal guards. |
@@ -45,6 +46,9 @@ Native claims do not expire on elapsed time or restart. The host captures canoni
 runtime releases claims only after durable settlement. An uncertain writer continues to block
 conflicting work. Managed holds likewise distinguish physical stop evidence from a workflow's logical
 outcome; neither a cancellation request nor an uncertain outcome proves that a process stopped.
+Serving invocations acquire configured-directory claims under their exact live dispatch owner.
+Their terminal or pre-entry recovery transaction releases those claims; entered uncertainty retains
+them. This shares one conflict boundary across task, direct and peer execution.
 
 Artifact publication saves its intent before accepting chunks and verifies content before exposing a
 committed reference. Task artifacts require the owning workflow's durable entry proof. Cumulative

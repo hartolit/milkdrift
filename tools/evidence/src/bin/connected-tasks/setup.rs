@@ -41,6 +41,10 @@ pub(super) fn configure(
     for folder in ["motion", "training", "render"] {
         fs::create_dir_all(directory.join("animation-project").join(folder))?;
     }
+    fs::write(
+        directory.join("animation-project/existing.rs"),
+        "pub const EXISTING_PROJECT_SOURCE: &str = \"preserve this file\";\n",
+    )?;
     let mut entropy = [0u8; 32];
     getrandom::fill(&mut entropy).map_err(|_| "operating-system token entropy unavailable")?;
     let token = blake3::hash(&entropy).to_hex().to_string();
@@ -115,7 +119,12 @@ pub(super) fn configure(
         "/actors/0/authority/resources/daemon/configuration",
         json!(true),
     )?;
-    let mut identities = vec!["cargo-report", "controlled-model", "controlled-planner"];
+    let mut identities = vec![
+        "cargo-report",
+        "controlled-model",
+        "controlled-planner",
+        "project-cargo",
+    ];
     if canvas_cases {
         identities.extend([
             "canvas-source",
@@ -149,11 +158,20 @@ pub(super) fn configure(
         "/actors/0/authority/resources/network",
         json!({"profiles":["controlled-model-profile","controlled-planning-profile"],"destinations":[model.server.address().to_string()]}),
     )?;
+    let cargo_profile = super::projects::cargo_profile(&directory, &profile)?;
+    let cargo_document: serde_json::Value = serde_json::from_slice(&fs::read(&cargo_profile)?)?;
+    let cargo_executable = PathBuf::from(
+        cargo_document
+            .pointer("/profile/executable")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("Cargo executable absent")?,
+    );
     set(
         &mut configuration,
         "/actors/0/authority/resources/filesystem",
         json!([
             {"root":executable.parent().ok_or("fixture binary has no parent")?,"access":["execute"]},
+            {"root":cargo_executable.parent().ok_or("Cargo binary has no parent")?,"access":["execute"]},
             {"root":directory,"access":["read","write"]}
         ]),
     )?;
@@ -182,7 +200,7 @@ pub(super) fn configure(
         "/actors/0/authority/budget/units",
         json!(64_000_000),
     )?;
-    let mut process_profiles = vec![profile.clone()];
+    let mut process_profiles = vec![profile.clone(), cargo_profile];
     if canvas_cases {
         process_profiles.extend(canvas_profiles(&directory, &profile)?);
     }

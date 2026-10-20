@@ -18,6 +18,17 @@ pub enum ManagedExecution {
         /// First frozen-start acceptance generation.
         accepted_generation: u64,
     },
+    /// A bounded process tool inside one already-entered model task. It has no separate scheduler.
+    TaskTool {
+        /// Existing owning workflow, protecting the parent's native path claims.
+        workflow: milkdrift_blueprint::WorkflowId,
+        /// Runtime-certified entered parent invocation.
+        parent_invocation: InvocationId,
+        /// Deterministic tool-call identity within that parent.
+        invocation: InvocationId,
+        /// Exact request and selected operation, preventing conflicting acceptance.
+        request_digest: String,
+    },
     /// One durable direct or delegated serving acceptance.
     Serving {
         /// Serving operation.
@@ -32,7 +43,9 @@ impl ManagedExecution {
     #[must_use]
     pub const fn invocation(&self) -> &InvocationId {
         match self {
-            Self::Task { invocation, .. } | Self::Serving { invocation, .. } => invocation,
+            Self::Task { invocation, .. }
+            | Self::TaskTool { invocation, .. }
+            | Self::Serving { invocation, .. } => invocation,
         }
     }
     /// Stable use key derived from the accepted invocation, without PID or lease reuse.
@@ -48,6 +61,19 @@ pub fn managed_use_id(invocation: &InvocationId) -> String {
     blake3::hash(format!("milkdrift.managed-use.v1:{}", invocation.as_str()).as_bytes())
         .to_hex()
         .to_string()
+}
+
+/// Stable process-tool identity inside one entered model invocation. Zero is reserved for
+/// catalog-envelope preparation; actual calls use the host's bounded positive sequence.
+///
+/// # Errors
+/// Returns an invalid identity error if the encoded digest exceeds invocation identity bounds.
+pub fn task_tool_invocation(
+    parent: &InvocationId,
+    call: u32,
+) -> Result<InvocationId, milkdrift_capability::ContractError> {
+    let digest = blake3::hash(format!("{parent}:{call}").as_bytes());
+    InvocationId::new(format!("tool:{digest}"))
 }
 
 /// Physical use status, separate from whether an operation returned a terminal result.
@@ -152,6 +178,21 @@ impl ManagedUse {
         {
             return Err(invalid());
         }
+        if let ManagedExecution::TaskTool {
+            parent_invocation,
+            invocation,
+            request_digest,
+            ..
+        } = &self.execution
+            && (parent_invocation == invocation
+                || !(1..=16).any(|call| {
+                    task_tool_invocation(parent_invocation, call)
+                        .is_ok_and(|expected| &expected == invocation)
+                })
+                || !milkdrift_contracts::is_canonical_blake3_digest(request_digest))
+        {
+            return Err(invalid());
+        }
         let evidence = match &self.phase {
             ManagedUsePhase::Reserved {} => None,
             ManagedUsePhase::Entered { physical_identity }
@@ -192,6 +233,11 @@ impl ManagedUse {
                 ManagedExecution::Task { workflow, task, .. } => {
                     format!("workflow:{workflow}/task:{task}")
                 }
+                ManagedExecution::TaskTool {
+                    workflow,
+                    parent_invocation,
+                    ..
+                } => format!("workflow:{workflow}/tool-of:{parent_invocation}"),
                 ManagedExecution::Serving { execution, .. } => format!("serving:{execution}"),
             },
             generation: self.binding.generation,

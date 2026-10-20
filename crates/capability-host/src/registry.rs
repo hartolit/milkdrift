@@ -225,6 +225,7 @@ struct GenerationKey {
 struct Generation {
     task_authoring: BTreeMap<OperationId, crate::TaskAuthoringContract>,
     accepts_direct_inputs: bool,
+    accepts_project_without_access: bool,
     descriptor: CapabilityDescriptor,
     descriptor_digest: String,
     adapter: Arc<dyn CapabilityAdapter>,

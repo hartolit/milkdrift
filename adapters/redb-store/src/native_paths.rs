@@ -6,50 +6,19 @@ const MAX_CLAIMS: u64 = 4096;
 
 impl NativePathClaimStore for RedbStore {
     fn claim_native_paths(&self, claim: &NativePathClaim) -> Result<(), PersistenceError> {
-        validate_claim(&claim.owner, claim)?;
-        let bytes = json::encode(claim, "native path claim")?;
         let write = self.database().begin_write().map_err(error::redb)?;
-        let mut table = write.open_table(NATIVE_PATH_CLAIMS).map_err(error::redb)?;
-        if let Some(value) = table.get(claim.owner.as_str()).map_err(error::redb)? {
-            let existing: NativePathClaim = json::decode(value.value(), "native path claim")?;
-            validate_claim(&claim.owner, &existing)?;
-            return if existing == *claim {
-                Ok(())
-            } else {
-                Err(PersistenceError::ImmutableConflict {
-                    entity: "native path claim",
-                    identity: claim.owner.clone(),
-                })
-            };
-        }
-        if table.len().map_err(error::redb)? >= MAX_CLAIMS {
-            return Err(PersistenceError::Bounds {
-                location: "native_path_claims",
-                reason: "native claim capacity is full; unresolved owners remain protected"
-                    .to_owned(),
-            });
-        }
-        for row in table.iter().map_err(error::redb)? {
-            let (key, value) = row.map_err(error::redb)?;
-            let existing: NativePathClaim = json::decode(value.value(), "native path claim")?;
-            validate_claim(key.value(), &existing)?;
-            if claim.roots.iter().any(|root| {
-                existing.roots.iter().any(|other| {
-                    (root.write || other.write)
-                        && (root.identity == other.identity
-                            || root.physical.starts_with(&other.physical)
-                            || other.physical.starts_with(&root.physical))
-                })
-            }) {
-                return Err(PersistenceError::InvalidDocument(
-                    "native project paths overlap an unresolved reader or writer".to_owned(),
-                ));
-            }
-        }
-        table
-            .insert(claim.owner.as_str(), bytes.as_slice())
-            .map_err(error::redb)?;
-        drop(table);
+        claim_in_transaction(&write, claim)?;
+        write.commit().map_err(error::redb)
+    }
+
+    fn claim_serving_native_paths(
+        &self,
+        record: &milkdrift_persistence::PeerExecutionRecord,
+        claim: &NativePathClaim,
+    ) -> Result<(), PersistenceError> {
+        let write = self.database().begin_write().map_err(error::redb)?;
+        crate::peer::guard_native_path_claim(&write, record, &claim.owner)?;
+        claim_in_transaction(&write, claim)?;
         write.commit().map_err(error::redb)
     }
 
@@ -69,15 +38,69 @@ impl NativePathClaimStore for RedbStore {
 
     fn release_native_paths(&self, owner: &str) -> Result<(), PersistenceError> {
         let write = self.database().begin_write().map_err(error::redb)?;
-        {
-            write
-                .open_table(NATIVE_PATH_CLAIMS)
-                .map_err(error::redb)?
-                .remove(owner)
-                .map_err(error::redb)?;
-        }
+        release_in_transaction(&write, owner)?;
         write.commit().map_err(error::redb)
     }
+}
+
+fn claim_in_transaction(
+    write: &redb::WriteTransaction,
+    claim: &NativePathClaim,
+) -> Result<(), PersistenceError> {
+    validate_claim(&claim.owner, claim)?;
+    let bytes = json::encode(claim, "native path claim")?;
+    let mut table = write.open_table(NATIVE_PATH_CLAIMS).map_err(error::redb)?;
+    if let Some(value) = table.get(claim.owner.as_str()).map_err(error::redb)? {
+        let existing: NativePathClaim = json::decode(value.value(), "native path claim")?;
+        validate_claim(&claim.owner, &existing)?;
+        return if existing == *claim {
+            Ok(())
+        } else {
+            Err(PersistenceError::ImmutableConflict {
+                entity: "native path claim",
+                identity: claim.owner.clone(),
+            })
+        };
+    }
+    if table.len().map_err(error::redb)? >= MAX_CLAIMS {
+        return Err(PersistenceError::Bounds {
+            location: "native_path_claims",
+            reason: "native claim capacity is full; unresolved owners remain protected".to_owned(),
+        });
+    }
+    for row in table.iter().map_err(error::redb)? {
+        let (key, value) = row.map_err(error::redb)?;
+        let existing: NativePathClaim = json::decode(value.value(), "native path claim")?;
+        validate_claim(key.value(), &existing)?;
+        if claim.roots.iter().any(|root| {
+            existing.roots.iter().any(|other| {
+                (root.write || other.write)
+                    && (root.identity == other.identity
+                        || root.physical.starts_with(&other.physical)
+                        || other.physical.starts_with(&root.physical))
+            })
+        }) {
+            return Err(PersistenceError::InvalidDocument(
+                "native project paths overlap an unresolved reader or writer".to_owned(),
+            ));
+        }
+    }
+    table
+        .insert(claim.owner.as_str(), bytes.as_slice())
+        .map_err(error::redb)?;
+    Ok(())
+}
+
+pub(crate) fn release_in_transaction(
+    write: &redb::WriteTransaction,
+    owner: &str,
+) -> Result<(), PersistenceError> {
+    write
+        .open_table(NATIVE_PATH_CLAIMS)
+        .map_err(error::redb)?
+        .remove(owner)
+        .map_err(error::redb)?;
+    Ok(())
 }
 
 pub(crate) fn validate_claim(key: &str, claim: &NativePathClaim) -> Result<(), PersistenceError> {

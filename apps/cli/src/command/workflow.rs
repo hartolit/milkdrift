@@ -14,11 +14,19 @@ pub(crate) async fn execute(session: &CliSession, args: &WorkflowArgs) -> Result
             search,
             limit,
             cursor,
+            project,
+            earlier,
         } => session.output(
             "workflow.list",
             &session
                 .client()
-                .workflows(search, cursor.as_deref(), *limit)
+                .workflows_in_project(
+                    search,
+                    cursor.as_deref(),
+                    *limit,
+                    project.as_deref(),
+                    *earlier,
+                )
                 .await?,
         ),
         WorkflowCommand::Show { workflow, cursor } => session.output(

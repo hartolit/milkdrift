@@ -490,6 +490,9 @@ impl ModelToolLoopAdapter {
             .ok_or_else(|| rejected("active model loop disappeared"))?
             .process = Some(request.invocation().clone());
         let round = RoundReports::new(reports, &request, &selected_context);
+        self.host
+            .verify_process_tool_claims(tool.resolved.snapshot(), &request, &selected_context)
+            .map_err(adapter_error)?;
         prepared
             .enter(Some(&selected_context), &round)
             .map_err(|error| AdapterError::external_failure(error.to_string()))?;
@@ -532,6 +535,44 @@ impl ModelToolLoopAdapter {
 }
 
 impl CapabilityAdapter for ModelToolLoopAdapter {
+    fn native_path_claims(
+        &self,
+        invocation: &AdapterInvocation<'_>,
+    ) -> Result<Vec<crate::NativePathScope>, AdapterError> {
+        let context = invocation
+            .context()
+            .ok_or_else(|| rejected("model tools require task provenance"))?;
+        let authority = resolution_context(context)?;
+        let now = (self.clock)()?;
+        let mut paths = Vec::new();
+        for tool in &context.task_tools {
+            if let TaskTool::Process { capability } = tool {
+                let resolved = self
+                    .host
+                    .resolve_authorized(capability, &authority, self.authority.as_ref(), now)
+                    .map_err(adapter_error)?;
+                if resolved.descriptor().category() != &CapabilityCategory::Process {
+                    return Err(rejected(
+                        "native process scope requires a process capability",
+                    ));
+                }
+                let request =
+                    process_request(invocation.request(), resolved.snapshot(), 0, Vec::new())?;
+                paths.extend(
+                    self.host
+                        .declared_native_paths(resolved.snapshot(), &request, context)
+                        .map_err(adapter_error)?
+                        .into_iter()
+                        .map(|path| crate::NativePathScope {
+                            path: path.path.into(),
+                            write: path.write,
+                        }),
+                );
+            }
+        }
+        Ok(paths)
+    }
+
     fn task_authoring(
         &self,
     ) -> BTreeMap<milkdrift_capability::OperationId, crate::TaskAuthoringContract> {
@@ -637,7 +678,8 @@ fn resolution_context(
         workflow.node().clone(),
         workflow.execution().clone(),
         workflow.attempt().clone(),
-    ))
+    )
+    .with_project_binding(context.project_binding().cloned()))
 }
 fn task_with(
     task: &ModelTaskRequest,
@@ -719,9 +761,9 @@ fn process_request(
     call: u32,
     inputs: Vec<InputReference>,
 ) -> Result<InvocationRequest, AdapterError> {
-    let digest = blake3::hash(format!("{}:{call}", parent.invocation()).as_bytes());
     InvocationRequest::new(
-        InvocationId::new(format!("tool:{digest}")).map_err(adapter_error)?,
+        milkdrift_persistence::managed::task_tool_invocation(parent.invocation(), call)
+            .map_err(adapter_error)?,
         snapshot.capability().clone(),
         snapshot.operation().clone(),
         snapshot.provider_profile().cloned(),

@@ -12,6 +12,43 @@ llama-server with exact local weights. A worker can install experimental tools u
 an immutable tool or application generation requires explicit promotion. Protected publication is
 not established by this setup.
 
+## Attach a registered project
+
+A project can select an existing managed worker generation for its tools independently of its model.
+The accepted folder is mounted at `/project`, and commands start there. Native file tools use the
+host folder; a container command uses paths such as `/project/src/main.rs`. A task with read access
+gets a read-only bind. Write access requires the project's explicit change policy and current
+authority. The daemon's ordinary native path claim coordinates those writes with other process and
+file tools using the same folder.
+
+Attached folders remain user-owned files. The worker never applies `:U`, recursive ownership
+changes or SELinux relabeling to them. The folder must already belong to the daemon user's UID and
+primary GID with owner read/search permission and, for writes, owner write permission. The worker
+uses a non-root container identity mapped to that user, while the rest of its automatic ID range
+remains separate. Manager state, container storage, engine runtime paths and their enclosing folders
+cannot serve as projects. Environment replacement and removal preserve the attached folder.
+Project registration also excludes the daemon configuration, profile and credential files, its
+executable, approved managed recipes and their protected credential, verifier and model inputs.
+An enclosing folder is refused; a sibling folder that contains none of those files remains usable.
+The adapter independently refuses a project containing its configured directory-pin executable.
+The host also applies the current protected inputs when previously accepted work prepares or enters
+an effect after restart, and before model file and process tools. The accepted binding remains
+historical evidence; a new protected input causes a prospective refusal.
+
+The daemon supplies a bounded Rust helper that pins the accepted directory inside Podman's rootless
+namespace. The worker checks the directory's native identity and the exact inspected mount before
+starting. A changed path, unsupported mapping, unavailable helper or runtime refusal stops the
+attempt. There is no fallback to a mutable pathname or host execution. The configured environment
+list reports compatibility with the attachment contract; it does not certify the OCI runtime's
+ability to bind the held descriptor. Owned-volume `prepare`/`apply` success is separate evidence.
+
+On a runtime that rejects this cross-namespace descriptor bind, the worker result can contain
+`error mounting "/proc/.../fd/..."` and `invalid argument`. Inspect that result and the retained
+managed inventory; do not loosen folder permissions, relabel files or enable privileged execution
+to bypass it. The task's child generation hold ends only after verified container absence. If
+cleanup cannot be proved, it remains held for ordinary managed resolution, and the parent task
+retains its uncertain execution and native path claim.
+
 ## Prepare the host and configuration
 
 The mechanism requires a non-root Linux account, Podman 5.4 through 6.x, user systemd, cgroup v2
@@ -334,6 +371,20 @@ physical tests. Optionally set `MILKDRIFT_LINUX_EVIDENCE_PARENT` to an existing 
 parent. The lifecycle lane retains its store and prints its evidence directory, Quadlet directory
 and preserved volume identities, including on failure. Inspect/recover against those exact records;
 never substitute a prune command for cleanup.
+
+Project attachment has separate opt-in tests. Supply a preloaded exact worker image and the absolute
+path of the built daemon executable using `MILKDRIFT_PROJECT_WORKER_IMAGE` and
+`MILKDRIFT_PROJECT_PIN_HELPER`. The lib test
+`worker::project::tests::physical_attachment_preserves_host_files_modes_and_denies_read_only_changes`
+checks successful read/write attachment, host ownership and modes, and read-only denial.
+The `linux_mechanism` test
+`real_linux_project_model_tool_and_generation_replacement_preserve_folder` also needs the two
+systemd test-directory variables above; it exercises a controlled model through the ordinary task
+and managed worker owners, then replaces and removes the environment while retaining project files.
+Its separate
+`real_linux_project_runtime_refusal_keeps_folder_and_releases_quiescent_child` lane qualifies the
+exact OCI descriptor-mount refusal and cleanup through that same model-tool path. Passing the
+refusal lane is not a successful attachment qualification.
 
 The separate collision regression starts an owned generated unit while a foreign test container
 already holds its name, then verifies the failed start leaves that container's ID and running state

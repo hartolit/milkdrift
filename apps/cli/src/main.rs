@@ -13,6 +13,7 @@ mod command;
 mod error;
 mod input;
 mod output;
+mod project_args;
 mod session;
 mod workflow_args;
 
@@ -67,6 +68,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum TopCommand {
+    /// Register daemon folders and choose execution defaults for new work.
+    Project(project_args::ProjectArgs),
     /// Create, edit and inspect daemon-owned task workflows through the daemon.
     Workflow(workflow_args::WorkflowArgs),
     /// Approved persistent installation lifecycle, shared with workflow capabilities.

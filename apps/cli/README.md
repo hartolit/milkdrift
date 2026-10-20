@@ -7,6 +7,30 @@ Start with the [operator recipe](../../examples/operator/README.md) for a fresh 
 
 ## Submit and return to work
 
+Use `project directories` to browse permitted folders on the daemon, then `project attach NAME
+FOLDER` or `project create NAME PARENT FOLDER_NAME` to register a project. Creation makes exactly one
+new child; attachment preserves existing files. Initial access is read only. `project list`,
+`project show ID` and `project environments` expose the current registration, guarded settings and
+configured choices. `project settings ID --expected-generation N --environment host --allow-changes`
+deliberately enables subsequent native file writes. For a configured process or Podman environment,
+also pass its returned `--capability`, `--operation` and `--environment-generation`; incompatible
+choices refuse without replacing the project or running another environment.
+
+New workflow JSON includes `project_id`. Each new task chooses `execution.kind: "project"` with the
+reviewed `expected_generation`, or a complete explicit override including deliberate empty tools
+and access. The daemon freezes the resolved selection. Editing only task text retains that binding;
+changing project defaults does not grant new tools to accepted tasks. Use `workflow list --project
+ID` for grouping and `--earlier` for unassociated retained workflows. `project associate ID WORKFLOW
+--expected-generation N` organizes an earlier workflow for future submissions without changing its
+original receipts, definitions or results.
+
+Project mutations use the global `--command-id` as their exact request identity. Preserve that ID
+and every argument across a lost reply; `project receipt ID` recovers the accepted result.
+`project operations` shows unresolved folder creation. After inspecting the reported directory,
+`project reconcile OPERATION` explicitly attaches it or `project abandon OPERATION` abandons the
+registration attempt. Neither deletes files. `project rename` changes only the label, and `project
+remove` refuses registrations referenced by retained workflows or unresolved operations.
+
 `workflow capabilities` reports the daemon identity, current actor, effective limits and configured
 task choices. `workflow upload FILE --request ID` captures at most 16 KiB of UTF-8 file bytes.
 The daemon also checks the combined instructions and selected inputs before task admission. Put the returned input

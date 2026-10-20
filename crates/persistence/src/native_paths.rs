@@ -36,6 +36,16 @@ pub trait NativePathClaimStore: Send + Sync {
     /// # Errors
     /// Refuses changed replay, overlapping writers, exhausted capacity and storage failures.
     fn claim_native_paths(&self, claim: &NativePathClaim) -> Result<(), PersistenceError>;
+    /// Claim a serving invocation's configured directories while its exact pre-entry
+    /// dispatch claim is still current. Cancellation cannot recreate a released claim.
+    ///
+    /// # Errors
+    /// Refuses stale dispatch ownership, changed selection, overlapping writers and storage failures.
+    fn claim_serving_native_paths(
+        &self,
+        record: &crate::PeerExecutionRecord,
+        claim: &NativePathClaim,
+    ) -> Result<(), PersistenceError>;
     /// Return the claim used to recheck physical identities before entry or after restart.
     ///
     /// # Errors

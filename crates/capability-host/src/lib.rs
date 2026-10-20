@@ -19,6 +19,7 @@ pub mod conformance;
 mod materialization;
 mod model_loop;
 mod native_paths;
+pub use native_paths::{capture_native_project_root, verify_project_binding};
 mod registry;
 mod secret;
 mod serving;
@@ -27,7 +28,8 @@ mod worker;
 pub use adapter::{
     AdapterError, AdapterExecutionContext, AdapterFailureKind, AdapterInputSelection,
     AdapterInvocation, AdapterReporter, CapabilityAdapter, DirectInputSelection,
-    HostAdapterContractError, PreparedAdapterExecution, WorkflowExecutionContext,
+    HostAdapterContractError, NativePathScope, PreparedAdapterExecution, ProjectProcessAccess,
+    ProjectProcessKind, WorkflowExecutionContext,
 };
 pub use authoring::{TaskAuthoringContract, TaskAuthoringPort};
 pub use materialization::{

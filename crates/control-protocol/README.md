@@ -1,7 +1,7 @@
 # milkdrift-control-protocol
 
 Use these transport contracts when implementing a client of the daemon's authenticated control
-API. Rust DTOs describe task requests, receipts, compact discovery, selected task/result reads,
+API. Rust DTOs describe projects, task requests, receipts, compact discovery, selected task/result reads,
 independent invocations, managed resources and peer administration. They do not schedule work or
 validate a second copy of workflow semantics. [Control API](../../docs/reference/control-api.md)
 explains the exact routes and recovery behavior.
@@ -11,10 +11,18 @@ explains the exact routes and recovery behavior.
 versions; clients and daemon upgrade together. Public error codes own status mapping, while
 bounded response validation and authenticated cursors protect framing and continuation scope.
 
-Ordinary task create requests contain client-local aliases. Acceptance returns daemon IDs in one
-receipt. Generation/version-guarded edits affect only future work; replay binds exact canonical
+Project commands select an existing folder or reserve exclusive child creation, update future
+defaults and organize workflows through the daemon owner. Their receipts distinguish accepted,
+unresolved and abandoned registration; they never authorize deleting a directory. Project directory
+and environment DTOs expose current authorized choices without creating a client-owned catalog.
+
+Ordinary task create requests select a project and contain client-local aliases. Acceptance returns
+daemon IDs in one receipt. Generation/version-guarded edits affect only future work; replay binds exact canonical
 requests before defaults or upload resolution. Summary DTOs keep captured input/result bodies out
 of discovery pages. Result text and frozen input previews declare truncation explicitly.
+`TaskExecutionDto` distinguishes reviewed defaults, complete explicit settings and an accepted
+binding retained during a text edit. A restricted read withholds inaccessible execution details;
+it is not an authoring choice.
 
 The session and `DaemonMetadataDto` expose the daemon-owned name independently from its stable
 identity. `RenameDaemonRequest` carries an exact actor-scoped request identity and observed name
@@ -24,7 +32,7 @@ persistence owner validates names and bounds receipts. `daemon_identity_mismatch
 saved endpoint now serves a different daemon; clients must clear active state and require a
 deliberate new connection instead of replacing their pin.
 
-The task and metadata DTOs also own Rust-generated browser declarations. Regenerate with:
+The project, task and metadata DTOs also own Rust-generated browser declarations. Regenerate with:
 
 ```sh
 cargo run -p milkdrift-control-protocol --example export_web --features web-codegen

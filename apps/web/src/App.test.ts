@@ -3,8 +3,16 @@ import { afterEach, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 import { DaemonClient, DaemonError } from './lib/transport';
 import type { StreamEvent } from './lib/transport';
-import type { WorkflowReadDto, WorkflowSummaryDto } from './lib/protocol.generated';
+import type { ProjectCommandRequest, ProjectDto, ProjectReceiptDto, WorkflowReadDto, WorkflowSummaryDto } from './lib/protocol.generated';
 import sessionFixture from '../../../crates/control-protocol/tests/fixtures/task-session.json';
+import { project } from './lib/canvas.test-fixtures';
+
+function projectResponse(path: string): unknown {
+  if (path.startsWith('/v1/projects?')) return { items: [project], next_cursor: null };
+  if (path === `/v1/projects/${project.id}`) return project;
+  if (path === '/v1/project-operations') return [];
+  return undefined;
+}
 
 const fixture = { ...sessionFixture, value: { ...sessionFixture.value, authoring: [{
   capability: sessionFixture.value.capabilities[0], generation: 1, label: 'Fixture report', category: 'process',
@@ -20,6 +28,7 @@ it('keeps the selected discovery page during observations and resets its cursor 
     await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
   });
   const request = vi.spyOn(DaemonClient.prototype, 'request').mockImplementation(async <T>(path: string): Promise<T> => {
+    if (projectResponse(path) !== undefined) return projectResponse(path) as T;
     if (path === '/v1/session') return fixture.value as T;
     const url = new URL(path, 'http://127.0.0.1');
     const second = url.searchParams.get('cursor') === 'page-two';
@@ -48,6 +57,7 @@ it('keeps another daemon draft open when an earlier connection confirms a submis
   });
   let accept!: (receipt: unknown) => void;
   const request = vi.spyOn(DaemonClient.prototype, 'request').mockImplementation(async function <T>(this: DaemonClient, path: string, body?: unknown): Promise<T> {
+    if (projectResponse(path) !== undefined) return projectResponse(path) as T;
     if (path === '/v1/session') return { ...fixture.value, daemon_id: this.endpoint.endsWith('10001') ? 'daemon-a' : 'daemon-b' } as T;
     if (path === '/v1/workflows' && body) return new Promise<T>((resolve) => { accept = resolve as (receipt: unknown) => void; });
     if (path === '/v1/workflows/workflow-a') return workflow('workflow-a', 'First task') as T;
@@ -59,7 +69,7 @@ it('keeps another daemon draft open when an earlier connection confirms a submis
     await fireEvent.input(screen.getByLabelText('Daemon URL'), { target: { value: `http://127.0.0.1:${port}` } });
     await fireEvent.input(screen.getByLabelText('Bearer credential'), { target: { value: `private-${name}` } });
     await fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
-    await screen.findByRole('heading', { name: 'Your workflows' });
+    await screen.findByRole('heading', { name: 'Your projects' });
     await openNewWorkflow(name === 'a' ? 'First task' : 'Second daemon draft');
     if (name === 'a') await submitCanvas();
   }
@@ -77,6 +87,7 @@ it('opens the accepted workflow from its receipt while discovery refresh remains
   const delayedList = new Promise((resolve) => { releaseList = resolve; });
   const emptyPage = { items: [], next_cursor: null, truncated: false };
   const request = vi.spyOn(DaemonClient.prototype, 'request').mockImplementation(async <T>(path: string, body?: unknown): Promise<T> => {
+    if (projectResponse(path) !== undefined) return projectResponse(path) as T;
     if (path === '/v1/session') return fixture.value as T;
     if (path === '/v1/workflows' && body) return { request_id: 'accepted-request', workflow_id: 'accepted-workflow', generation: 1, aliases: {} } as T;
     if (path === '/v1/workflows/accepted-workflow') return {
@@ -93,7 +104,7 @@ it('opens the accepted workflow from its receipt while discovery refresh remains
   await fireEvent.input(screen.getByLabelText('Daemon URL'), { target: { value: 'http://127.0.0.1:10001' } });
   await fireEvent.input(screen.getByLabelText('Bearer credential'), { target: { value: 'private-test-credential' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
-  await screen.findByRole('heading', { name: 'Your workflows' });
+  await screen.findByRole('heading', { name: 'Your projects' });
   await openNewWorkflow('Accepted model work');
   await submitCanvas();
   try {
@@ -117,7 +128,7 @@ function idleStream() {
 
 function workflow(id: string, title = id): WorkflowReadDto {
   return {
-    id, title, description: '', generation: 1, state: 'waiting', created_at: 1, updated_at: 1,
+    id, project_id: project.id, title, description: '', generation: 1, state: 'waiting', created_at: 1, updated_at: 1,
     task_count: 0, tasks: [], admissions: [], next_task_cursor: null, wait_question: null,
     supplied_inputs: {},
     limits: fixture.value.limits, admitted_tasks: 0, admitted_model_batches: 0,
@@ -126,18 +137,21 @@ function workflow(id: string, title = id): WorkflowReadDto {
 }
 
 function workflowSummary(snapshot: WorkflowReadDto): WorkflowSummaryDto {
-  const { id, title, description, generation, state, created_at, updated_at, task_count } = snapshot;
-  return { id, title, description, generation, state, created_at, updated_at, task_count };
+  const { id, project_id, title, description, generation, state, created_at, updated_at, task_count } = snapshot;
+  return { id, project_id, title, description, generation, state, created_at, updated_at, task_count };
 }
 
 async function connectApp() {
   render(App);
   await fireEvent.click(screen.getByRole('button', { name: 'Connect a daemon' }));
   await authenticate();
-  await screen.findByRole('heading', { name: 'Your workflows' });
+  await screen.findByRole('heading', { name: 'Your projects' });
 }
 
 async function openNewWorkflow(instructions: string) {
+  if (!screen.queryByRole('button', { name: /^(\+ )?New workflow$/ })) {
+    await fireEvent.click(await screen.findByRole('button', { name: `Open project ${project.name}` }));
+  }
   await fireEvent.click(screen.getByRole('button', { name: /^(\+ )?New workflow$/ }));
   await fireEvent.click(screen.getByRole('button', { name: '+ Add task' }));
   await fireEvent.input(screen.getByLabelText('What should this task do?'), { target: { value: instructions } });
@@ -177,7 +191,7 @@ it('adopts a legacy pinned profile, learns the daemon name, and reports a separa
   expect(screen.getByRole('button', { name: /^Old nickname/ }).textContent).toContain('Cached name');
   await fireEvent.click(screen.getByRole('button', { name: /^Old nickname/ }));
   await authenticate();
-  await screen.findByRole('heading', { name: 'Your workflows' });
+  await screen.findByRole('heading', { name: 'Your projects' });
   expect(screen.getByRole('button', { name: /^Shared studio/ })).toBeTruthy();
   expect(screen.queryByRole('button', { name: /^Old nickname/ })).toBeNull();
   expect(screen.getByRole('alert').textContent).toContain('could not save the connection cache');
@@ -196,7 +210,7 @@ it('refuses a changed installation without discovery or overwriting the saved pi
   expect(screen.getByRole('alert').textContent).toContain('different daemon');
   expect(screen.getByRole('alert').textContent).toContain('Forget this saved connection');
   expect(request).toHaveBeenCalledTimes(1);
-  expect(screen.queryByRole('heading', { name: 'Your workflows' })).toBeNull();
+  expect(screen.queryByRole('heading', { name: 'Your projects' })).toBeNull();
   expect(JSON.parse(window.localStorage.getItem('milkdrift.connections.v1')!)).toEqual([profile]);
   await fireEvent.click(screen.getByRole('button', { name: 'Forget Old nickname connection' }));
   expect(window.localStorage.getItem('milkdrift.connections.v1')).toBe('[]');
@@ -212,7 +226,7 @@ it('discards an interrupted bootstrap even if its transport resolves after cance
   resolve(fixture.value);
   await Promise.resolve();
   expect(request).toHaveBeenCalledTimes(1);
-  expect(screen.queryByRole('heading', { name: 'Your workflows' })).toBeNull();
+  expect(screen.queryByRole('heading', { name: 'Your projects' })).toBeNull();
   expect(window.localStorage.length).toBe(0);
 });
 
@@ -226,13 +240,14 @@ it('refreshes the shared name when workflow discovery is forbidden, then ignores
   let resolve!: (session: unknown) => void;
   let delay = false;
   const request = vi.spyOn(DaemonClient.prototype, 'request').mockImplementation(async <T>(path: string): Promise<T> => {
+    if (projectResponse(path) !== undefined) return projectResponse(path) as T;
     if (path === '/v1/session') return (delay ? await new Promise<unknown>((done) => { resolve = done; }) : { ...fixture.value, daemon_name: name, daemon_name_generation: name === 'Studio A' ? 1 : 2 }) as T;
     throw new DaemonError('forbidden', 'Workflow discovery is not permitted.', 403);
   });
   render(App);
   await fireEvent.click(screen.getByRole('button', { name: 'Connect a daemon' }));
   await authenticate();
-  await screen.findByRole('heading', { name: 'Your workflows' });
+  await screen.findByRole('heading', { name: 'Your projects' });
   await savedConnections();
   expect(screen.getByRole('button', { name: /^Studio A/ })).toBeTruthy();
   name = 'Shared new name';
@@ -260,13 +275,14 @@ it('keeps a loaded empty discovery result and refreshes the name while live read
   let holdDiscovery = false;
   const emptyPage = { items: [], next_cursor: null, truncated: false };
   vi.spyOn(DaemonClient.prototype, 'request').mockImplementation(async <T>(path: string): Promise<T> => {
+    if (projectResponse(path) !== undefined) return projectResponse(path) as T;
     if (path === '/v1/session') return { ...fixture.value, daemon_name: name, daemon_name_generation: name === 'Original' ? 1 : 2 } as T;
     return (holdDiscovery && path.startsWith('/v1/workflows?limit=50') ? await new Promise<unknown>((resolve) => { finish = resolve; }) : emptyPage) as T;
   });
   render(App);
   await fireEvent.click(screen.getByRole('button', { name: 'Connect a daemon' }));
   await authenticate();
-  await screen.findByRole('heading', { name: 'Your first workflow starts with a task' });
+  await screen.findByRole('heading', { name: 'No accessible workflows' });
   await fireEvent.input(screen.getByRole('searchbox'), { target: { value: 'absent work' } });
   await fireEvent.submit(screen.getByRole('searchbox').closest('form')!);
   await screen.findByRole('heading', { name: 'No matching workflows' });
@@ -297,6 +313,7 @@ it('does not let an earlier session snapshot roll back an accepted rename', asyn
   let sessionReads = 0;
   let stale!: (value: unknown) => void;
   vi.spyOn(DaemonClient.prototype, 'request').mockImplementation(async <T>(path: string, body?: unknown): Promise<T> => {
+    if (projectResponse(path) !== undefined) return projectResponse(path) as T;
     if (path === '/v1/session') {
       if (++sessionReads === 2) return await new Promise<T>((resolve) => { stale = resolve as (value: unknown) => void; });
       return { ...fixture.value, daemon_name: sessionReads === 1 ? 'Original' : 'Accepted name', daemon_name_generation: sessionReads === 1 ? 1 : 2, can_rename_daemon: true } as T;
@@ -324,6 +341,7 @@ it('retains an uncertain rename across navigation and replays its original reque
   let renameCount = 0;
   let accepted: unknown;
   const request = vi.spyOn(DaemonClient.prototype, 'request').mockImplementation(async <T>(path: string, body?: unknown): Promise<T> => {
+    if (projectResponse(path) !== undefined) return projectResponse(path) as T;
     if (path === '/v1/session') return { ...fixture.value, daemon_name: renameCount ? 'Recovered name' : 'Original', daemon_name_generation: renameCount ? 2 : 1, can_rename_daemon: true } as T;
     if (path === '/v1/daemon/rename') {
       renameCount++;
@@ -356,6 +374,7 @@ it('clears an active draft when the connected endpoint reports a different daemo
   });
   let replaced = false;
   vi.spyOn(DaemonClient.prototype, 'request').mockImplementation(async <T>(path: string): Promise<T> => {
+    if (projectResponse(path) !== undefined) return projectResponse(path) as T;
     if (path === '/v1/session') return { ...fixture.value, daemon_name: replaced ? 'Replacement daemon' : 'Original daemon', daemon_id: replaced ? 'replacement-pin' : fixture.value.daemon_id } as T;
     return { items: [], next_cursor: null, truncated: false } as T;
   });
@@ -378,6 +397,7 @@ it('keeps the latest workflow selection when an earlier read arrives late', asyn
   const b = workflow('b', 'Workflow B');
   let releaseA!: (snapshot: WorkflowReadDto) => void;
   vi.spyOn(DaemonClient.prototype, 'request').mockImplementation(async <T>(path: string): Promise<T> => {
+    if (projectResponse(path) !== undefined) return projectResponse(path) as T;
     if (path === '/v1/session') return fixture.value as T;
     if (path === '/v1/workflows/a') return await new Promise<WorkflowReadDto>((resolve) => { releaseA = resolve; }) as T;
     if (path === '/v1/workflows/b') return b as T;
@@ -405,6 +425,7 @@ it('ignores a late observation snapshot after the user selects another workflow'
   let aReads = 0;
   let releaseA!: (snapshot: WorkflowReadDto) => void;
   vi.spyOn(DaemonClient.prototype, 'request').mockImplementation(async <T>(path: string): Promise<T> => {
+    if (projectResponse(path) !== undefined) return projectResponse(path) as T;
     if (path === '/v1/session') return fixture.value as T;
     if (path === '/v1/workflows/a') return (++aReads === 1 ? a : await new Promise<WorkflowReadDto>((resolve) => { releaseA = resolve; })) as T;
     if (path === '/v1/workflows/b') return b as T;
@@ -428,6 +449,7 @@ it('retains each workflow draft through navigation and history without submittin
   const a = workflow('a', 'Workflow A');
   const b = workflow('b', 'Workflow B');
   const request = vi.spyOn(DaemonClient.prototype, 'request').mockImplementation(async <T>(path: string): Promise<T> => {
+    if (projectResponse(path) !== undefined) return projectResponse(path) as T;
     if (path === '/v1/session') return fixture.value as T;
     if (path === '/v1/workflows/a') return a as T;
     if (path === '/v1/workflows/b') return b as T;
@@ -463,6 +485,7 @@ it('does not reopen a resumed draft after a newer navigation supersedes its slow
   let aReads = 0;
   let releaseA!: (snapshot: WorkflowReadDto) => void;
   vi.spyOn(DaemonClient.prototype, 'request').mockImplementation(async <T>(path: string): Promise<T> => {
+    if (projectResponse(path) !== undefined) return projectResponse(path) as T;
     if (path === '/v1/session') return fixture.value as T;
     if (path === '/v1/workflows/a') return (++aReads === 1 ? a : await new Promise<WorkflowReadDto>((resolve) => { releaseA = resolve; })) as T;
     if (path === '/v1/workflows/b') return b as T;
@@ -495,6 +518,7 @@ it('replays an uncertain addition only against its original workflow after navig
   const b = workflow('b', 'Workflow B');
   let attempts = 0;
   const request = vi.spyOn(DaemonClient.prototype, 'request').mockImplementation(async <T>(path: string, body?: unknown): Promise<T> => {
+    if (projectResponse(path) !== undefined) return projectResponse(path) as T;
     if (path === '/v1/session') return fixture.value as T;
     if (path === '/v1/workflows/a') return a as T;
     if (path === '/v1/workflows/b') return b as T;
@@ -530,6 +554,7 @@ it('does not navigate away from B when an in-flight addition to A is accepted', 
   const b = workflow('b', 'Workflow B');
   let accept!: (receipt: unknown) => void;
   const request = vi.spyOn(DaemonClient.prototype, 'request').mockImplementation(async <T>(path: string, body?: unknown): Promise<T> => {
+    if (projectResponse(path) !== undefined) return projectResponse(path) as T;
     if (path === '/v1/session') return fixture.value as T;
     if (path === '/v1/workflows/a') return a as T;
     if (path === '/v1/workflows/b') return b as T;
@@ -563,6 +588,7 @@ it('disposes workflow drafts after discovery authority is lost while keeping per
   });
   let allowed = true;
   vi.spyOn(DaemonClient.prototype, 'request').mockImplementation(async <T>(path: string): Promise<T> => {
+    if (projectResponse(path) !== undefined) return projectResponse(path) as T;
     if (path === '/v1/session') return fixture.value as T;
     if (!allowed) throw new DaemonError('forbidden', 'Workflow access was removed.', 403);
     return { items: [], next_cursor: null, truncated: false } as T;
@@ -577,7 +603,7 @@ it('disposes workflow drafts after discovery authority is lost while keeping per
   expect(screen.getByLabelText('Daemon name')).toBeTruthy();
   allowed = true;
   window.dispatchEvent(new PopStateEvent('popstate', { state: originalLocation }));
-  await screen.findByRole('heading', { name: 'Your workflows' });
+  await screen.findByRole('heading', { name: 'Your projects' });
   await openNewWorkflow('');
   expect((screen.getByLabelText('What should this task do?') as HTMLTextAreaElement).value).toBe('');
   expect(window.localStorage.getItem('milkdrift.connections.v1')).not.toContain('Sensitive');
@@ -587,6 +613,7 @@ it('discards a disconnected session pending draft and ignores its late reply aft
   idleStream();
   let acceptOld!: (receipt: unknown) => void;
   const request = vi.spyOn(DaemonClient.prototype, 'request').mockImplementation(async <T>(path: string, body?: unknown): Promise<T> => {
+    if (projectResponse(path) !== undefined) return projectResponse(path) as T;
     if (path === '/v1/session') return fixture.value as T;
     if (body) return await new Promise<T>((resolve) => { acceptOld = resolve as (receipt: unknown) => void; });
     return { items: [], next_cursor: null, truncated: false } as T;
@@ -598,7 +625,7 @@ it('discards a disconnected session pending draft and ignores its late reply aft
   await fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }));
   await fireEvent.change(screen.getByLabelText('Daemon'), { target: { value: profileId } });
   await authenticate();
-  await screen.findByRole('heading', { name: 'Your workflows' });
+  await screen.findByRole('heading', { name: /Your (projects|workflows)/ });
   await openNewWorkflow('New authenticated draft');
   acceptOld({ request_id: 'old-request', workflow_id: 'old-workflow', generation: 1, aliases: {} });
   await settleReplies();
@@ -612,6 +639,7 @@ it('refuses draft overflow without losing earlier work and frees space only afte
   idleStream();
   const workflows = Array.from({ length: 9 }, (_, index) => workflow(`w${index}`, `Workflow ${index}`));
   vi.spyOn(DaemonClient.prototype, 'request').mockImplementation(async <T>(path: string): Promise<T> => {
+    if (projectResponse(path) !== undefined) return projectResponse(path) as T;
     if (path === '/v1/session') return fixture.value as T;
     const selected = workflows.find((item) => path === `/v1/workflows/${item.id}`);
     return (selected ?? { items: workflows.map(workflowSummary), next_cursor: null, truncated: false }) as T;
@@ -642,6 +670,7 @@ it('retains a connected drawing while visiting models and another workflow', asy
   const a = workflow('a', 'Workflow A');
   const b = workflow('b', 'Workflow B');
   const request = vi.spyOn(DaemonClient.prototype, 'request').mockImplementation(async <T>(path: string): Promise<T> => {
+    if (projectResponse(path) !== undefined) return projectResponse(path) as T;
     if (path === '/v1/session') return fixture.value as T;
     if (path === '/v1/workflows/a') return a as T;
     if (path === '/v1/workflows/b') return b as T;
@@ -676,6 +705,7 @@ it('recovers an uncertain workflow action after navigation without changing its 
   const b = workflow('b', 'Workflow B');
   let attempts = 0;
   const request = vi.spyOn(DaemonClient.prototype, 'request').mockImplementation(async <T>(path: string, body?: unknown): Promise<T> => {
+    if (projectResponse(path) !== undefined) return projectResponse(path) as T;
     if (path === '/v1/session') return fixture.value as T;
     if (path === '/v1/workflows/a') return a as T;
     if (path === '/v1/workflows/b') return b as T;
@@ -706,4 +736,230 @@ it('recovers an uncertain workflow action after navigation without changing its 
   expect(request.mock.calls.filter(([, body]) => body).map(([path, body]) => ({ path, body }))).toEqual([
     { path: '/v1/workflows/a/changes', body: original }, { path: '/v1/workflows/a/changes', body: original },
   ]);
+});
+
+it('disposes project drafts when the selected folder is no longer inspectable', async () => {
+  let emit!: (event: StreamEvent) => Promise<void>;
+  vi.spyOn(DaemonClient.prototype, 'stream').mockImplementation(async (_path, onEvent, signal) => {
+    emit = onEvent;
+    await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+  });
+  let allowed = true;
+  vi.spyOn(DaemonClient.prototype, 'request').mockImplementation(async <T>(path: string): Promise<T> => {
+    if (path === '/v1/session') return fixture.value as T;
+    if (path.startsWith('/v1/projects?')) return { items: allowed ? [project] : [], next_cursor: null } as T;
+    if (path === `/v1/projects/${project.id}`) {
+      if (!allowed) throw new DaemonError('not_found', 'Project is unavailable.', 404);
+      return project as T;
+    }
+    if (path === '/v1/project-operations') return [] as T;
+    return { items: [], next_cursor: null, truncated: false } as T;
+  });
+  await connectApp();
+  await openNewWorkflow('Private project draft');
+  expect((screen.getByLabelText('What should this task do?') as HTMLTextAreaElement).value).toBe('Private project draft');
+  allowed = false;
+  await emit({ event: 'workflow_changed', id: 'permission-change', data: '{}' });
+  await waitFor(() => expect(screen.queryByLabelText('What should this task do?')).toBeNull());
+  expect(screen.queryByRole('button', { name: 'Open project Fixture project' })).toBeNull();
+  expect(screen.queryByText('Private project draft')).toBeNull();
+});
+
+const projectEnvironments = { items: [{ environment: { kind: 'host' }, label: 'Host file tools', available: true, reason: null }] };
+function projectReceipt(request: ProjectCommandRequest, saved: ProjectDto): ProjectReceiptDto {
+  return { request_id: request.request_id, project: saved, status: 'accepted', operation_id: null, operation_folder: null, operation_name: null, workflow_id: null };
+}
+async function openProjectSettings(selected: ProjectDto) {
+  await fireEvent.click(screen.getByRole('button', { name: `Open project ${selected.name}` }));
+  await fireEvent.click(await within(screen.getByRole('main')).findByRole('button', { name: 'Project settings' }));
+  await screen.findByRole('heading', { name: 'Project settings' });
+}
+
+it('keeps dirty project drafts separate through history and submits only their original project', async () => {
+  idleStream();
+  const other = { ...project, id: 'project-b', name: 'Project B', folder: '/projects/b' };
+  const projects = [project, other];
+  const request = vi.spyOn(DaemonClient.prototype, 'request').mockImplementation(async <T>(path: string, body?: unknown): Promise<T> => {
+    if (path === '/v1/session') return fixture.value as T;
+    if (path.startsWith('/v1/projects?')) return { items: projects, next_cursor: null } as T;
+    if (path === '/v1/project-environments') return projectEnvironments as T;
+    if (path === '/v1/project-operations') return [] as T;
+    if (path === '/v1/project-commands') {
+      const submitted = body as ProjectCommandRequest;
+      return projectReceipt(submitted, project) as T;
+    }
+    return { items: [], next_cursor: null, truncated: false } as T;
+  });
+  await connectApp();
+  await openProjectSettings(project);
+  await fireEvent.input(screen.getByLabelText('Project name'), { target: { value: 'Draft A' } });
+  const locationA = structuredClone(window.history.state);
+  await openProjectSettings(other);
+  await fireEvent.input(screen.getByLabelText('Project name'), { target: { value: 'Draft B' } });
+  const locationB = structuredClone(window.history.state);
+  window.dispatchEvent(new PopStateEvent('popstate', { state: locationA }));
+  await waitFor(() => expect((screen.getByLabelText('Project name') as HTMLInputElement).value).toBe('Draft A'));
+  await fireEvent.click(screen.getByRole('button', { name: 'Rename project' }));
+  await waitFor(() => expect(request.mock.calls.some(([path]) => path === '/v1/project-commands')).toBe(true));
+  expect((request.mock.calls.find(([path]) => path === '/v1/project-commands')![1] as ProjectCommandRequest).command).toEqual({
+    kind: 'rename', project_id: project.id, expected_generation: 1, name: 'Draft A',
+  });
+  window.dispatchEvent(new PopStateEvent('popstate', { state: locationB }));
+  await waitFor(() => expect((screen.getByLabelText('Project name') as HTMLInputElement).value).toBe('Draft B'));
+  expect(request.mock.calls.filter(([, body]) => body)).toHaveLength(1);
+  expect(window.localStorage.getItem('milkdrift.connections.v1')).not.toContain('Draft');
+});
+
+it('retains an uncertain project request after navigation and ignores its late response in another editor', async () => {
+  idleStream();
+  const other = { ...project, id: 'project-b', name: 'Project B', folder: '/projects/b' };
+  let submitted!: ProjectCommandRequest;
+  let release!: (receipt: ProjectReceiptDto) => void;
+  const request = vi.spyOn(DaemonClient.prototype, 'request').mockImplementation(async <T>(path: string, body?: unknown): Promise<T> => {
+    if (path === '/v1/session') return fixture.value as T;
+    if (path.startsWith('/v1/projects?')) return { items: [project, other], next_cursor: null } as T;
+    if (path === '/v1/project-environments') return projectEnvironments as T;
+    if (path === '/v1/project-operations') return [] as T;
+    if (path === '/v1/project-commands') {
+      submitted = body as ProjectCommandRequest;
+      return await new Promise<ProjectReceiptDto>((resolve) => { release = resolve; }) as T;
+    }
+    if (path.startsWith('/v1/project-receipts/')) return projectReceipt(submitted, project) as T;
+    return { items: [], next_cursor: null, truncated: false } as T;
+  });
+  await connectApp();
+  await openProjectSettings(project);
+  await fireEvent.input(screen.getByLabelText('Project name'), { target: { value: 'Submitted A' } });
+  const locationA = structuredClone(window.history.state);
+  await fireEvent.click(screen.getByRole('button', { name: 'Rename project' }));
+  await waitFor(() => expect(submitted).toBeDefined());
+  await openProjectSettings(other);
+  await fireEvent.input(screen.getByLabelText('Project name'), { target: { value: 'Unsent B' } });
+  release(projectReceipt(submitted, project));
+  await settleReplies();
+  expect((screen.getByLabelText('Project name') as HTMLInputElement).value).toBe('Unsent B');
+  expect(screen.queryByRole('button', { name: 'Find project receipt' })).toBeNull();
+  window.dispatchEvent(new PopStateEvent('popstate', { state: locationA }));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Find project receipt' }));
+  await waitFor(() => expect(request.mock.calls.some(([path]) => path === `/v1/project-receipts/${submitted.request_id}`)).toBe(true));
+  expect(request.mock.calls.filter(([, body]) => body)).toHaveLength(1);
+});
+
+it('invalidates old-actor project reads and mutation replies before showing the new actor drafts', async () => {
+  let emit!: (event: StreamEvent) => Promise<void>;
+  vi.spyOn(DaemonClient.prototype, 'stream').mockImplementation(async (_path, onEvent, signal) => {
+    emit = onEvent;
+    await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+  });
+  const other = { ...project, id: 'project-b', name: 'New actor project', folder: '/projects/b' };
+  let actor = fixture.value.actor_id;
+  let delayPage = false;
+  let releasePage!: (page: unknown) => void;
+  let releaseMutation!: (receipt: ProjectReceiptDto) => void;
+  let submitted!: ProjectCommandRequest;
+  vi.spyOn(DaemonClient.prototype, 'request').mockImplementation(async <T>(path: string, body?: unknown): Promise<T> => {
+    if (path === '/v1/session') return { ...fixture.value, actor_id: actor } as T;
+    if (path.startsWith('/v1/projects?')) {
+      if (delayPage) return await new Promise<T>((resolve) => { releasePage = resolve as (page: unknown) => void; });
+      return { items: [actor === fixture.value.actor_id ? project : other], next_cursor: null } as T;
+    }
+    if (path === '/v1/project-environments') return projectEnvironments as T;
+    if (path === '/v1/project-operations') return [] as T;
+    if (path === '/v1/project-commands') {
+      submitted = body as ProjectCommandRequest;
+      return await new Promise<ProjectReceiptDto>((resolve) => { releaseMutation = resolve; }) as T;
+    }
+    return { items: [], next_cursor: null, truncated: false } as T;
+  });
+  await connectApp();
+  await openProjectSettings(project);
+  await fireEvent.input(screen.getByLabelText('Project name'), { target: { value: 'Old actor draft' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Rename project' }));
+  await waitFor(() => expect(submitted).toBeDefined());
+  delayPage = true;
+  const oldObservation = emit({ event: 'workflow_changed', data: '{}' });
+  await waitFor(() => expect(releasePage).toBeDefined());
+  actor = 'human:new-actor';
+  delayPage = false;
+  await emit({ event: 'workflow_changed', data: '{}' });
+  await openProjectSettings(other);
+  await fireEvent.input(screen.getByLabelText('Project name'), { target: { value: 'New actor draft' } });
+  releasePage({ items: [project], next_cursor: null });
+  releaseMutation(projectReceipt(submitted, project));
+  await oldObservation;
+  await settleReplies();
+  expect((screen.getByLabelText('Project name') as HTMLInputElement).value).toBe('New actor draft');
+  expect(screen.queryByRole('button', { name: `Open project ${project.name}` })).toBeNull();
+  expect(screen.queryByText('Old actor draft')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Find project receipt' })).toBeNull();
+});
+
+it('bounds retained project drafts and frees a slot only after deliberate discard', async () => {
+  idleStream();
+  const projects = Array.from({ length: 9 }, (_, index) => ({ ...project, id: `project-${index}`, name: `Project ${index}`, folder: `/projects/${index}` }));
+  vi.spyOn(DaemonClient.prototype, 'request').mockImplementation(async <T>(path: string): Promise<T> => {
+    if (path === '/v1/session') return fixture.value as T;
+    if (path.startsWith('/v1/projects?')) return { items: projects, next_cursor: null } as T;
+    if (path === '/v1/project-environments') return projectEnvironments as T;
+    if (path === '/v1/project-operations') return [] as T;
+    return { items: [], next_cursor: null, truncated: false } as T;
+  });
+  await connectApp();
+  for (const [index, selected] of projects.slice(0, 8).entries()) {
+    await openProjectSettings(selected);
+    await fireEvent.input(screen.getByLabelText('Project name'), { target: { value: `Retained ${index}` } });
+  }
+  await fireEvent.click(screen.getByRole('button', { name: `Open project ${projects[8].name}` }));
+  await fireEvent.click(await within(screen.getByRole('main')).findByRole('button', { name: 'Project settings' }));
+  expect(screen.getByRole('alert').textContent).toContain('8 project drafts');
+  await openProjectSettings(projects[0]);
+  expect((screen.getByLabelText('Project name') as HTMLInputElement).value).toBe('Retained 0');
+  await fireEvent.click(screen.getByRole('button', { name: 'Discard project draft' }));
+  await openProjectSettings(projects[8]);
+  expect((screen.getByLabelText('Project name') as HTMLInputElement).value).toBe(projects[8].name);
+});
+
+it('accepts project removal without rereading the deleted registration or discarding unrelated drafts', async () => {
+  idleStream();
+  const removable = { ...project, id: 'unused-project', name: 'Unused project', folder: '/projects/unused' };
+  let projects = [project, removable];
+  const request = vi.spyOn(DaemonClient.prototype, 'request').mockImplementation(async <T>(path: string, body?: unknown): Promise<T> => {
+    if (path === '/v1/session') return fixture.value as T;
+    if (path.startsWith('/v1/projects?')) return { items: projects, next_cursor: null } as T;
+    if (path === `/v1/projects/${removable.id}`) throw new DaemonError('not_found', 'Project is unavailable.', 404);
+    if (path === '/v1/project-environments') return projectEnvironments as T;
+    if (path === '/v1/project-operations') return [] as T;
+    if (path === '/v1/project-commands') {
+      const submitted = body as ProjectCommandRequest;
+      expect(submitted.command).toEqual({ kind: 'remove', project_id: removable.id, expected_generation: removable.generation });
+      projects = [project];
+      return projectReceipt(submitted, removable) as T;
+    }
+    return { items: [], next_cursor: null, truncated: false } as T;
+  });
+  await connectApp();
+  await openNewWorkflow('Retained workflow draft');
+  await openProjectSettings(project);
+  await fireEvent.input(screen.getByLabelText('Project name'), { target: { value: 'Retained project draft' } });
+  await openProjectSettings(removable);
+  await openNewWorkflow('Blocked workflow draft');
+  await openProjectSettings(removable);
+  await fireEvent.click(screen.getByText('Remove registration', { selector: 'summary' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Remove unused registration' }));
+  await screen.findByRole('heading', { name: 'Your projects' });
+  await settleReplies();
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.queryByRole('button', { name: `Open project ${removable.name}` })).toBeNull();
+  expect(request.mock.calls.some(([path]) => path === `/v1/projects/${removable.id}`)).toBe(false);
+  await openProjectSettings(project);
+  expect((screen.getByLabelText('Project name') as HTMLInputElement).value).toBe('Retained project draft');
+  await fireEvent.click(screen.getByText('Drafts (2/8)', { selector: 'summary' }));
+  await fireEvent.click(screen.getByRole('button', { name: /^Retained workflow draft/ }));
+  expect((await screen.findByLabelText('What should this task do?') as HTMLTextAreaElement).value).toBe('Retained workflow draft');
+  await fireEvent.click(screen.getByRole('button', { name: /^Blocked workflow draft/ }));
+  expect((await screen.findByLabelText('What should this task do?') as HTMLTextAreaElement).value).toBe('Blocked workflow draft');
+  expect(screen.getByText(/This project registration was removed/)).toBeTruthy();
+  await submitCanvas();
+  await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Choose a project before starting a workflow'));
+  expect(request.mock.calls.filter(([, body]) => body)).toHaveLength(1);
 });

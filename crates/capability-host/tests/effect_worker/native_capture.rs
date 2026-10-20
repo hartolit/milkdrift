@@ -33,6 +33,28 @@ struct NativeAdapter {
 }
 
 impl CapabilityAdapter for NativeAdapter {
+    fn native_path_claims(
+        &self,
+        invocation: &AdapterInvocation<'_>,
+    ) -> Result<Vec<milkdrift_capability_host::NativePathScope>, AdapterError> {
+        let writer = invocation.request().inputs().iter().any(|input| {
+            input.name() == "instructions"
+                && input
+                    .value()
+                    .inline()
+                    .and_then(|value| value.value().as_str())
+                    == Some("writer")
+        });
+        Ok(if writer {
+            vec![milkdrift_capability_host::NativePathScope {
+                path: self.project.clone(),
+                write: true,
+            }]
+        } else {
+            Vec::new()
+        })
+    }
+
     fn admission_envelope(
         &self,
         _invocation: &AdapterInvocation<'_>,
@@ -187,7 +209,7 @@ impl Fixture {
             },
             CapabilitySelectionPolicy::priorities(BTreeMap::new()),
         )?;
-        host.install_native_path_store(store.clone())?;
+        host.install_native_path_store(store.clone(), Vec::new())?;
         let (writer_entered, entered) = sync_channel(1);
         let (release, writer_result) = sync_channel(1);
         let adapter = Arc::new(NativeAdapter {
@@ -269,6 +291,7 @@ impl Fixture {
             actor.as_str(),
             key,
             WorkflowCreate {
+                project_id: None,
                 title: key.into(),
                 description: String::new(),
                 inputs: BTreeMap::new(),
@@ -277,6 +300,7 @@ impl Fixture {
                 tasks: vec![NewTask {
                     alias: TaskId::new("work")?,
                     definition: TaskDefinition {
+                        execution: milkdrift_blueprint::TaskExecution::Legacy,
                         title: key.into(),
                         description: String::new(),
                         instructions: if write { "writer" } else { "capture" }.into(),
@@ -297,10 +321,15 @@ impl Fixture {
                         },
                         required: true,
                         corrective_of: None,
-                        paths: vec![TaskPathAccess {
-                            path: self.adapter.project.to_string_lossy().into_owned(),
-                            write,
-                        }],
+                        // Earlier fixed-directory writers have no project field or explicit path.
+                        paths: if write {
+                            Vec::new()
+                        } else {
+                            vec![TaskPathAccess {
+                                path: self.adapter.project.to_string_lossy().into_owned(),
+                                write: false,
+                            }]
+                        },
                         tools: Vec::new(),
                         actions: None,
                     },

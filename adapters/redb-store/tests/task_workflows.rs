@@ -24,6 +24,8 @@ fn commit(
     key: Option<&str>,
 ) -> Result<WorkflowCommit, Box<dyn std::error::Error>> {
     Ok(WorkflowCommit {
+        project_guard: None,
+        project_id: None,
         expected_generation: if generation == 1 {
             None
         } else {
@@ -243,7 +245,7 @@ fn old_schema_refusal_preserves_database_bytes_and_modification_time()
         Err(PersistenceError::UnsupportedVersion {
             document: "storage",
             found: 17,
-            supported: 20
+            supported: 21
         })
     ));
     assert_eq!(std::fs::read(&path)?, before);

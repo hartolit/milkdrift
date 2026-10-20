@@ -31,6 +31,22 @@ pub enum StorageFailureClass {
 /// explains how to recover a result when an error may have arrived after commit.
 #[derive(Debug, Error)]
 pub enum PersistenceError {
+    /// Project settings changed before the guarded registration or task acceptance.
+    #[error("project generation conflict: expected {expected}, actual {actual}")]
+    ProjectGenerationConflict {
+        /// Generation reviewed by the caller.
+        expected: u64,
+        /// Current accepted project generation.
+        actual: u64,
+    },
+    /// A project command key already binds different canonical request bytes.
+    #[error("project command {key} idempotency conflict for actor {actor}")]
+    ProjectIdempotencyConflict {
+        /// Authenticated receipt owner.
+        actor: milkdrift_authority::ActorRef,
+        /// Conflicting actor-local key.
+        key: String,
+    },
     /// Another accepted rename changed the daemon's name.
     #[error("daemon name generation conflict: expected {expected}, actual {actual}")]
     DaemonGenerationConflict {

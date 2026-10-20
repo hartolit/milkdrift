@@ -544,11 +544,13 @@ fn create_and_start(runtime: &TaskRuntime, index: usize) -> TestResult {
         actor.as_str(),
         &key,
         WorkflowCreate {
+            project_id: None,
             title: "Effect worker fixture".into(),
             description: String::new(),
             tasks: vec![NewTask {
                 alias: TaskId::new("task")?,
                 definition: TaskDefinition {
+                    execution: milkdrift_blueprint::TaskExecution::Legacy,
                     title: "Exercise worker".into(),
                     description: String::new(),
                     instructions: "Exercise the retained worker owner".into(),

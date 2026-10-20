@@ -19,8 +19,10 @@ The coding process profile must pin executable digest and byte size, provide a w
 `process.execute` capability, accept the named `prompt` input, work in its current repository without
 committing, and publish a `diff` output. A bounded stdout artifact is permitted. The harness validates
 the profile, rejects known fixture/test agents in real mode, rehashes the executable and runs a bounded
-version command directly. It replaces the working directory with its disposable repository and adds
-only its private session/repository roots. Review argv, filesystem needs and authentication against the
+version command directly. It renders the narrow project working-directory mode, registers its
+disposable repository through the public project API, and binds each process task explicitly to that
+project and configured environment. It adds only its private session/repository roots.
+Model tasks explicitly select no project access. Review argv, filesystem needs and authentication against the
 exact executable you intend to run; a template does not establish that compatibility.
 
 The model profile selects one supported endpoint/protocol and exact model alias. Its accounting must

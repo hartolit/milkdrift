@@ -59,11 +59,13 @@ impl AuthorityPreset {
         use AuthorityOperation::{
             AdministerCapabilities, AdministerPeer, Apply, Cancel, CancelCapability, CreateRun,
             Inspect, InspectCapabilityHealth, InspectDaemonHealth, InspectOwnAuthority,
-            InspectPeer, InspectProviderProfile, InspectRun, InvokeCapability, ListCapabilities,
-            NegotiateControlProtocol, PublishArtifact, ReadArtifactContent, ReadArtifactMetadata,
-            ReadCapabilityOutput, ReadReadiness, RenameDaemon, StartRun,
+            InspectPeer, InspectProject, InspectProviderProfile, InspectRun, InvokeCapability,
+            ListCapabilities, ManageProject, NegotiateControlProtocol, PublishArtifact,
+            ReadArtifactContent, ReadArtifactMetadata, ReadCapabilityOutput, ReadReadiness,
+            RenameDaemon, StartRun,
         };
         let reads = [
+            InspectProject,
             Inspect,
             InspectRun,
             ListCapabilities,
@@ -111,6 +113,7 @@ impl AuthorityPreset {
                     AdministerPeer,
                     AdministerCapabilities,
                     RenameDaemon,
+                    ManageProject,
                 ])
                 .collect(),
             Self::Autonomous => reads

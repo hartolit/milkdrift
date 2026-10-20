@@ -5,9 +5,10 @@
   import DaemonSettings, { type RenameDraft } from './components/DaemonSettings.svelte';
   import CanvasWorkspace from './components/CanvasWorkspace.svelte';
   import ModelsAgents from './components/ModelsAgents.svelte';
+  import ProjectSettings, { newProjectDraft, type ProjectDraft } from './components/ProjectSettings.svelte';
   import { endpointUrl, loadProfiles, maxConnections, saveProfiles } from './lib/connections';
   import type { ConnectionProfile } from './lib/connections';
-  import type { RenameDaemonReceipt, TaskCapability, TaskSessionDto, WorkflowPageDto, WorkflowReadDto, WorkflowReceipt, WorkflowSummaryDto } from './lib/protocol.generated';
+  import type { ProjectCommandDto, ProjectDto, ProjectPageDto, ProjectReceiptDto, RenameDaemonReceipt, TaskCapability, TaskSessionDto, WorkflowPageDto, WorkflowReadDto, WorkflowReceipt, WorkflowSummaryDto } from './lib/protocol.generated';
   import { createCanvas, hasChanges, type CanvasState as TaskDraft, type CanvasTarget as TaskDraftTarget } from './lib/canvas';
   import { DaemonClient, DaemonError } from './lib/transport';
   import { timeLabel } from './lib/presentation';
@@ -17,6 +18,15 @@
     client: DaemonClient;
     session: TaskSessionDto;
     rename: RenameDraft;
+    projects: ProjectDto[];
+    projectCursor: string | null;
+    projectId: string;
+    earlierOnly: boolean;
+    projectDraft: ProjectDraft;
+    projectDrafts: ProjectDraft[];
+    projectGeneration: number;
+    workGeneration: number;
+    unresolvedProjects: ProjectReceiptDto[];
     workflows: WorkflowSummaryDto[];
     nextCursor: string | null;
     pageCursor: string | undefined;
@@ -31,7 +41,7 @@
     drafts: TaskDraft[];
     visibleDraftId: string;
     preferredCapability?: TaskCapability;
-    view: 'work' | 'settings' | 'models';
+    view: 'work' | 'settings' | 'models' | 'project';
     loading: boolean;
     discoveryKey: string | undefined;
     taskCursor: string | undefined;
@@ -56,6 +66,7 @@
   let bootstrapGeneration = 0;
   let active = $derived(connections.find((connection) => connection.profile.id === activeId));
   let visibleDraft = $derived(active?.drafts.find((draft) => draft.id === active.visibleDraftId));
+  let activeProject = $derived(active?.projects.find((project) => project.id === active.projectId) ?? null);
   const maxDrafts = 8;
   let workflowView: { canNavigate: () => boolean; addTask: () => Promise<void> } | undefined = $state();
 
@@ -71,9 +82,9 @@
     return active?.view !== 'work' || connectionForm || !active?.selected || !workflowView || workflowView.canNavigate();
   }
 
-  interface Location { connection: string; daemon: string; workflow: string; view: 'work' | 'settings' | 'models'; draft: string }
+  interface Location { connection: string; daemon: string; project: string; earlierOnly: boolean; workflow: string; view: Connection['view']; draft: string }
   function rememberLocation(replace = false) {
-    const location: Location | null = active ? { connection: active.profile.id, daemon: active.session.daemon_id, workflow: active.selectedId, view: active.view, draft: active.visibleDraftId } : null;
+    const location: Location | null = active ? { connection: active.profile.id, daemon: active.session.daemon_id, project: active.projectId, earlierOnly: active.earlierOnly, workflow: active.selectedId, view: active.view, draft: active.visibleDraftId } : null;
     window.history[replace ? 'replaceState' : 'pushState']({ milkdrift: location }, '');
   }
 
@@ -89,10 +100,19 @@
       if (profile) { reconnectProfile = profile; connectionForm = true; }
       return;
     }
+    if (location.view === 'project') {
+      const draft = ensureProjectDraft(connection, location.project || null);
+      if (!draft) { rememberLocation(true); return; }
+      connection.projectDraft = draft;
+    }
     activeId = connection.profile.id;
-    connection.view = location.view === 'settings' || location.view === 'models' ? location.view : 'work';
+    connection.view = location.view === 'settings' || location.view === 'models' || location.view === 'project' ? location.view : 'work';
+    connection.projectId = location.project || '';
+    connection.earlierOnly = location.earlierOnly === true;
     connection.visibleDraftId = connection.drafts.some((draft) => draft.id === location.draft) ? location.draft : '';
     void selectWorkflow(connection, location.workflow || '', undefined, false, false);
+    void refreshProjects(connection);
+    if (!location.workflow) void refresh(connection);
     closeNavigation();
   }
   onMount(() => {
@@ -158,12 +178,22 @@
   }
 
   function disposeWork(connection: Connection) {
+    connection.workGeneration++;
+    connection.projectGeneration++;
     connection.selectionGeneration++;
     for (const draft of connection.drafts) draft.disposed = true;
     connection.drafts = [];
     connection.visibleDraftId = '';
     connection.preferredCapability = undefined;
     connection.recent = [];
+    connection.projects = [];
+    connection.projectId = '';
+    connection.earlierOnly = false;
+    connection.projectDraft = newProjectDraft();
+    connection.projectDrafts = [];
+    connection.projectCursor = null;
+    if (connection.view === 'project') connection.view = 'work';
+    connection.unresolvedProjects = [];
     connection.workflows = [];
     connection.discoveryKey = undefined;
     connection.selected = null;
@@ -199,6 +229,7 @@
         connection.refreshGeneration++;
         connection.loading = false;
         disposeWork(connection);
+        connection.rename = { name: session.daemon_name, dirty: false, pending: null };
       }
       const name = session.daemon_name_generation >= connection.session.daemon_name_generation
         ? session : connection.session;
@@ -209,13 +240,174 @@
 
   async function refreshObserved(connection: Connection) {
     // Metadata remains observable even when workflow discovery is slow or unavailable.
-    await Promise.all([refreshSession(connection), refresh(connection)]);
+    await refreshSession(connection);
+    if (!connection.stream.signal.aborted) await Promise.all([refreshProjects(connection), refresh(connection)]);
+  }
+
+  async function refreshProjects(connection: Connection, nextPage = false) {
+    const generation = ++connection.projectGeneration;
+    const cursor = nextPage ? connection.projectCursor : null;
+    try {
+      const page = await connection.client.request<ProjectPageDto>(`/v1/projects?limit=30${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
+      if (connection.stream.signal.aborted || generation !== connection.projectGeneration) return;
+      connection.projects = nextPage ? [...connection.projects, ...page.items.filter((item) => !connection.projects.some((known) => known.id === item.id))].slice(-120) : page.items;
+      connection.projectCursor = page.next_cursor;
+      if (connection.projectId && !connection.projects.some((item) => item.id === connection.projectId)) {
+        const selected = await connection.client.request<ProjectDto>(`/v1/projects/${encodeURIComponent(connection.projectId)}`);
+        if (!connection.stream.signal.aborted && generation === connection.projectGeneration) connection.projects = [...connection.projects.slice(0, 119), selected];
+      }
+      const operations = await connection.client.request<ProjectReceiptDto[]>('/v1/project-operations');
+      if (!connection.stream.signal.aborted && generation === connection.projectGeneration) connection.unresolvedProjects = operations;
+    } catch (failure) {
+      if (generation !== connection.projectGeneration) return;
+      if (failure instanceof DaemonError && (failure.status === 403 || failure.status === 404)) {
+        connection.refreshGeneration++;
+        disposeWork(connection);
+        connection.loading = false;
+      }
+      fail(connection, failure);
+    }
+  }
+
+  function ensureProjectDraft(connection: Connection, projectId: string | null) {
+    let draft = connection.projectDrafts.find((item) => item.projectId === projectId);
+    if (!draft) {
+      if (connection.projectDrafts.length >= maxDrafts) {
+        const clean = connection.projectDrafts.find((item) => !item.dirty && !item.pending && !item.recovery);
+        if (!clean) {
+          connection.error = `This connection holds ${maxDrafts} project drafts. Open and discard or recover one before starting another; your existing drafts are intact.`;
+          return;
+        }
+        connection.projectDrafts = connection.projectDrafts.filter((item) => item !== clean);
+      }
+      connection.projectDrafts = [...connection.projectDrafts, newProjectDraft(projectId)];
+      draft = connection.projectDrafts.find((item) => item.projectId === projectId)!;
+    }
+    return draft;
+  }
+
+  function showProject(connection: Connection, project: ProjectDto | null) {
+    if (!mayLeaveWork()) return;
+    const draft = ensureProjectDraft(connection, project?.id ?? null);
+    if (!draft) return;
+    if (connection.selected?.project_id !== project?.id) clearSelectedWorkflow(connection);
+    connection.projectId = project?.id ?? '';
+    connection.projectDraft = draft;
+    connection.view = 'project';
+    closeConnectionForm(); closeNavigation(); rememberLocation();
+  }
+
+  function recoverProject(connection: Connection, operation: ProjectReceiptDto) {
+    showProject(connection, null);
+    if (connection.projectDraft.projectId !== null || connection.view !== 'project') return;
+    if (connection.projectDraft.pending || connection.projectDraft.dirty) {
+      connection.error = 'Recover or discard the current new-project draft before opening another folder recovery.';
+      return;
+    }
+    connection.projectDraft.recovery = { operationId: operation.operation_id!, folder: operation.operation_folder };
+  }
+
+  async function associateWorkflow(connection: Connection, project: ProjectDto) {
+    if (!connection.selected) return;
+    const draft = ensureProjectDraft(connection, project.id);
+    if (!draft || draft.pending) return;
+    const generation = connection.workGeneration;
+    const workflowId = connection.selected.id;
+    const request = { request_id: crypto.randomUUID(), command: { kind: 'associate' as const, project_id: project.id, expected_generation: project.generation, workflow_id: connection.selected.id } };
+    draft.pending = request;
+    connection.projectDraft = draft;
+    const current = () => !connection.stream.signal.aborted && generation === connection.workGeneration && connection.projectDrafts.includes(draft);
+    try {
+      const receipt = await connection.client.request<ProjectReceiptDto>('/v1/project-commands', request);
+      if (!current()) return;
+      if (receipt.request_id !== request.request_id) throw new Error('The reply belongs to a different project request.');
+      draft.pending = null;
+      await projectAccepted(connection, draft, receipt, request.command, connection.selectedId === workflowId && connection.view === 'work');
+    } catch (failure) {
+      if (!current()) return;
+      if (failure instanceof DaemonError && failure.status < 500) draft.pending = null;
+      fail(connection, failure);
+      if (draft.pending && connection.selectedId === workflowId && connection.view === 'work') showProject(connection, project);
+    }
+  }
+
+  async function chooseProject(connection: Connection, id: string, earlierOnly = false) {
+    if (!mayLeaveWork()) return;
+    connection.projectId = id;
+    connection.earlierOnly = earlierOnly;
+    connection.pageCursor = undefined; connection.nextCursor = null;
+    connection.search = ''; connection.appliedSearch = '';
+    connection.recent = [];
+    await selectWorkflow(connection, '');
+    await refresh(connection);
+  }
+
+  async function projectAccepted(connection: Connection, draft: ProjectDraft, receipt: ProjectReceiptDto, command: ProjectCommandDto, navigate = true) {
+    const generation = connection.workGeneration;
+    const projectId = connection.projectId;
+    const selectedId = connection.selectedId;
+    const view = connection.view;
+    const current = () => !connection.stream.signal.aborted && generation === connection.workGeneration && connection.projectDrafts.includes(draft);
+    if (!current()) return;
+    if (command.kind === 'remove') {
+      // A removal receipt retains the original project. It proves the command, not a live registration.
+      connection.projects = connection.projects.filter((item) => item.id !== command.project_id);
+      connection.projectDrafts = connection.projectDrafts.filter((item) => item.projectId !== command.project_id);
+      if (connection.projectDraft.projectId === command.project_id) connection.projectDraft = newProjectDraft();
+      if (connection.projectId === command.project_id) {
+        connection.projectId = '';
+        connection.earlierOnly = false;
+        connection.pageCursor = undefined;
+        connection.nextCursor = null;
+        if (connection.view === 'project') connection.view = 'work';
+      }
+      for (const drawing of connection.drafts) {
+        if (drawing.target.kind === 'new' && drawing.target.projectId === command.project_id) {
+          drawing.target.projectId = undefined;
+          drawing.project = null;
+          drawing.notice = 'This project registration was removed. Your unsent drawing is retained for inspection or discard; start new work in a registered project.';
+        }
+      }
+      await refreshProjects(connection);
+      if (connection.stream.signal.aborted || generation !== connection.workGeneration) return;
+      await refresh(connection);
+      if (!connection.stream.signal.aborted && generation === connection.workGeneration && active === connection) rememberLocation(true);
+      return;
+    }
+    await refreshProjects(connection);
+    if (!current()) return;
+    if (receipt.workflow_id) {
+      for (const draft of connection.drafts.filter((item) => item.target.kind === 'existing' && item.target.workflowId === receipt.workflow_id)) {
+        draft.target.projectId = receipt.project?.id ?? null;
+        draft.project = receipt.project;
+      }
+    }
+    if (!navigate || active !== connection || connection.projectDraft !== draft || connection.projectId !== projectId || connection.selectedId !== selectedId || connection.view !== view) return;
+    if (receipt.project) {
+      if (!receipt.workflow_id && connection.selected?.project_id !== receipt.project.id) clearSelectedWorkflow(connection);
+      connection.projectId = receipt.project.id;
+    }
+    if (receipt.workflow_id) {
+      await selectWorkflow(connection, receipt.workflow_id);
+    } else if (receipt.project && draft.mode !== 'settings') {
+      // The new-folder draft is resolved, so replace its slot with the accepted project's editor.
+      connection.projectDrafts = connection.projectDrafts.filter((item) => item !== draft);
+      const acceptedDraft = ensureProjectDraft(connection, receipt.project.id);
+      if (acceptedDraft) connection.projectDraft = acceptedDraft;
+    } else if (!receipt.project && receipt.status === 'accepted') {
+      connection.projectId = '';
+      connection.view = 'work';
+    }
+    await refresh(connection);
+    rememberLocation(true);
   }
 
   async function refresh(connection: Connection, nextPage = false) {
     const generation = ++connection.refreshGeneration;
     const pageCursor = nextPage ? connection.nextCursor ?? undefined : connection.pageCursor;
     const query = new SvelteURLSearchParams({ limit: '50', search: connection.appliedSearch });
+    if (connection.projectId) query.set('project_id', connection.projectId);
+    else if (connection.earlierOnly) query.set('earlier', 'true');
     if (pageCursor) query.set('cursor', pageCursor);
     const discoveryKey = query.toString();
     // Stream replay refreshes the same snapshot repeatedly. Keep an already loaded empty result
@@ -254,7 +446,7 @@
 
   async function refreshRecent(connection: Connection, generation: number) {
     try {
-      const page = await connection.client.request<WorkflowPageDto>('/v1/workflows?limit=8&search=');
+      const page = await connection.client.request<WorkflowPageDto>(`/v1/workflows?limit=8&search=${connection.projectId ? `&project_id=${encodeURIComponent(connection.projectId)}` : connection.earlierOnly ? '&earlier=true' : ''}`);
       if (generation === connection.refreshGeneration && !connection.stream.signal.aborted) updateRecent(connection, page.items);
     } catch (failure) { if (generation === connection.refreshGeneration) fail(connection, failure); }
   }
@@ -338,7 +530,7 @@
       try { saveProfiles(profiles); } catch { globalError = 'This browser could not save the connection cache. The authenticated connection and current daemon name still work for this session.'; }
       const connection: Connection = {
         profile, client, session, rename: { name: session.daemon_name, dirty: false, pending: null }, workflows: [], nextCursor: null, pageCursor: undefined, truncated: false, search: '', appliedSearch: '', selected: null, taskCursor: undefined,
-        selectedId: '', selectionGeneration: 0, sessionGeneration: 0, recent: [], drafts: [], visibleDraftId: '', view: 'work', loading: true, discoveryKey: undefined,
+        selectedId: '', selectionGeneration: 0, sessionGeneration: 0, projects: [], projectCursor: null, projectId: '', earlierOnly: false, projectDraft: newProjectDraft(), projectDrafts: [], projectGeneration: 0, workGeneration: 0, unresolvedProjects: [], recent: [], drafts: [], visibleDraftId: '', view: 'work', loading: true, discoveryKey: undefined,
         error: '', observation: 'Connecting live updates', stream: new AbortController(), cursor: undefined, refreshGeneration: 0, busy: false,
       };
       connections = [...connections, connection];
@@ -351,11 +543,13 @@
       const restored = window.history.state?.milkdrift as Location | undefined;
       if (restored?.connection === profile.id && restored.daemon === session.daemon_id) {
         installed.view = restored.view;
+        installed.projectId = restored.project || '';
+        if (restored.view === 'project') installed.projectDraft = ensureProjectDraft(installed, restored.project || null)!;
         void selectWorkflow(installed, restored.workflow, undefined, false);
       }
       rememberLocation();
       void observe(installed);
-      await refresh(installed);
+      await Promise.all([refreshProjects(installed), refresh(installed)]);
     } catch (failure) { client.disconnect(); throw failure; }
   }
 
@@ -391,17 +585,26 @@
       if (connection.stream.signal.aborted || generation !== connection.selectionGeneration || connection.selectedId !== id) return;
       const visiting = connection.selected?.id !== id;
       connection.selected = selected;
+      if (connection.view === 'work') connection.projectId = selected.project_id ?? '';
       if (connection.view === 'work' && !connection.visibleDraftId) {
-        const canvas = ensureCanvas(connection, { kind: 'existing', workflowId: selected.id, title: selected.title, generation: selected.generation });
+        const canvas = ensureCanvas(connection, { kind: 'existing', workflowId: selected.id, title: selected.title, generation: selected.generation, projectId: selected.project_id });
         if (canvas) connection.visibleDraftId = canvas.id;
       }
-      const summary: WorkflowSummaryDto = { id: selected.id, title: selected.title, description: selected.description, generation: selected.generation, state: selected.state, created_at: selected.created_at, updated_at: selected.updated_at, task_count: selected.task_count };
+      const summary: WorkflowSummaryDto = { id: selected.id, project_id: selected.project_id, title: selected.title, description: selected.description, generation: selected.generation, state: selected.state, created_at: selected.created_at, updated_at: selected.updated_at, task_count: selected.task_count };
       connection.recent = visiting
         ? [summary, ...connection.recent.filter((item) => item.id !== id)].slice(0, 8)
         : connection.recent.map((item) => item.id === id ? summary : item);
     }
     catch (failure) { if (generation === connection.selectionGeneration) fail(connection, failure); }
     finally { if (generation === connection.selectionGeneration) connection.busy = false; }
+  }
+
+  function clearSelectedWorkflow(connection: Connection) {
+    connection.selectionGeneration++;
+    connection.selectedId = ''; connection.selected = null; connection.visibleDraftId = '';
+    connection.taskCursor = undefined; connection.busy = false;
+    connection.pageCursor = undefined; connection.nextCursor = null;
+    connection.search = ''; connection.appliedSearch = ''; connection.recent = [];
   }
 
   async function selectWorkflow(connection: Connection, id: string, cursor?: string, history = true, resumeDraft = true) {
@@ -424,20 +627,24 @@
   }
 
   function ensureCanvas(connection: Connection, target: TaskDraftTarget) {
-    let draft = connection.drafts.find((item) => item.target.kind === target.kind && (target.kind === 'new' || (item.target.kind === 'existing' && item.target.workflowId === target.workflowId)));
+    let draft = connection.drafts.find((item) => item.target.kind === target.kind && (target.kind === 'new' ? item.target.projectId === target.projectId : (item.target.kind === 'existing' && item.target.workflowId === target.workflowId)));
     if (!draft) {
       if (connection.drafts.length >= maxDrafts + 1) {
         const clean = connection.drafts.find((item) => !hasChanges(item) && item.id !== connection.visibleDraftId);
         if (clean) { clean.disposed = true; connection.drafts = connection.drafts.filter((item) => item !== clean); }
         else { connection.error = `This connection holds ${maxDrafts} drafts. Open and discard one before starting another; your existing drafts are intact.`; return; }
       }
-      draft = createCanvas(connection.session, target);
+      draft = createCanvas(connection.session, target, connection.projects.find((project) => project.id === target.projectId) ?? null);
       connection.drafts = [...connection.drafts, draft];
     }
     return connection.drafts.find((item) => item.id === draft.id)!;
   }
 
   function openComposer(connection: Connection, target: TaskDraftTarget) {
+    if (target.kind === 'new') {
+      if (!connection.projectId) { showProject(connection, null); return; }
+      target = { ...target, projectId: connection.projectId };
+    }
     const draft = ensureCanvas(connection, target);
     if (!draft) return;
     if (target.kind === 'new') { connection.selectedId = ''; connection.selected = null; connection.selectionGeneration++; }
@@ -463,6 +670,7 @@
 
   async function resumeDraft(connection: Connection, draft: TaskDraft) {
     if (draft.disposed || !mayLeaveWork()) return;
+    connection.projectId = draft.target.projectId ?? '';
     const read = draft.target.kind === 'existing' ? selectWorkflow(connection, draft.target.workflowId, undefined, false, false) : selectWorkflow(connection, '', undefined, false, false);
     connection.view = 'work';
     connection.visibleDraftId = draft.id;
@@ -488,7 +696,7 @@
     const stillHere = activeId === connection.profile.id && connection.visibleDraftId === draft.id && connection.view === 'work' && !connectionForm;
     for (const alias of Object.keys(receipt.aliases)) delete draft.positions[alias];
     for (const source of draft.sources) delete draft.positions[source.id];
-    draft.target = { kind: 'existing', workflowId: receipt.workflow_id, title: draft.title || draft.tasks[0]?.definition.title || (draft.target.kind === 'existing' ? draft.target.title : 'Workflow'), generation: receipt.generation };
+    draft.target = { kind: 'existing', workflowId: receipt.workflow_id, projectId: draft.target.projectId, title: draft.title || draft.tasks[0]?.definition.title || (draft.target.kind === 'existing' ? draft.target.title : 'Workflow'), generation: receipt.generation };
     draft.tasks = []; draft.sources = []; draft.changes = []; draft.bindings = {}; draft.conflict = false; draft.error = ''; draft.selected = ''; draft.inspector = false; draft.notice = 'Changes accepted by the daemon.';
     if (stillHere) {
       await selectWorkflow(connection, receipt.workflow_id);
@@ -507,7 +715,7 @@
   <header class="app-header">
     <img class="mobile-logo" src="/milkdrift-logo.svg" alt="" width="34" height="32" />
     <button class="navigation-toggle" bind:this={navigationButton} aria-label="Workspace navigation" aria-expanded={navigationOpen} aria-controls="daemon-navigation" onclick={() => navigationOpen = !navigationOpen}><span aria-hidden="true">☰</span> Navigate</button>
-    <div class="workspace-context"><span class="eyebrow">{active ? active.session.daemon_name : 'Milkdrift workspace'}</span><span class="context-title">{connectionForm ? 'Connection' : active?.view === 'settings' ? 'Daemon settings' : active?.view === 'models' ? 'Models & agents' : visibleDraft?.target.kind === 'new' ? 'Unsaved workflow' : active?.selected?.title ?? (active?.selectedId ? 'Loading workflow…' : 'All workflows')}</span></div>
+    <div class="workspace-context"><span class="eyebrow">{active ? `${active.session.daemon_name}${activeProject ? ` / ${activeProject.name}` : ''}` : 'Milkdrift workspace'}</span><span class="context-title">{connectionForm ? 'Connection' : active?.view === 'settings' ? 'Daemon settings' : active?.view === 'models' ? 'Models & agents' : active?.view === 'project' ? activeProject ? 'Project settings' : 'Add project' : visibleDraft?.target.kind === 'new' ? 'Unsaved workflow' : active?.selected?.title ?? (active?.selectedId ? 'Loading workflow…' : activeProject ? 'All workflows' : 'Projects')}</span></div>
     <div class="header-status"><span class="status-dot" class:connected={!!active} aria-hidden="true"></span>{active ? 'Connected' : 'Not connected'}</div>
   </header>
   <aside id="daemon-navigation" class="sidebar" class:navigation-open={navigationOpen} aria-label="Workspace navigation">
@@ -517,7 +725,14 @@
     <details class="saved-connections" bind:open={savedConnectionsOpen}><summary>Saved connections</summary><ul class="connection-list">{#each profiles as profile (profile.id)}{@const connected = connections.some((item) => item.profile.id === profile.id)}<li><button class:active={activeId === profile.id} onclick={() => choose(profile)} aria-pressed={activeId === profile.id}><span class="status-dot" class:connected aria-hidden="true"></span><span>{profile.cachedName}<small>{profile.endpoint}</small><small>{connected ? 'Connected' : 'Cached name · Authenticate to reconnect'}</small></span></button><button class="quiet forget-connection" onclick={() => forget(profile)} aria-label={`Forget ${profile.cachedName} connection`}>Forget</button></li>{/each}</ul></details>
     {#if !profiles.length}<p class="sidebar-footer">Add your first daemon to start a task.</p>{/if}
     {#if active}
-      <button class="primary new-workflow" aria-label="New workflow" onclick={() => openComposer(active!, { kind: 'new' })}>+ New workflow</button>
+      <div class="sidebar-heading"><p class="eyebrow">Projects</p><button class="quiet" aria-label="Add project" onclick={() => showProject(active!, null)}>+</button></div>
+      <nav class="project-navigation" aria-label="Projects">
+        {#each active.projects as project (project.id)}<button class:active={active.projectId === project.id} aria-label={`Open project ${project.name}`} aria-current={active.projectId === project.id ? 'true' : undefined} onclick={() => chooseProject(active!, project.id)}><span aria-hidden="true">▱</span> {project.name}</button>{/each}
+        {#if active.projectCursor}<button class="quiet" onclick={() => refreshProjects(active!, true)}>More projects</button>{/if}
+        <button class:active={!active.projectId && !active.earlierOnly} onclick={() => chooseProject(active!, '')}>All accessible workflows</button>
+        <button class:active={!active.projectId && active.earlierOnly} onclick={() => chooseProject(active!, '', true)}>Earlier workflows</button>
+      </nav>
+      {#if activeProject}<div class="sidebar-heading"><p class="eyebrow">{activeProject.name}</p><button class="quiet" aria-label="Project settings" onclick={() => showProject(active!, activeProject)}>⚙</button></div><button class="primary new-workflow" aria-label="New workflow" onclick={() => openComposer(active!, { kind: 'new' })}>+ New workflow</button>{/if}
       <nav class="recent-workflows" aria-label="Recent workflows">
         <p class="eyebrow">Current & recent</p>
         {#if active.selected && !active.recent.some((item) => item.id === active!.selectedId)}<button class="active" aria-current="page" aria-label={active.selected.title} onclick={() => selectWorkflow(active!, active!.selectedId)}>{active.selected.title}<small>Current workflow</small></button>{/if}
@@ -540,25 +755,33 @@
       {#key reconnectProfile?.id}<ConnectionForm profile={reconnectProfile} onconnect={connect} oncancel={closeConnectionForm} />{/key}
     {:else if active}
       {#if active.error}<p class="notice error" role="alert">{active.error}</p>{/if}
-      {#key active.profile.id}
+      {#key `${active.profile.id}:${active.session.actor_id}`}
         {#if active.view === 'settings'}
           <DaemonSettings client={active.client} session={active.session} bind:draft={active.rename} onrenamed={renamed.bind(null, active)} onrefresh={refreshSession.bind(null, active)} onerror={fail.bind(null, active)} onback={() => { active!.view = 'work'; rememberLocation(); }} />
         {:else if active.view === 'models'}
           <ModelsAgents client={active.client} session={active.session} onrefresh={refreshSession.bind(null, active)} onerror={fail.bind(null, active)} onback={() => { active!.view = 'work'; rememberLocation(); }} />
+        {:else if active.view === 'project'}
+          {#key active.projectDraft}<ProjectSettings client={active.client} session={active.session} project={activeProject} bind:draft={active.projectDraft} onaccepted={projectAccepted.bind(null, active, active.projectDraft)} onrefresh={refreshProjects.bind(null, active)} onerror={fail.bind(null, active)} onback={() => { active!.view = 'work'; rememberLocation(); }} onmodels={showModels} />{/key}
         {:else}
           {#if visibleDraft}
             {@const connection = active}{@const draft = visibleDraft}
-            {#key draft.id}<CanvasWorkspace bind:this={workflowView} canvas={draft} workflow={draft.target.kind === 'existing' && connection.selected?.id === draft.target.workflowId ? connection.selected : null} client={connection.client} session={connection.session} preferredCapability={connection.preferredCapability} onaccepted={accepted.bind(null, connection, draft)} onreviewed={reviewed.bind(null, connection, draft)} onrefresh={refresh.bind(null, connection)} onpage={(cursor) => selectWorkflow(connection, connection.selectedId, cursor, false, false)} onerror={composerError.bind(null, connection)} oncapabilitychoice={(capability) => connection.preferredCapability = capability} onmodels={showModels} ondiscard={() => discardDrawing(connection, draft)} />{/key}
+            {#if !draft.target.projectId && connection.selected}<div class="notice"><p>No project is available to this connection for later submissions. Accepted tasks retain their recorded tools and paths. Earlier workflows can be associated with an accessible project.</p><label>Associate with project<select value="" disabled={!!connection.projectDraft.pending} onchange={(event) => { const project = connection.projects.find((item) => item.id === event.currentTarget.value); if (project) void associateWorkflow(connection, project); }}><option value="">Choose a project</option>{#each connection.projects as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label></div>{/if}
+            {#key draft.id}<CanvasWorkspace bind:this={workflowView} canvas={draft} currentProject={activeProject} workflow={draft.target.kind === 'existing' && connection.selected?.id === draft.target.workflowId ? connection.selected : null} client={connection.client} session={connection.session} preferredCapability={connection.preferredCapability} onaccepted={accepted.bind(null, connection, draft)} onreviewed={reviewed.bind(null, connection, draft)} onrefresh={refresh.bind(null, connection)} onpage={(cursor) => selectWorkflow(connection, connection.selectedId, cursor, false, false)} onerror={composerError.bind(null, connection)} oncapabilitychoice={(capability) => connection.preferredCapability = capability} onmodels={showModels} ondiscard={() => discardDrawing(connection, draft)} />{/key}
           {:else if active.selectedId}
             <div class="panel" role="status">{active.busy ? 'Loading workflow…' : 'This workflow could not be loaded.'}<button onclick={() => readSelection(active!)}>Retry workflow</button></div>
           {:else}
-          <div class="page-heading"><div><p class="eyebrow">Workspace</p><h1>Your workflows</h1><p>Work in progress and retained results on {active.session.daemon_name}.</p></div></div>
+          {#if !activeProject}<div class="page-heading"><div><p class="eyebrow">{active.session.daemon_name}</p><h1>Your projects</h1><p>Choose a project to start work in its folder on this daemon.</p></div><button class="primary" onclick={() => showProject(active!, null)}>Add project</button></div>
+            {#if active.projects.length}<ul class="project-list">{#each active.projects as project (project.id)}<li><button class="workflow-card" onclick={() => chooseProject(active!, project.id)}><strong>{project.name}</strong><small>{project.availability}</small></button></li>{/each}</ul>{/if}
+            {#if active.unresolvedProjects.length}<div class="notice warning"><p>Some folder creations need a decision. Their directories have been preserved.</p>{#each active.unresolvedProjects as operation (operation.request_id)}<button onclick={() => recoverProject(active!, operation)}>Recover folder creation {operation.operation_folder ?? operation.request_id}</button>{/each}</div>{/if}
+          {/if}
+          <div class="page-heading"><div><p class="eyebrow">{activeProject?.name ?? 'Retained work'}</p><h2>{activeProject ? 'Your workflows' : active.earlierOnly ? 'Earlier workflows' : 'All accessible workflows'}</h2><p>{activeProject ? `Work in progress and retained results in ${activeProject.name}.` : active.earlierOnly ? 'Work accepted before projects. Associate a workflow deliberately to use project settings for later tasks.' : `Permitted work and results on ${active.session.daemon_name}. Choose a project above for new work.`}</p></div>{#if activeProject}<button class="quiet" onclick={() => showProject(active!, activeProject)}>Project settings</button>{/if}</div>
           <form class="toolbar" onsubmit={(event) => { event.preventDefault(); search(active!); }}><label><span class="visually-hidden">Search workflows and retained results</span><input type="search" bind:value={active.search} placeholder="Search workflows and retained results" /></label><button>Search</button><button type="button" onclick={() => refresh(active!)}>Refresh</button></form>
           {#if active.workflows.length}
-            <ul class="workflow-list">{#each active.workflows as workflow (workflow.id)}<li><button class="workflow-card" onclick={() => selectWorkflow(active!, workflow.id)}><span><h3>{workflow.title}</h3><p>{workflow.description}</p><small>{workflow.task_count} {workflow.task_count === 1 ? 'task' : 'tasks'} · Updated {timeLabel(workflow.updated_at)}</small></span><span><span class="badge {workflow.state}">{workflow.state}</span></span></button></li>{/each}</ul>
+            {#if active.loading}<p role="status">Updating workflow results…</p>{/if}
+            <ul class="workflow-list" aria-busy={active.loading}>{#each active.workflows as workflow (workflow.id)}<li><button class="workflow-card" disabled={active.loading} onclick={() => selectWorkflow(active!, workflow.id)}><span><h3>{workflow.title}</h3><p>{workflow.description}</p><small>{workflow.task_count} {workflow.task_count === 1 ? 'task' : 'tasks'} · Updated {timeLabel(workflow.updated_at)}</small></span><span><span class="badge {workflow.state}">{workflow.state}</span></span></button></li>{/each}</ul>
           {:else if active.loading}<p role="status">Loading workflows…</p>
           {:else if !active.error}
-            <div class="panel empty"><div class="empty-symbol" aria-hidden="true">↗</div><h2>{active.appliedSearch ? 'No matching workflows' : 'Your first workflow starts with a task'}</h2><p>{active.appliedSearch ? 'The daemon returned no accessible workflows for this search. Try a different title or result phrase.' : 'Choose New workflow, describe the work, and follow its progress here. Add more tasks whenever you need them.'}</p><button class="primary" onclick={() => openComposer(active!, { kind: 'new' })}>Create a workflow</button></div>
+            <div class="panel empty"><div class="empty-symbol" aria-hidden="true">↗</div><h2>{active.appliedSearch ? 'No matching workflows' : activeProject ? 'Your first workflow starts with a task' : active.earlierOnly ? 'No earlier workflows' : 'No accessible workflows'}</h2><p>{active.appliedSearch ? 'The daemon returned no accessible workflows for this search. Try a different title or result phrase.' : activeProject ? 'Choose New workflow, describe the work, and follow its progress here. Add more tasks whenever you need them.' : 'Projects keep related workflows together around a folder you control.'}</p>{#if activeProject}<button class="primary" onclick={() => openComposer(active!, { kind: 'new' })}>Create a workflow</button>{/if}</div>
           {/if}
           {#if active.truncated}<p class="notice warning">The daemon’s bounded search window was exhausted. Refine the search to inspect more specific work.</p>{/if}
           {#if active.pageCursor || active.nextCursor}<div class="form-actions">{#if active.pageCursor}<button onclick={() => { active!.pageCursor = undefined; void refresh(active!); }}>First page</button>{/if}{#if active.nextCursor}<button onclick={() => refresh(active!, true)}>Next page</button>{/if}</div>{/if}

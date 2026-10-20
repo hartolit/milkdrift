@@ -34,6 +34,27 @@ selection leaves the task queued with a reason, without an invented start.
 
 ## Files, artifacts and external effects
 
+Projects require `InspectProject` to discover/read and `ManageProject` to attach, create, rename,
+change settings, associate or remove registrations. Controller includes management; the read-oriented
+workflow presets include inspection. Each operation also checks the requested and canonical folder
+against current filesystem scope. Registration does not grant access. A person who can inspect a
+workflow but cannot inspect its project receives no project path or name through project discovery.
+Associating a workflow requires both project management and that workflow's edit authority.
+
+The folder chooser lists only permitted existing directories. Attaching changes no files. Creating
+a folder additionally requires write access on its pinned existing parent, reserves an exact durable
+operation before exclusive creation, and preserves uncertain results for explicit reconciliation.
+Removing a registration never removes its folder and refuses retained workflow references.
+An initial project supplies read tools only; enabling project changes requests write access subject
+to the grant. Host process tools require that explicit choice because native claims do not confine
+a trusted process. A compatible read-only Podman worker can enforce read-only project access.
+
+Adding these explicit operations changes preset grant digests. Adoption keeps old task definitions,
+frozen grants and exact receipts unchanged; it does not rewrite an old grant to authorize current
+entry. Finish unfinished work with its matching binary/configuration before adopting revised presets,
+or retain an honest refused/uncertain state. Changing defaults and organizing earlier workflows do
+not retroactively change their accepted tools or paths.
+
 Filesystem roots use canonical absolute paths. Canonical Unix paths and uppercase drive-rooted
 Windows paths retain platform-specific meaning; one platform's tests do not establish another's
 containment. The host additionally owns durable native path claims for declared task read/write

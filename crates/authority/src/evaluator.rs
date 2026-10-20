@@ -295,6 +295,8 @@ fn operation_uses_workflow_scope(operation: crate::AuthorityOperation) -> bool {
     !matches!(
         operation,
         crate::AuthorityOperation::ListCapabilities
+            | crate::AuthorityOperation::InspectProject
+            | crate::AuthorityOperation::ManageProject
             | crate::AuthorityOperation::InspectCapabilityHealth
             | crate::AuthorityOperation::InspectProviderProfile
             | crate::AuthorityOperation::AdministerCapabilities

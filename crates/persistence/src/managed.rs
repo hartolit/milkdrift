@@ -10,7 +10,10 @@ pub use state::{
     ApprovedSetup, InstallationRecord, ManagedChange, ManagedChangePhase, ManagedObservation,
     ManagedStep, ManagedTransition, ProtectedDeployment, ResourceReceipt,
 };
-pub use uses::{ManagedExecution, ManagedUse, ManagedUsePhase, QuiescenceEvidence, managed_use_id};
+pub use uses::{
+    ManagedExecution, ManagedUse, ManagedUsePhase, QuiescenceEvidence, managed_use_id,
+    task_tool_invocation,
+};
 
 use crate::{PageSize, PersistenceError};
 use milkdrift_authority::AuthorityDecisionSnapshot;
@@ -18,6 +21,20 @@ use milkdrift_capability::managed::{ManagedName, ManagedRequest};
 
 /// Narrow same-store resource port. Implementations commit all guards and mutations together.
 pub trait ManagedResourceStore: Send + Sync {
+    /// Reserve and commit entry for one bounded managed process tool of an entered model task.
+    /// The caller supplies the exact authenticated context; this shares the installation's
+    /// ordinary generation and editing transaction and cannot create a workflow or scheduler.
+    ///
+    /// # Errors
+    /// Refuses an unentered parent, an invalid child identity, duplicate entry, stale generation,
+    /// resource conflicts or exhausted use capacity. Uncertain entered uses require physical fencing.
+    fn reserve_managed_task_tool(
+        &self,
+        workflow: &milkdrift_blueprint::WorkflowId,
+        parent_invocation: &milkdrift_capability::InvocationId,
+        request: &milkdrift_capability::InvocationRequest,
+        selection: &milkdrift_capability::ResolvedCapabilitySnapshot,
+    ) -> Result<ManagedUse, PersistenceError>;
     /// Retain an incomplete evaluation and exact actor receipt before invoking its verifier.
     ///
     /// # Errors

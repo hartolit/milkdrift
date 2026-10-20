@@ -1,4 +1,4 @@
-# Local control API 3.3
+# Local control API 3.4
 
 Use this API to submit ordinary tasks, discover permitted workflows and inspect retained results.
 All clients use the daemon's owner queue. The standalone [Svelte client](../../apps/web/README.md),
@@ -13,7 +13,7 @@ maps that credential to an immutable actor/grant revision. JSON cannot choose an
 negotiates the exact version before use; older graph clients are refused:
 
 ```json
-{"protocol":{"major":3,"minor":3}}
+{"protocol":{"major":3,"minor":4}}
 ```
 
 Send this to `POST /v1/version`. `GET /v1/session` returns `daemon_id`, `daemon_name`,
@@ -26,8 +26,9 @@ connectors for that executor. These facts contain no argv, environment or secret
 `task_output_limit_bytes` gives the aggregate declaration allowance shared by a task's selected
 outputs; individual port bounds do not add more allowance. An omitted value from an older server
 is unknown (decoded as zero), so clients cannot invent an allocation before refreshing metadata.
-`project_roots` contains only current granted filesystem roots and read/write modes; choosing one
-does not grant access. Native paths still pass the ordinary Rust path and authority checks.
+`project_roots` retains the scoped native-root projection for earlier explicit tool definitions.
+Ordinary project setup uses the bounded project directory operations below; choosing a folder never
+grants access. Native paths still pass the ordinary Rust path and authority checks.
 
 The browser learns the stable daemon identity through this authenticated bootstrap, then sends it
 in `x-milkdrift-daemon` on subsequent requests. First-use trust comes from the supplied endpoint and
@@ -46,13 +47,13 @@ collection sizes before dispatch.
 Success bodies use the common envelope:
 
 ```json
-{"protocol":{"major":3,"minor":3},"request_id":"req-1","value":{}}
+{"protocol":{"major":3,"minor":4},"request_id":"req-1","value":{}}
 ```
 
 Errors use a stable code and redacted explanation. They never include credentials or task content:
 
 ```json
-{"protocol":{"major":3,"minor":3},"request_id":"req-1","code":"conflict","message":"workflow generation changed","retryable":false,"details":{}}
+{"protocol":{"major":3,"minor":4},"request_id":"req-1","code":"conflict","message":"workflow generation changed","retryable":false,"details":{}}
 ```
 
 `unauthenticated` means the credential failed, `unauthorized` means the current grant does not
@@ -104,6 +105,89 @@ nonretryable `overload`; name reads, receipt reads and exact replay remain avail
 are never evicted. Another actor cannot retrieve this actor's receipt, even with the same request
 identity. A generation conflict leaves the client's draft available for a deliberate new request.
 
+## Projects and execution defaults
+
+A project is a daemon registration of an ordinary user folder and defaults for future tasks.
+Its name is presentation; its stable ID and pinned native folder identity govern association and
+execution. These operations never rename, delete or change ownership of existing user files.
+
+| Method and route | Purpose |
+| --- | --- |
+| `GET /v1/projects?limit=50&cursor=` | List only authorized project registrations. |
+| `GET /v1/projects/{project}` | Read name, generation, folder, settings, availability and management permission. |
+| `GET /v1/project-directories?parent=&limit=50&cursor=` | Browse permitted daemon folders; omitted parent lists permitted roots. |
+| `GET /v1/project-environments` | Read compatible configured host/process/Podman choices and availability. |
+| `POST /v1/project-commands` | Submit an exact actor-scoped registration command. |
+| `GET /v1/project-receipts/{request}` | Recover this actor's accepted result or unresolved creation. |
+| `GET /v1/project-operations` | List this actor's bounded unresolved creation intents. |
+
+Project pages use opaque actor/grant-bound cursors and at most 200 items. Directory pages are live
+observations, not snapshots: each page examines at most 1,024 entries and a folder enumeration ends
+at a 65,536-entry refusal boundary. Outside-scope paths and inaccessible project names/counts are
+not disclosed. Native aliases resolve before registration; a second registration of the same physical
+directory is refused. Missing, moved or replaced roots remain registered but become unavailable.
+Dedicated project folders cannot contain the daemon's protected store.
+
+Every mutation has `request_id` and a tagged `command`. For example, attaching existing source
+requires no filesystem write:
+
+```json
+{"request_id":"attach-source-1","command":{"kind":"attach","name":"Animation","folder":"/home/operator/projects/animation","settings":{"environment":{"kind":"host"},"allow_changes":false}}}
+```
+
+`create` instead supplies `parent` and one `folder_name`, plus the same `name` and `settings`.
+`rename`, `settings` and `remove` supply `project_id` and `expected_generation`; `rename` supplies
+the new name and `settings` supplies the complete replacement defaults. `associate` adds
+`workflow_id` under the same project guard and requires that workflow's edit authority. An associated
+workflow cannot silently move to another project. Removal refuses any retained workflow reference.
+
+Settings separate tool location from the task's model. `environment` is `{"kind":"host"}` for bounded
+native file tools, or `{"kind":"process","capability":"…","operation":"…","generation":1}` for a
+configured project-aware host process; `podman` carries the same exact selection fields for a
+configured worker with verified `/project` attachment. Available choices come from the existing
+capability owner. Fixed-directory profiles and generic installation lifecycle operations are not
+project environments. `allow_changes:false` supplies no write tools and refuses mutation-capable
+trusted host processes. Current grants still constrain every effective selection.
+
+Creation first reserves a bounded exact operation, a registration and a recovery receipt. Linux
+creation uses exclusive one-child `mkdirat` relative to a pinned existing parent, then synchronizes
+the child and parent before saving the inspected identity. There is no filesystem/database atomicity
+claim. A lost or failed effect may leave `status:"unresolved"` with `operation_id`, `operation_folder`
+and `operation_name`; exact replay returns that intent without retrying creation. After inspection,
+submit `{"kind":"reconcile","operation_id":"original-request-id"}` under a new exact request to attach
+that original child, or `{"kind":"abandon","operation_id":"original-request-id"}` to abandon registration.
+Neither operation deletes the folder. Unsupported creation platforms retain an explicit unresolved
+operation rather than pretending a directory was created.
+
+The store bounds registrations at 1,024 and exact operations at 8,192; one command is at most 32 KiB.
+Unresolved creations reserve their reconciliation capacity, so ordinary capacity exhaustion cannot
+consume their recovery slot. Receipts preserve the originally accepted project result after renaming,
+settings changes or registration removal. Changing a request under an already used key conflicts.
+
+New ordinary workflows supply `project_id`; earlier adopted workflows remain discoverable with
+`?earlier=true`. `?project_id=…` filters one project. A disclosed `project_id:null` can also mean the
+actor may inspect the workflow but lacks current project scope; the earlier filter tests the real
+association without exposing inaccessible project identities. Organizational association
+changes defaults for later submissions only: old definitions, frozen paths/tools, inputs and receipts
+are not rewritten. Old request decoding permits exact receipt lookup before enforcing the new
+creation requirement.
+
+Each newly submitted task uses `execution:{"kind":"project","expected_generation":1}` to resolve the
+reviewed defaults. Alternatively `kind:"explicit"` supplies `expected_generation`, complete `settings`,
+`access` (`none`, `read` or `write`) and `tools`; explicit empty tools/access stay empty. New typed
+selections cannot also supply the separate legacy `tools` field. Inherited project settings use the
+whole project root. An explicit file-only selection may narrow `paths` to permitted directories
+inside that root; process execution requires the whole selected project directory. Accepted reads
+expose `kind:"bound"` and the effective project identity, generation, folder, access and tools. Text-only queued edits may
+retain that exact binding unchanged; new tasks cannot manufacture bound provenance. Started tasks
+retain their frozen selection. The shared control owner applies these rules to model-authored work
+as well, and storage checks the reviewed project generation atomically with new task acceptance.
+
+When workflow inspection is permitted but the project folder is outside the actor's current scope,
+task reads remain available with `execution:{"kind":"restricted"}` and no path or tool details.
+Other task content and artifacts keep their independent disclosure checks. The restricted marker is
+a read projection, not an empty permission choice: submitting it for authoring is refused.
+
 ## Ordinary task routes
 
 | Method and route | Purpose |
@@ -119,12 +203,14 @@ identity. A generation conflict leaves the client's draft available for a delibe
 | `POST /v1/task-inputs` | Capture an actor-owned UTF-8 file. |
 | `GET /v1/workflows/stream` | Receive authenticated snapshot invalidation hints. |
 
-The following request creates a finite process task. Replace the capability with an exact choice
-returned by the connected daemon. The daemon assigns workflow/task IDs and returns the `report`
+The following request creates a finite project-aware process task. Replace the project identity,
+reviewed settings generation and capability with exact choices returned by the connected daemon.
+Select the compatible process as that project's environment and explicitly permit project changes.
+The daemon assigns workflow/task IDs and returns the `report`
 alias mapping; the alias has no identity outside this request.
 
 ```json
-{"request_id":"project-report-1","title":"Inspect project","description":"Report the supplied Cargo project","tasks":[{"alias":"report","definition":{"title":"Inspect Cargo manifest","description":"Describe targets and dependencies","instructions":"Inspect the supplied file and summarize its package, targets and dependencies.","capability":{"id":"cargo-report","operation":"process.execute"},"inputs":{"brief":{"kind":"supplied","name":"brief","optional":false},"file":{"kind":"supplied","name":"file","optional":false}},"outputs":{},"dependencies":[],"required":true,"corrective_of":null,"paths":[]}}],"inputs":{"brief":{"kind":"text","text":"Give a concise project report."}},"finish_when_settled":true,"limits":null}
+{"request_id":"project-report-1","project_id":"project:replace-with-project-id","title":"Inspect project","description":"Report the supplied Cargo project","tasks":[{"alias":"report","definition":{"execution":{"kind":"project","expected_generation":1},"title":"Inspect Cargo manifest","description":"Describe targets and dependencies","instructions":"Inspect the supplied file and summarize its package, targets and dependencies.","capability":{"id":"cargo-report","operation":"process.execute"},"inputs":{"brief":{"kind":"supplied","name":"brief","optional":false},"file":{"kind":"supplied","name":"file","optional":false}},"outputs":{},"dependencies":[],"required":true,"corrective_of":null,"paths":[]}}],"inputs":{"brief":{"kind":"text","text":"Give a concise project report."}},"finish_when_settled":true,"limits":null}
 ```
 
 This task remains queued because `file` is missing. Capture file bytes with:
@@ -201,10 +287,14 @@ another proposed batch is refused. Explicit waits and undecided admissions preve
 when every external task has settled. Feedback and dismissal may clear their own rejection wait;
 they do not clear a separate pause accepted by a person.
 
-The task's `tools` list may contain `{"kind":"read_file"}`, `{"kind":"write_file"}` or
+For a complete explicit selection, `execution.tools` may contain `{"kind":"read_file"}`,
+`{"kind":"write_file"}` or
 `{"kind":"process","capability":{"id":"configured-tool","operation":"process.execute"}}`.
-Only model tasks may use this catalog. Native file tools require declared read/write `paths`; process
-tools select existing configured capabilities. The host rechecks authority at every model/tool call,
+Only model tasks may use this catalog. Inherited project settings resolve it from the reviewed defaults.
+Native file tools use the accepted project access and optional narrower `paths`; process tools must
+match the selected configured environment. An explicit direct process task selects an empty tool
+list because the process is its executor. Earlier accepted definitions retain their separate `tools`
+and `paths` encoding. The host rechecks authority at every model/tool call,
 retains bounded feedback and uses one cumulative task reservation. Generic binary model inputs remain
 unsupported; captured text and supported textual artifacts carry exact bounded content.
 

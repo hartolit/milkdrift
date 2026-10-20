@@ -3,15 +3,47 @@
 use milkdrift_blueprint::TaskPathAccess;
 use milkdrift_persistence::{NativePathClaim, NativePathClaimStore, NativePathRoot};
 use milkdrift_runtime::ExecutorError;
-use std::{path::Path, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 pub(crate) struct NativePathClaims {
     store: Arc<dyn NativePathClaimStore>,
+    project_protected_paths: Vec<PathBuf>,
 }
 
 impl NativePathClaims {
     pub(crate) fn new(store: Arc<dyn NativePathClaimStore>) -> Self {
-        Self { store }
+        Self {
+            store,
+            project_protected_paths: Vec::new(),
+        }
+    }
+
+    pub(crate) fn with_project_protection(mut self, paths: Vec<PathBuf>) -> Self {
+        self.project_protected_paths = paths;
+        self
+    }
+
+    pub(crate) fn verify_project(
+        &self,
+        binding: &milkdrift_blueprint::TaskProjectBinding,
+    ) -> Result<(), ExecutorError> {
+        verify_project_binding(binding)?;
+        for folder in std::iter::once(&binding.folder).chain(&binding.scopes) {
+            let root = Path::new(&folder.physical);
+            if self
+                .project_protected_paths
+                .iter()
+                .any(|path| path.starts_with(root) || root.starts_with(path))
+            {
+                return Err(refused(
+                    "accepted project overlaps current protected operator files; external entry refused",
+                ));
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn acquire(
@@ -47,11 +79,72 @@ impl NativePathClaims {
         self.revalidate(owner)
     }
 
+    pub(crate) fn acquire_serving(
+        &self,
+        record: &milkdrift_persistence::PeerExecutionRecord,
+        paths: &[TaskPathAccess],
+    ) -> Result<Option<String>, ExecutorError> {
+        if paths.is_empty() {
+            return Ok(None);
+        }
+        let owner = record
+            .managed_invocation()
+            .map_err(|error| refused(&error.to_string()))?
+            .to_string();
+        let roots = paths
+            .iter()
+            .map(|path| capture(Path::new(&path.path), path.write))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.store
+            .claim_serving_native_paths(
+                record,
+                &NativePathClaim {
+                    owner: owner.clone(),
+                    roots,
+                },
+            )
+            .map_err(storage)?;
+        self.revalidate(&owner)?;
+        Ok(Some(owner))
+    }
+
     pub(crate) fn revalidate(&self, owner: &str) -> Result<(), ExecutorError> {
         for root in self.roots(owner)? {
             if capture(&root.requested, root.write)? != root {
                 return Err(refused(
                     "native directory or symlink target changed after its claim; entry refused",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn revalidate_if_present(&self, owner: &str) -> Result<(), ExecutorError> {
+        if self
+            .store
+            .native_path_claim(owner)
+            .map_err(storage)?
+            .is_some()
+        {
+            self.revalidate(owner)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn verify_configured(
+        &self,
+        owner: &str,
+        paths: &[TaskPathAccess],
+    ) -> Result<(), ExecutorError> {
+        let owned = self.roots(owner)?;
+        self.revalidate(owner)?;
+        for path in paths {
+            let current = capture(Path::new(&path.path), path.write)?;
+            if !owned.iter().any(|root| {
+                (!current.write || root.write) && current.physical.starts_with(&root.physical)
+            }) {
+                return Err(refused(
+                    "configured process directory was not included in the parent task's native claim",
                 ));
             }
         }
@@ -71,7 +164,14 @@ impl NativePathClaims {
     }
 }
 
-fn capture(requested: &Path, write: bool) -> Result<NativePathRoot, ExecutorError> {
+/// Captures a native directory without creating, relocating or adopting its contents.
+///
+/// # Errors
+/// Refuses unavailable directories and platforms without qualified native identities.
+pub fn capture_native_project_root(
+    requested: &Path,
+    write: bool,
+) -> Result<NativePathRoot, ExecutorError> {
     if !requested.is_absolute() {
         return Err(refused("native project roots must be absolute paths"));
     }
@@ -91,6 +191,62 @@ fn capture(requested: &Path, write: bool) -> Result<NativePathRoot, ExecutorErro
         identity,
         write,
     })
+}
+
+fn capture(requested: &Path, write: bool) -> Result<NativePathRoot, ExecutorError> {
+    capture_native_project_root(requested, write)
+}
+
+/// Refuses a missing, relocated or substituted registered folder before project execution.
+///
+/// # Errors
+/// Returns a pre-entry refusal when the current native identity differs from acceptance.
+pub fn verify_project_binding(
+    binding: &milkdrift_blueprint::TaskProjectBinding,
+) -> Result<(), ExecutorError> {
+    let current = capture(Path::new(&binding.folder.requested), false)?;
+    if current.physical != Path::new(&binding.folder.physical)
+        || current.identity != binding.folder.identity
+    {
+        return Err(refused(
+            "registered project folder changed; attach it explicitly before submitting new work",
+        ));
+    }
+    for scope in &binding.scopes {
+        let current = capture(Path::new(&scope.requested), false)?;
+        if current.physical != Path::new(&scope.physical) || current.identity != scope.identity {
+            return Err(refused(
+                "accepted project subdirectory changed; entry refused",
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn pin_project_paths(
+    binding: &milkdrift_blueprint::TaskProjectBinding,
+) -> Result<Vec<milkdrift_blueprint::TaskProjectFolder>, ExecutorError> {
+    verify_project_binding(binding)?;
+    if binding.paths.len() > 16 {
+        return Err(refused(
+            "project task scope exceeds sixteen native directories",
+        ));
+    }
+    binding
+        .paths
+        .iter()
+        .map(|path| {
+            let root = capture(Path::new(&path.path), path.write)?;
+            if !root.physical.starts_with(&binding.folder.physical) {
+                return Err(refused("task path or alias escapes its registered project"));
+            }
+            Ok(milkdrift_blueprint::TaskProjectFolder {
+                requested: root.requested.to_string_lossy().into_owned(),
+                physical: root.physical.to_string_lossy().into_owned(),
+                identity: root.identity,
+            })
+        })
+        .collect()
 }
 
 #[cfg(unix)]
@@ -117,6 +273,83 @@ fn storage(error: milkdrift_persistence::PersistenceError) -> ExecutorError {
 mod tests {
     use super::*;
     use milkdrift_redb_store::RedbStore;
+
+    #[cfg(unix)]
+    #[test]
+    fn process_tool_preflight_cannot_switch_to_an_unclaimed_directory()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let store_directory = tempfile::tempdir()?;
+        let first = tempfile::tempdir()?;
+        let second = tempfile::tempdir()?;
+        let claims = NativePathClaims::new(Arc::new(RedbStore::open(store_directory.path())?));
+        let selected = TaskPathAccess {
+            path: first.path().to_string_lossy().into_owned(),
+            write: true,
+        };
+        claims.acquire("parent-attempt", std::slice::from_ref(&selected))?;
+        claims.verify_configured("parent-attempt", &[selected])?;
+        assert!(
+            claims
+                .verify_configured(
+                    "parent-attempt",
+                    &[TaskPathAccess {
+                        path: second.path().to_string_lossy().into_owned(),
+                        write: true,
+                    }]
+                )
+                .is_err()
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_scope_pinning_rejects_escaped_aliases_and_replaced_subdirectories()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use milkdrift_blueprint::{
+            ProjectEnvironment, ProjectSettings, TaskProjectAccess, TaskProjectBinding,
+            TaskProjectFolder,
+        };
+        let project = tempfile::tempdir()?;
+        let outside = tempfile::tempdir()?;
+        let child = project.path().join("research");
+        std::fs::create_dir(&child)?;
+        let root = capture_native_project_root(project.path(), true)?;
+        let mut binding = TaskProjectBinding {
+            project_id: "project:test".into(),
+            generation: 1,
+            folder: TaskProjectFolder {
+                requested: root.requested.to_string_lossy().into_owned(),
+                physical: root.physical.to_string_lossy().into_owned(),
+                identity: root.identity,
+            },
+            settings: ProjectSettings {
+                environment: ProjectEnvironment::Host,
+                allow_changes: true,
+            },
+            access: TaskProjectAccess::Write,
+            tools: Vec::new(),
+            paths: vec![TaskPathAccess {
+                path: child.to_string_lossy().into_owned(),
+                write: true,
+            }],
+            scopes: Vec::new(),
+        };
+        binding.scopes = pin_project_paths(&binding)?;
+        verify_project_binding(&binding)?;
+        std::fs::rename(&child, project.path().join("original-research"))?;
+        std::fs::create_dir(&child)?;
+        assert!(verify_project_binding(&binding).is_err());
+        binding.scopes.clear();
+        let alias = project.path().join("escaped");
+        std::os::unix::fs::symlink(outside.path(), &alias)?;
+        binding.paths = vec![TaskPathAccess {
+            path: alias.to_string_lossy().into_owned(),
+            write: true,
+        }];
+        assert!(pin_project_paths(&binding).is_err());
+        Ok(())
+    }
 
     #[cfg(unix)]
     #[test]

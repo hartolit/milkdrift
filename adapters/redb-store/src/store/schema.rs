@@ -21,6 +21,7 @@ fn format_for_open(database: &Database, allow_previous: bool) -> Result<bool, Pe
     let read = database.begin_read().map_err(error::redb)?;
     let table = read.open_table(METADATA).map_err(error::redb)?;
     let mut previous = false;
+    let mut physical = STORAGE_SCHEMA_VERSION;
     for (key, supported, document) in [
         (SCHEMA_VERSION_KEY, STORAGE_SCHEMA_VERSION, "storage"),
         (
@@ -34,8 +35,9 @@ fn format_for_open(database: &Database, allow_previous: bool) -> Result<bool, Pe
             .map_err(error::redb)?
             .ok_or_else(|| error::corruption("storage format marker is missing"))?
             .value();
-        if key == SCHEMA_VERSION_KEY && allow_previous && found == 19 {
+        if key == SCHEMA_VERSION_KEY && allow_previous && matches!(found, 19 | 20) {
             previous = true;
+            physical = found;
         } else if found != supported {
             return Err(PersistenceError::UnsupportedVersion {
                 document,
@@ -45,26 +47,39 @@ fn format_for_open(database: &Database, allow_previous: bool) -> Result<bool, Pe
             });
         }
     }
-    if previous {
+    if physical == 19 {
         crate::schema::validate_previous_tables(&read)?;
+    } else if physical == 20 {
+        crate::schema::validate_daemon_tables(&read)?;
     } else {
         crate::schema::validate_tables(&read)?;
     }
     Ok(previous)
 }
 
-/// Preflight the exact current or prompt-03 format before opening the source for writing.
+/// Preflight the current or explicitly adoptable physical format before opening for writing.
 pub(crate) fn validate_for_open(database: &Database) -> Result<bool, PersistenceError> {
     let previous = format_for_open(database, true)?;
     validate_shared_state(database)?;
-    if !previous {
+    let read = database.begin_read().map_err(error::redb)?;
+    let physical = read
+        .open_table(METADATA)
+        .map_err(error::redb)?
+        .get(SCHEMA_VERSION_KEY)
+        .map_err(error::redb)?
+        .ok_or_else(|| error::corruption("schema missing"))?
+        .value();
+    if physical >= 20 {
         crate::daemon::validate(&database.begin_read().map_err(error::redb)?)?;
+    }
+    if !previous {
+        crate::project::validate(&read)?;
     }
     Ok(previous)
 }
 
-/// Only schema 19/internal 22 is adoptable. Existing tables and row bytes are untouched;
-/// the two new empty families and physical marker become visible in one transaction.
+/// Only schema 19 or 20/internal 22 is adoptable. Existing row bytes are untouched;
+/// missing project/daemon families and the physical marker appear in one transaction.
 pub(crate) fn adopt_daemon_metadata(
     database: &Database,
     faults: &dyn FaultInjector,
@@ -74,6 +89,7 @@ pub(crate) fn adopt_daemon_metadata(
     }
     let write = database.begin_write().map_err(error::redb)?;
     crate::schema::initialize_daemon_tables(&write)?;
+    crate::schema::initialize_project_tables(&write)?;
     write
         .open_table(METADATA)
         .map_err(error::redb)?
@@ -135,7 +151,9 @@ pub(crate) fn initialize_schema(
 pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceError> {
     validate_format(database)?;
     validate_shared_state(database)?;
-    crate::daemon::validate(&database.begin_read().map_err(error::redb)?)
+    let read = database.begin_read().map_err(error::redb)?;
+    crate::daemon::validate(&read)?;
+    crate::project::validate(&read)
 }
 
 fn validate_shared_state(database: &Database) -> Result<(), PersistenceError> {

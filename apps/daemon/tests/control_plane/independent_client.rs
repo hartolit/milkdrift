@@ -20,7 +20,7 @@ async fn raw(
     assert!(status.is_success(), "{status}: {envelope}");
     assert_eq!(
         envelope.get("protocol").ok_or("protocol absent")?,
-        &json!({"major":3,"minor":3})
+        &json!({"major":3,"minor":4})
     );
     Ok(envelope.get("value").ok_or("value absent")?.clone())
 }
@@ -35,6 +35,16 @@ async fn independent_json_client_submits_edits_discovers_and_downloads_captured_
     let upload = raw(&daemon, reqwest::Method::POST, "v1/task-inputs", Some(json!({"request_id":"raw-upload","name":"notes.txt","media_type":"text/plain","text":"Independent captured content\n"}))).await?;
     let input_id = upload.get("input_id").ok_or("input id absent")?;
     let mut body = json!({"request_id":"raw-create","title":"Independent project notes","description":"No native client types construct this request","tasks":[{"alias":"notes","definition":{"title":"Copy the captured evidence","description":"Ordinary temporary-file work","instructions":"Preserve the captured file bytes","capability":{"id":"golden-local-process","operation":"process.execute"},"inputs":{"file":{"kind":"supplied","name":"file","optional":false},"brief":{"kind":"supplied","name":"brief","optional":false}},"dependencies":[],"required":true,"corrective_of":null,"paths":[]}}],"inputs":{"file":{"kind":"uploaded","input_id":input_id}},"finish_when_settled":true,"limits":null});
+    let projects = raw(&daemon, reqwest::Method::GET, "v1/projects", None).await?;
+    let project = projects
+        .pointer("/items/0")
+        .ok_or("project choice absent")?;
+    body.as_object_mut().ok_or("request object absent")?.insert(
+        "project_id".into(),
+        project.get("id").ok_or("project identity absent")?.clone(),
+    );
+    body.pointer_mut("/tasks/0/definition").and_then(Value::as_object_mut).ok_or("task definition absent")?
+        .insert("execution".into(),json!({"kind":"explicit","expected_generation":project.get("generation").ok_or("project generation absent")?,"settings":{"environment":{"kind":"host"},"allow_changes":false},"access":"none","tools":[]}));
     let accepted = raw(
         &daemon,
         reqwest::Method::POST,

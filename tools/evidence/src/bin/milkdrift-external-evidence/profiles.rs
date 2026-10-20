@@ -56,10 +56,7 @@ pub(crate) fn prepare_agent_profile(
         .get_mut("profile")
         .and_then(Value::as_object_mut)
         .ok_or_else(|| "agent profile has no profile object".to_owned())?;
-    profile.insert(
-        "working_directory".to_owned(),
-        json!({"type":"authorized_host_path","path":repository}),
-    );
+    profile.insert("working_directory".to_owned(), json!({"type":"project"}));
     let roots = profile
         .get_mut("filesystem_roots")
         .and_then(Value::as_array_mut)
@@ -406,7 +403,7 @@ fn base_profile(
             },
             "arguments": arguments,
             "substitutions": substitutions,
-            "working_directory": {"type":"authorized_host_path","path":repository},
+            "working_directory": {"type":"project"},
             "filesystem_roots": [
                 {"path":executable.parent().unwrap_or(Path::new("/usr/bin")),"access":"execute"},
                 {"path":session_root,"access":"read_write"},

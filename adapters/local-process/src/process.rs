@@ -179,6 +179,7 @@ impl LocalProcessAdapter {
                 Some(canonical)
             }
             WorkingDirectoryMode::IsolatedRoot
+            | WorkingDirectoryMode::Project
             | WorkingDirectoryMode::IsolatedSubdirectory { .. } => None,
         };
         let descriptor = profile.descriptor(&executable_identity)?;
@@ -285,7 +286,9 @@ impl LocalProcessAdapter {
             stdin_bytes,
             environment,
             resolved_secrets,
+            project_directory,
         } = prepared;
+        context.verify_project()?;
         let pre_entry_identity = match self.revalidate_identity() {
             Ok(identity) => identity,
             Err(failure) => {
@@ -320,6 +323,7 @@ impl LocalProcessAdapter {
                 );
             }
         };
+        drop(project_directory);
         let mut process = RunningProcess::new(
             child,
             Duration::from_millis(self.profile.limits.forced_termination_ms),
@@ -468,6 +472,28 @@ impl LocalProcessAdapter {
 }
 
 impl CapabilityAdapter for LocalProcessAdapter {
+    fn native_path_claims(
+        &self,
+        _invocation: &AdapterInvocation<'_>,
+    ) -> Result<Vec<milkdrift_capability_host::NativePathScope>, AdapterError> {
+        Ok(self
+            .authorized_host_working_directory
+            .as_ref()
+            .map(|path| milkdrift_capability_host::NativePathScope {
+                path: path.clone(),
+                write: true,
+            })
+            .into_iter()
+            .collect())
+    }
+
+    fn accepts_project_without_access(&self) -> bool {
+        matches!(
+            self.profile.working_directory,
+            crate::WorkingDirectoryMode::IsolatedRoot
+                | crate::WorkingDirectoryMode::IsolatedSubdirectory { .. }
+        )
+    }
     fn task_authoring(
         &self,
     ) -> std::collections::BTreeMap<

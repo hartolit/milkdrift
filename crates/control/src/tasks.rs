@@ -1,5 +1,6 @@
 //! Shared scoped admission for human, CLI, browser and model-proposed ordinary task changes.
 mod model_actions;
+mod projects;
 mod sources;
 
 use crate::{ActorAuthorityContext, ControlError};
@@ -15,6 +16,7 @@ use std::sync::Arc;
 
 /// All ordinary edits enter through the same evaluator and runtime transaction owner.
 pub struct TaskControlService {
+    projects: Option<Arc<dyn milkdrift_persistence::ProjectStore>>,
     runtime: Arc<TaskRuntime>,
     authority: Arc<dyn AuthorityEvaluator>,
     clock: Arc<dyn BoundaryClock>,
@@ -65,12 +67,20 @@ impl TaskControlService {
         artifacts: Arc<dyn milkdrift_persistence::ArtifactStore>,
     ) -> Self {
         Self {
+            projects: None,
             runtime,
             authority,
             clock,
             artifacts,
             admission_cursor: std::sync::Mutex::new(None),
         }
+    }
+
+    /// Connects project registration to every human and model future-work admission.
+    #[must_use]
+    pub fn with_projects(mut self, projects: Arc<dyn milkdrift_persistence::ProjectStore>) -> Self {
+        self.projects = Some(projects);
+        self
     }
 
     /// Authorizes initial scope before runtime allocates task identities or accepts a receipt.
@@ -104,12 +114,30 @@ impl TaskControlService {
         &self,
         context: &ActorAuthorityContext,
         key: &str,
-        request: WorkflowCreate,
+        mut request: WorkflowCreate,
         transport: Option<&[u8]>,
     ) -> Result<WorkflowCommandReceipt, ControlError> {
         let workflow = TaskRuntime::workflow_identity(context.actor().as_str(), key)?;
         self.authorize(context, &workflow, AuthorityOperation::CreateRun, key)?;
         let decision = self.authorize(context, &workflow, AuthorityOperation::StartRun, key)?;
+        let original = request.clone();
+        let replay = match transport {
+            Some(bytes) => self
+                .runtime
+                .replay_exact(context.actor().as_str(), key, None, bytes)?,
+            None => self
+                .runtime
+                .replay_create(context.actor().as_str(), key, &original)?,
+        };
+        if let Some(receipt) = replay {
+            return Ok(receipt);
+        }
+        let project = self.project(request.project_id.as_deref())?;
+        for task in &mut request.tasks {
+            projects::resolve_definition(&mut task.definition, project.as_ref(), None)?;
+            self.runtime.pin_project_paths(&mut task.definition)?;
+            self.authorize_project_definition(context, &task.definition)?;
+        }
         Ok(match transport {
             Some(bytes) => self.runtime.create_exact(
                 context.actor().as_str(),
@@ -118,9 +146,13 @@ impl TaskControlService {
                 decision,
                 bytes,
             )?,
-            None => self
-                .runtime
-                .create(context.actor().as_str(), key, request, decision)?,
+            None => self.runtime.create_resolved(
+                context.actor().as_str(),
+                key,
+                request,
+                decision,
+                &original,
+            )?,
         })
     }
 
@@ -158,7 +190,7 @@ impl TaskControlService {
         context: &ActorAuthorityContext,
         key: &str,
         workflow: &WorkflowId,
-        batch: TaskBatch,
+        mut batch: TaskBatch,
         transport: Option<&[u8]>,
     ) -> Result<WorkflowCommandReceipt, ControlError> {
         if batch
@@ -187,17 +219,23 @@ impl TaskControlService {
         if let Some(receipt) = replay {
             return Ok(receipt);
         }
+        let original = batch.clone();
         if let Some(record) = self.runtime.workflow(workflow)? {
             self.authorize_sources(context, &record, &batch)?;
+            self.resolve_project_batch(context, &record, &mut batch, false)?;
         }
         Ok(match transport {
             Some(bytes) => {
                 self.runtime
                     .edit_exact(context.actor().as_str(), key, workflow, batch, bytes)?
             }
-            None => self
-                .runtime
-                .edit(context.actor().as_str(), key, workflow, batch)?,
+            None => self.runtime.edit_resolved(
+                context.actor().as_str(),
+                key,
+                workflow,
+                batch,
+                &original,
+            )?,
         })
     }
 

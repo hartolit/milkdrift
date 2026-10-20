@@ -3,6 +3,8 @@ use milkdrift_authority::{AuthorityDecisionSnapshot, ExecutionAuthorityBasis};
 use milkdrift_blueprint::{NodeId, RevisionId};
 use milkdrift_persistence::{AttemptId, NodeExecutionId};
 use milkdrift_workspace::RunId;
+mod project;
+pub use project::{ProjectProcessAccess, ProjectProcessKind};
 
 /// Immutable task-origin coordinates; remote origins never own a local workflow.
 #[derive(Clone, Debug, PartialEq)]
@@ -58,6 +60,7 @@ pub enum AdapterInputSelection {
 /// Frozen selection, authority and output ownership supplied by an execution owner.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AdapterExecutionContext {
+    project_binding: Option<milkdrift_blueprint::TaskProjectBinding>,
     task_artifact_budget: Option<milkdrift_workspace::WorkspaceBudget>,
     task_output_bytes: Option<u64>,
     pub(crate) task_paths: Vec<milkdrift_blueprint::TaskPathAccess>,
@@ -103,6 +106,7 @@ impl AdapterExecutionContext {
     #[must_use]
     pub const fn direct(selection: DirectInputSelection) -> Self {
         Self {
+            project_binding: None,
             task_artifact_budget: None,
             task_output_bytes: None,
             task_paths: Vec::new(),
@@ -160,12 +164,38 @@ impl AdapterExecutionContext {
         context.task_output_bytes = dispatch.task_output_bytes();
         context.task_paths = dispatch.native_path_claims().to_vec();
         context.task_tools = dispatch.task_tools().to_vec();
+        context.project_binding = dispatch.project_binding().cloned();
         context.maximum_tool_calls = dispatch.maximum_tool_calls();
         context.task_publication_invocation = Some(dispatch.request().invocation().clone());
         context.authority = Some(dispatch.execution_authority().clone());
         context.resolution_authorization = Some(dispatch.resolution_authorization().clone());
         context.entry_authorization = Some(dispatch.entry_authorization().clone());
         Ok(context)
+    }
+
+    /// Immutable project folder, access and environment accepted with the originating task.
+    #[must_use]
+    pub(crate) const fn project_binding(&self) -> Option<&milkdrift_blueprint::TaskProjectBinding> {
+        self.project_binding.as_ref()
+    }
+
+    /// Durable parent invocation and finite call ceiling for nested model process resources.
+    #[must_use]
+    pub fn model_tool_owner(&self) -> Option<(&milkdrift_capability::InvocationId, u32)> {
+        self.task_publication_invocation
+            .as_ref()
+            .map(|invocation| (invocation, self.maximum_tool_calls))
+    }
+
+    /// Supplies accepted project facts to adapter conformance fixtures without durable admission.
+    #[cfg(any(test, feature = "test-support"))]
+    #[must_use]
+    pub fn with_project_binding_for_test(
+        mut self,
+        binding: milkdrift_blueprint::TaskProjectBinding,
+    ) -> Self {
+        self.project_binding = Some(binding);
+        self
     }
     pub(crate) fn with_serving_preparation(
         mut self,

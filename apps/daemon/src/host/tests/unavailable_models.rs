@@ -164,13 +164,35 @@ async fn drained_models_can_be_replaced_individually_through_http_and_cli() -> T
         ClientConfig::new(endpoint.clone()),
         BearerCredential::new("drained-model-token")?,
     )?;
+    let folder = root.path().join("project");
+    std::fs::create_dir(&folder)?;
+    let project = client
+        .project_command(
+            &milkdrift_control_protocol::projects::ProjectCommandRequest {
+                request_id: "drained-model-project".into(),
+                command: milkdrift_control_protocol::projects::ProjectCommandDto::Attach {
+                    name: "Model test".into(),
+                    folder: folder.to_string_lossy().into_owned(),
+                    settings: milkdrift_control_protocol::projects::ProjectSettingsDto {
+                        environment:
+                            milkdrift_control_protocol::projects::ProjectEnvironmentDto::Host,
+                        allow_changes: false,
+                    },
+                },
+            },
+        )
+        .await?
+        .project
+        .ok_or("project receipt missing registration")?;
     let definition: TaskDefinitionDto = serde_json::from_value(json!({
+        "execution":{"kind":"explicit","expected_generation":project.generation,"settings":project.settings,"access":"none","tools":[]},
         "title":"Writer","description":"","instructions":"Write the supplied brief",
         "capability":{"id":"writing-model","operation":"model.generate"},
         "inputs":{"brief":{"kind":"supplied","name":"brief","optional":false}},
         "dependencies":[],"required":true,"corrective_of":null,"paths":[]
     }))?;
     let request: CreateWorkflowRequest = serde_json::from_value(json!({
+        "project_id":project.id,
         "request_id":"drain-create","title":"Repair future work","description":"",
         "tasks":[{"alias":"draft","definition":definition},{"alias":"review","definition":definition}],
         "inputs":{},"finish_when_settled":true,"limits":null

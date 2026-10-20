@@ -1,5 +1,6 @@
 mod browser;
 mod metadata;
+mod projects;
 mod response;
 mod tasks;
 use response::{
@@ -109,6 +110,13 @@ pub(crate) fn router(host: DaemonHost) -> Result<Router, HostError> {
     let router = authorized_routes! { Router::new();
         "/v1/session" => get(tasks::session), RouteAuthorityMapping::QueryDerived, RouteResourceMapping::Daemon;
         "/v1/daemon/metadata" => get(metadata::read), RouteAuthorityMapping::Exact(AuthorityOperation::NegotiateControlProtocol), RouteResourceMapping::Daemon;
+        "/v1/projects" => get(projects::list), RouteAuthorityMapping::Exact(AuthorityOperation::InspectProject), RouteResourceMapping::Daemon;
+        "/v1/projects/{project}" => get(projects::read), RouteAuthorityMapping::Exact(AuthorityOperation::InspectProject), RouteResourceMapping::Daemon;
+        "/v1/project-directories" => get(projects::directories), RouteAuthorityMapping::Exact(AuthorityOperation::InspectProject), RouteResourceMapping::Daemon;
+        "/v1/project-environments" => get(projects::environments), RouteAuthorityMapping::Exact(AuthorityOperation::ListCapabilities), RouteResourceMapping::Capability;
+        "/v1/project-commands" => post(projects::command), RouteAuthorityMapping::CommandDerived, RouteResourceMapping::Daemon;
+        "/v1/project-receipts/{request}" => get(projects::receipt), RouteAuthorityMapping::Exact(AuthorityOperation::InspectProject), RouteResourceMapping::Daemon;
+        "/v1/project-operations" => get(projects::operations), RouteAuthorityMapping::Exact(AuthorityOperation::InspectProject), RouteResourceMapping::Daemon;
         "/v1/daemon/rename" => post(metadata::rename), RouteAuthorityMapping::Exact(AuthorityOperation::RenameDaemon), RouteResourceMapping::Daemon;
         "/v1/daemon/rename-requests/{request}" => get(metadata::receipt), RouteAuthorityMapping::Exact(AuthorityOperation::NegotiateControlProtocol), RouteResourceMapping::Daemon;
         "/v1/workflows" => get(tasks::list).post(tasks::create), RouteAuthorityMapping::CommandDerived, RouteResourceMapping::Run;

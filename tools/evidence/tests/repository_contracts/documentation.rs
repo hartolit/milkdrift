@@ -481,6 +481,7 @@ fn control_reference_json_uses_current_wire_readers_and_versions() -> TestResult
     };
     let document = read(root()?.join("docs/reference/control-api.md"))?;
     let mut checked = 0;
+    let mut project_commands = 0;
     for block in document.split("```json").skip(1) {
         let bytes = block
             .split_once("```")
@@ -501,6 +502,9 @@ fn control_reference_json_uses_current_wire_readers_and_versions() -> TestResult
             } else {
                 decode_json::<VersionRequest>(bytes)?;
             }
+        } else if value.get("command").is_some() {
+            decode_json::<milkdrift_control_protocol::projects::ProjectCommandRequest>(bytes)?;
+            project_commands += 1;
         } else if value.get("tasks").is_some() {
             decode_json::<milkdrift_control_protocol::tasks::CreateWorkflowRequest>(bytes)?;
         } else if value.get("changes").is_some() {
@@ -526,6 +530,10 @@ fn control_reference_json_uses_current_wire_readers_and_versions() -> TestResult
     assert!(
         checked >= 6,
         "reference examples disappeared from validation"
+    );
+    assert!(
+        project_commands > 0,
+        "project command examples disappeared from validation"
     );
     Ok(())
 }

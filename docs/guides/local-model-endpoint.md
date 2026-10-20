@@ -67,6 +67,13 @@ changes use a new generation and do not rewrite frozen tasks. Reconnect the brow
 choices. Select the connection on a task before submitting work. Registration and displayed local
 readiness do not establish a successful remote call.
 
+The task's project settings separately control file access and tools. Choosing this model does not
+grant access to a project folder or select a process tool. Review the project defaults or submit a
+complete explicit choice; `access: "none"` with an empty tool list limits the task to its selected
+captured inputs. File-only research can narrow access to permitted directories inside the project.
+See the [project and task settings contract](../reference/control-api.md#projects-and-execution-defaults)
+for generation checks and retained execution bindings.
+
 ## Transport and unsupported features
 
 Plain HTTP is allowed only for explicit loopback development with an allowlisted host. Remote

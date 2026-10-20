@@ -1,11 +1,19 @@
 {
   "request_id": "operator-peer-placement-1",
+  "project_id": "replace-with-returned-project-id",
   "title": "Operator peer-placement",
   "description": "One ordinary daemon task",
   "tasks": [
     {
       "alias": "work",
       "definition": {
+        "execution": {
+          "kind": "explicit",
+          "expected_generation": 1,
+          "settings": { "environment": { "kind": "host" }, "allow_changes": false },
+          "access": "none",
+          "tools": []
+        },
         "title": "Inspect supplied content",
         "description": "Use the configured capability",
         "instructions": "Inspect the supplied brief and produce a useful report.",

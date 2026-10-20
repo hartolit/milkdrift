@@ -1,6 +1,7 @@
 //! Compile operator configuration once, then give each host component only its owned plan.
 mod browser;
 mod compile;
+mod project_paths;
 mod redaction;
 mod wire;
 pub use wire::{
@@ -72,6 +73,7 @@ pub struct DaemonPlan {
 #[derive(Clone, Debug)]
 pub(crate) struct StoragePlan {
     pub(crate) data_root: PathBuf,
+    pub(crate) project_protected_paths: Vec<PathBuf>,
     pub(crate) security_audit_record_bound: u32,
 }
 

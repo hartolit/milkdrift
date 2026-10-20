@@ -16,14 +16,15 @@ worker limits or peer relationships require validation and restart. Credentials 
 configured file or exact environment variable at use time; they can rotate without logging them.
 The [authority guide](authority.md) owns scopes and revocation.
 
-The Controller preset now includes daemon renaming. Its expanded operation set changes the grant
-digest; publish changed grant content under a new `grant_revision`. Existing workflows retain their
+Current workflow presets include project inspection, and Controller also includes project management
+and daemon renaming. Expanded operation sets change grant digests; publish changed grant content
+under a new `grant_revision`. Existing workflows retain their
 original execution claim. Storage adoption preserves that claim and its exact command receipts; it
 does not authorize them under the expanded grant. Current authenticated clients can still inspect
 retained work and recover their receipts, but a ready queued task whose original grant no longer
 matches is refused before entry and records a failure. `Continue` does not replace that claim.
-Finish or deliberately stop outstanding Controller work using its preserved executable and original
-configuration before upgrading the preset. Never edit saved claims, digests or receipts to make a
+Finish or deliberately stop outstanding work using its preserved executable and original
+configuration before upgrading an affected preset. Never edit saved claims, digests or receipts to make a
 new grant appear to have authorized earlier work.
 
 `role = "workflow_enabled"` constructs the ordinary task runtime. `role = "execution_only"`
@@ -36,9 +37,10 @@ Startup validates the compiled plan, acquires the store lock, checks the exact
 execution state and registers configured adapters. An interrupted task with durable entry intent
 and no terminal evidence becomes uncertain; it is not blindly sent again. Claims and reservations
 remain owned until durable settlement or an authorized prospective decision resolves them.
-Physical schema 20 atomically adopts the exact preceding schema 19/internal format 22 by adding
-daemon metadata tables. Existing workflow and receipt encodings remain unchanged; interruption
-leaves either format ready for retry. Older document formats, graph stores and recognized legacy
+Physical schema 21 atomically adopts exact physical schemas 19 or 20 with internal format 22 by
+adding the project tables; schema 19 also receives its missing daemon metadata tables. Existing
+workflow and receipt encodings remain unchanged; interruption leaves either the original table set
+or the complete adopted format. Older document formats, graph stores and recognized legacy
 directories are refused before writes. Inspect or back up an older store with its matching executable.
 
 The optional top-level `name` seeds shared metadata only when absent; existing schema-14
@@ -89,9 +91,10 @@ cached. First-use trust comes from the configured endpoint and transport, not th
 See [web hosting](../../apps/web/README.md) for build commands and connection setup.
 
 The client shows the daemon's shared name in its navigation and contextual header. On a narrow
-screen, open **Workspace navigation** to switch daemons or reach **Daemon settings**. **New workflow**
-creates a workflow with its first task; **Add task** submits to the selected workflow. Both use a
-compact composer with instructions, optional context/files and a visible executor. The rail keeps
+screen, open **Workspace navigation** to switch daemons or reach **Daemon settings**. Register a
+permitted ordinary folder as a project and review its execution defaults before creating work.
+**New workflow** creates a workflow in that project with its first task; **Add task** submits to the
+selected workflow. Both use a compact composer with instructions, optional context/files and a visible executor. The rail keeps
 current/recent workflows available, while **All workflows** provides discovery and search. Selected task
 details sit beside the timeline on wide screens and below it on narrow screens. Hiding the inspector
 preserves an unfinished edit; it does not stop or change daemon work. Results and technical facts

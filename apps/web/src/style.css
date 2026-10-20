@@ -134,6 +134,19 @@ main { grid-column: 2; grid-row: 2; padding: 24px; min-width: 0; width: 100%; }
 .toolbar input { max-width: 560px; }
 .toolbar label { margin: 0; flex: 1; }
 .workflow-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+.project-navigation { display: grid; gap: 3px; margin-bottom: 14px; }
+.project-navigation button { text-align: left; overflow-wrap: anywhere; font-weight: 500; background: transparent; border-color: transparent; }
+.project-navigation button.active { background: #29243d; border-color: #57476f; }
+.project-list { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 12px; margin: 0 0 24px; }
+.project-settings { max-width: 760px; }
+.project-settings form { margin-block: 20px; }
+.folder-chooser { padding: 12px; margin-block: 12px; border: 1px solid var(--line); border-radius: 8px; max-height: 400px; overflow: auto; }
+.folder-chooser ul { list-style: none; padding: 0; }
+.folder-chooser li { display: flex; gap: 8px; margin-block: 5px; }
+.folder-chooser li > button:first-child { flex: 1; text-align: left; min-width: 0; overflow-wrap: anywhere; }
+.folder-location { overflow-wrap: anywhere; font-size: .85rem; }
+.execution-details { font-size: .78rem; color: var(--muted); margin-block: 12px; }
+.execution-details p { margin-block: 5px; overflow-wrap: anywhere; }
 .workflow-card { width: 100%; text-align: left; display: flex; justify-content: space-between; gap: 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 18px 20px; font-weight: 400; }
 .workflow-card > span:first-child { min-width: 0; overflow-wrap: anywhere; }
 .workflow-card > span:last-child { flex-shrink: 0; max-width: 100%; }

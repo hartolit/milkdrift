@@ -1,6 +1,7 @@
 //! Adapt public task commands and authorized projections to their semantic owners.
 mod authoring;
 mod commands;
+mod execution_mapping;
 mod mapping;
 mod reads;
 
@@ -44,7 +45,7 @@ impl Owner {
             .ok_or_else(super::read_model::not_found)
     }
 
-    fn authorize_task_workflow(
+    pub(in crate::host) fn authorize_task_workflow(
         &self,
         session: &ActorSession,
         id: &WorkflowId,
@@ -61,6 +62,8 @@ impl Owner {
 pub(crate) enum TaskRequest {
     Session,
     List {
+        project_id: Option<String>,
+        earlier: bool,
         search: String,
         cursor: Option<String>,
         limit: u16,
@@ -117,6 +120,8 @@ impl super::DaemonHost {
             match request {
                 TaskRequest::Session => serde_json::to_value(owner.task_session(&session)?),
                 TaskRequest::List {
+                    project_id,
+                    earlier,
                     search,
                     cursor,
                     limit,
@@ -125,6 +130,8 @@ impl super::DaemonHost {
                     &search,
                     cursor.as_deref(),
                     limit,
+                    project_id.as_deref(),
+                    earlier,
                 )?),
                 TaskRequest::Workflow { workflow, cursor } => serde_json::to_value(
                     owner.read_task_workflow(&session, &workflow, cursor.as_deref())?,

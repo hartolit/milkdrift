@@ -98,6 +98,19 @@ struct ResponseExecutor {
     after_entry: Mutex<Option<AfterEntry>>,
 }
 impl TaskExecutor for ResponseExecutor {
+    fn pin_project_paths(
+        &self,
+        binding: &milkdrift_blueprint::TaskProjectBinding,
+    ) -> Result<Vec<milkdrift_blueprint::TaskProjectFolder>, ExecutorError> {
+        milkdrift_capability_host::verify_project_binding(binding)?;
+        if !binding.paths.is_empty() {
+            return Err(ExecutorError::BoundaryBeforeEntry(
+                "response fixture accepts no native file scope".into(),
+            ));
+        }
+        Ok(Vec::new())
+    }
+
     fn resolve(
         &self,
         requirement: &CapabilityRequirement,
@@ -236,12 +249,10 @@ impl Fixture {
             )
             .with_maximum_active_tasks(64)?,
         );
-        let control = Arc::new(TaskControlService::new(
-            runtime.clone(),
-            authority,
-            clock,
-            store.clone(),
-        ));
+        let control = Arc::new(
+            TaskControlService::new(runtime.clone(), authority, clock, store.clone())
+                .with_projects(store.clone()),
+        );
         Ok(Self {
             store,
             runtime,
@@ -324,6 +335,118 @@ fn actor() -> TestResult<ActorAuthorityContext> {
             0,
         )?,
     ))
+}
+
+#[test]
+fn stale_project_defaults_refuse_automatic_feedback_without_changing_the_source() -> TestResult {
+    use milkdrift_blueprint::{ProjectEnvironment, ProjectSettings};
+    use milkdrift_persistence::{
+        DaemonDisplayName, ProjectMutation, ProjectOperation, ProjectOperationState, ProjectRecord,
+        ProjectStore,
+    };
+    let root = tempfile::tempdir()?;
+    let project_root = tempfile::tempdir()?;
+    let fixture = Fixture::open(root.path())?;
+    let operation = |key: &str| -> TestResult<ProjectOperation> {
+        Ok(ProjectOperation {
+            id: format!("operation:{key}"),
+            actor: ActorRef::new("human:model-author")?,
+            key: key.into(),
+            canonical_request: serde_json::to_vec(&serde_json::json!({"key":key}))?,
+            state: ProjectOperationState::Accepted {
+                project: None,
+                workflow: None,
+            },
+        })
+    };
+    let mut project = ProjectRecord {
+        id: "project:feedback".into(),
+        name: DaemonDisplayName::new("Feedback source")?,
+        generation: 1,
+        folder: milkdrift_capability_host::capture_native_project_root(project_root.path(), false)?,
+        settings: ProjectSettings {
+            environment: ProjectEnvironment::Host,
+            allow_changes: false,
+        },
+    };
+    fixture.store.mutate_project(
+        operation("attach")?,
+        ProjectMutation::Attach(project.clone()),
+    )?;
+    let create: WorkflowCreate = serde_json::from_value(serde_json::json!({
+        "title":"Bound feedback",
+        "project_id":project.id,
+        "tasks":[{"alias":"planner","definition":{
+            "title":"Plan work","instructions":"Return the next batch",
+            "capability":CapabilityRequirement::new(OperationId::new("model.generate")?),
+            "actions":TaskActionPolicy { automatic_repair:true },
+            "execution":{"kind":"explicit","expected_generation":1,"settings":project.settings,
+                "access":"none","tools":[]}
+        }}]
+    }))?;
+    let receipt = fixture
+        .control
+        .create(&actor()?, "create-project-model", create)?;
+    let dispatch = fixture
+        .runtime
+        .tick(1)?
+        .pop()
+        .ok_or("source did not start")?;
+    let source = TaskId::new(dispatch.node().as_str())?;
+    fixture.respond(dispatch, "invalid actions", None)?;
+    fixture.process()?;
+    let original = fixture
+        .runtime
+        .workflow(&receipt.workflow)?
+        .ok_or("workflow absent")?;
+    assert!(
+        original
+            .admissions
+            .get(&source)
+            .ok_or("admission absent")?
+            .repair_allowed
+    );
+    project.generation = 2;
+    project.settings.allow_changes = true;
+    fixture.store.mutate_project(
+        operation("change-defaults")?,
+        ProjectMutation::Update {
+            project,
+            expected_generation: 1,
+        },
+    )?;
+    fixture.process()?;
+    let refused = fixture
+        .runtime
+        .workflow(&receipt.workflow)?
+        .ok_or("workflow absent")?;
+    assert_eq!(refused.tasks.len(), 1);
+    assert_eq!(refused.tasks, original.tasks);
+    let admission = refused.admissions.get(&source).ok_or("admission absent")?;
+    assert_eq!(admission.status, ModelAdmissionStatus::Rejected);
+    assert!(!admission.repair_allowed);
+    assert!(
+        admission
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("project generation"))
+    );
+    assert!(
+        refused
+            .wait_question
+            .as_deref()
+            .is_some_and(|reason| reason.contains("Automatic model feedback refused"))
+    );
+    fixture.process()?;
+    assert_eq!(
+        fixture
+            .runtime
+            .workflow(&receipt.workflow)?
+            .ok_or("workflow absent")?
+            .generation,
+        refused.generation
+    );
+    Ok(())
 }
 
 #[test]

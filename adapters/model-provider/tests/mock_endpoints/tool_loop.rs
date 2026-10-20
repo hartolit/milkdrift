@@ -260,6 +260,119 @@ fn ordinary_process_tool_uses_registered_profile_and_returns_exact_stdout() -> T
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn legacy_fixed_process_tool_claim_conflicts_before_model_entry() -> TestResult {
+    use milkdrift_persistence::{NativePathClaim, NativePathClaimStore};
+    let fixture = ModelFixture::with_tools(
+        endpoint("127.0.0.1:9")?,
+        "Run the configured process.",
+        Arc::new(Allow),
+        Arc::new(NoFaults),
+        vec![TaskTool::Process {
+            capability: milkdrift_capability::CapabilityRequirement::new(OperationId::new(
+                "process.execute",
+            )?)
+            .exact(CapabilityId::new("loop-process")?),
+        }],
+        vec![],
+    )?;
+    let root = milkdrift_capability_host::capture_native_project_root(
+        &fixture.directory.path().join("process-project"),
+        true,
+    )?;
+    fixture.store.claim_native_paths(&NativePathClaim {
+        owner: "independent-uncertain-writer".into(),
+        roots: vec![root],
+    })?;
+    let dispatch = fixture
+        .runtime
+        .tick(1)?
+        .pop()
+        .ok_or("model task not ready")?;
+    fixture.runtime.execute(dispatch)?;
+    let state = fixture.state()?;
+    assert_eq!(state.state, milkdrift_runtime::TaskState::Failed);
+    assert!(!state.frozen.ok_or("frozen start absent")?.entered);
+    assert!(
+        state
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("native"))
+    );
+    assert!(
+        fixture
+            .store
+            .native_path_claim("independent-uncertain-writer")?
+            .is_some()
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn configured_process_claim_never_expands_native_file_tool_access() -> TestResult {
+    let allowed = tempfile::tempdir()?;
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    listener.set_nonblocking(true)?;
+    let address = listener.local_addr()?.to_string();
+    let fixture = ModelFixture::with_tools(
+        endpoint(&address)?,
+        "Read the explicitly allowed folder.",
+        Arc::new(Allow),
+        Arc::new(NoFaults),
+        vec![
+            TaskTool::ReadFile,
+            TaskTool::Process {
+                capability: milkdrift_capability::CapabilityRequirement::new(OperationId::new(
+                    "process.execute",
+                )?)
+                .exact(CapabilityId::new("loop-process")?),
+            },
+        ],
+        vec![TaskPathAccess {
+            path: allowed.path().to_string_lossy().into_owned(),
+            write: false,
+        }],
+    )?;
+    let forbidden = fixture.directory.path().join("process-project/private.txt");
+    std::fs::write(&forbidden, "private process bytes")?;
+    let server = thread::spawn(move || -> std::io::Result<String> {
+        let started = std::time::Instant::now();
+        let mut stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::WouldBlock
+                        && started.elapsed() < Duration::from_secs(5) =>
+                {
+                    thread::sleep(Duration::from_millis(5))
+                }
+                Err(error) => return Err(error),
+            }
+        };
+        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+        let request = read_request(&mut stream)?;
+        let body = tool("read_file", json!({"path":forbidden}));
+        stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes())?;
+        Ok(request)
+    });
+    let dispatch = fixture
+        .runtime
+        .tick(1)?
+        .pop()
+        .ok_or("model task not ready")?;
+    fixture.runtime.execute(dispatch)?;
+    assert_eq!(fixture.state()?.state, milkdrift_runtime::TaskState::Failed);
+    assert!(
+        !server
+            .join()
+            .map_err(|_| "fixture server panicked")??
+            .is_empty()
+    );
+    Ok(())
+}
+
 #[test]
 fn model_call_batch_exceeding_task_ceiling_has_no_partial_file_effect() -> TestResult {
     let project = tempfile::tempdir()?;

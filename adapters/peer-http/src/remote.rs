@@ -407,6 +407,10 @@ struct RemoteCapabilityAdapter {
 }
 
 impl CapabilityAdapter for RemoteCapabilityAdapter {
+    fn accepts_project_without_access(&self) -> bool {
+        true
+    }
+
     fn authority_requirements(&self) -> CapabilityExecutionRequirements {
         self.authority_requirements.clone()
     }

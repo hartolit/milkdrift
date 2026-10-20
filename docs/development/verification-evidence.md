@@ -33,6 +33,160 @@ the user has not yet rechecked them.
 The exact browser asset load and click sequence were not captured. Earlier passing tests remain
 functional evidence for 02c and do not overrule this rejection or validate the proposed canvas.
 
+## Prompt 02e projects and execution environments verification
+
+The assigned project correction adds daemon-owned folder registrations, durable directory-creation
+recovery, current-store adoption, project-scoped workflow discovery and frozen execution bindings.
+Browser, native client, CLI and model-authored future work share the public daemon admission path.
+These are focused Linux checks under the sprint's explicit prompt-07 full-gate schedule. They do
+not establish hosted CI, real-model quality, actual-user acceptance or positive Podman attachment
+qualification on this machine.
+
+Complete affected owner suites pass with `cargo test -p PACKAGE --all-features`. Latest executed
+counts are blueprint 4, control 16, runtime 53, capability-host 56, local-process 44, peer-http 78
+and managed-linux 54. Model-provider's complete `mock_endpoints` target passes 36 cases; the actual
+two-daemon peer target passes two. These lanes discover 350 cases and execute 343; six managed
+physical/manual cases and one two-host longevity case remain ignored in the ordinary invocation.
+The separately invoked physical lanes below have their own outcomes. Authority passes 20 cases
+and peer-protocol passes 10. Persistence passes six cases and two doc tests; redb passes 92 cases.
+CLI, control-client and control-protocol pass 67 cases across their full affected targets.
+
+The retained logs under `target/prompt02e/` include `02e-execution-owner-final-tests.log`,
+`02e-protected-host-final-tests.log`, `02e-protected-model-final-tests.log`,
+`02e-managed-final-tests.log`, `02e-two-daemon-final-tests.log`,
+`projects-owner-final.log` and `milkdrift-02e-client-tests.log`. The earlier combined project-owner
+run recorded two two-host fixture failures because its newly created workflows lacked projects.
+After converting those fixtures through public project commands, both cases pass in the separate
+final two-host log; the earlier combined invocation is not described as wholly passing.
+
+Refusal and recovery coverage includes exact replay before mutable defaults, explicit empty
+permissions, retained text-edit bindings, atomic project-generation conflicts, stale automatic
+feedback, hidden project projections and actor-bound cursors. Folder-creation fault cases preserve
+unresolved effects and exact receipts. Redb adoption retains old workflow bytes and organizational
+associations separately. Native path claims exclude conflicting task/direct/peer writers across
+aliases and remain held through entered uncertainty. Current operator paths are rechecked for
+earlier accepted bindings after restart. The final host regression recreates the execution host
+with new protection and observes no adapter entry and unchanged accepted binding bytes; it is not
+a full queued-task daemon-restart integration case. Daemon HTTP coverage rejects project ancestors of configuration,
+profile and credential files while allowing an unrelated sibling.
+
+The locked frontend install, Svelte type/accessibility check, ESLint, all 106 unit cases and
+production build pass in `target/prompt02e/milkdrift-project-forms-final-*.log`. Tests cover project,
+actor and daemon draft isolation, bounded settings drafts, late replies, removal without discarding
+unrelated drawings, and corrections retaining their original access and environment under a
+fresh reviewed generation. Saving a name or settings also preserves the other form's unsent
+choices, including recovery from a lost reply. Final production assets are `index-DkrW3o1r.js`
+and `index-BS0Go1kx.css`.
+Source generation uses the Rust protocol DTO owner; protocol 3.4 and physical redb schema 21 with
+internal format 22 upgrade the maintained consumers together.
+
+The complete daemon suite passes 98 executed cases, with its one manual longevity case ignored:
+41 library, one binary, one configuration CLI, 51 control-plane, two storage-admin and two peer
+cases. `target/prompt02e/milkdrift-02e-final-daemon-tests.log` records that single final invocation.
+The actual CLI/public-client journey passes at `/tmp/milkdrift-02e-cli-20261020-final/check.json`.
+It attaches existing content, creates two distinct folders, replays project requests, exercises
+CLI rename/removal and runs real native creation/edit/read plus Cargo tests in both folders using
+the same `project-cargo` generation. It verifies build output, sentinel bytes and folder ownership
+and mode. It also preserves the eight-task, three-batch automatic journey, parallel
+starts, retained failure, correction and restart behavior. Its `qualifying` and
+`controlled_model_quality` values are false: controlled provider responses prove tool execution,
+not model competence or a live external provider.
+
+Both complete connected-task tests pass, including cleanup on deliberate fixture failure. All
+five external-evidence harness cases pass, including redaction, tracked-output refusal and
+non-qualification without real resources. Their final logs are
+`target/prompt02e/milkdrift-02e-connected-final.log` and
+`target/prompt02e/milkdrift-02e-external-final.log`. Actual-binary commands are reproducible with:
+
+```sh
+cargo build -p milkdrift-daemon --bin milkdrift-daemon \
+  -p milkdrift-cli --bin milkdrift -p milkdrift-evidence \
+  --bin connected-tasks --bin milkdrift-external-evidence
+target/debug/connected-tasks check --root /tmp/milkdrift-02e-new-check \
+  --daemon target/debug/milkdrift-daemon --cli target/debug/milkdrift
+cargo test -p milkdrift-evidence --all-features --test connected_tasks --test external_evidence
+```
+
+Warning-denying Clippy runs with `--all-targets --all-features -- -D warnings`, and rustdoc with
+`RUSTDOCFLAGS='-D warnings' --all-features --no-deps`, pass for the affected owners. The final
+root, execution-owner and project-owner logs are retained under `target/prompt02e/`. Default and
+all-feature public API inventories for 14 changed libraries were generated with `cargo public-api
+-sss --color never` under `target/public-api/` and `target/public-api/prompt02e/`, then traced to
+actual consumers. The final review removed the DTO's unused public serde helper and consolidated
+current operator protection into the existing native-path installation port. Default production
+daemon/CLI normal/build dependency trees contain no test-support, test-admin or operational-evidence
+features. The local-process source-size exception is removed after extracting its private descriptor
+code; the managed worker's private lifetime module adds no exception.
+
+The final complete production Chromium run executed all 37 cases against the immutable default
+binaries in `/tmp/milkdrift-02e-browser-20261020-e/`: 35 passed and two test assertions needed repair.
+The multi-client rename correctly restored the selected project; its assertion still expected
+top-level project discovery. The shared-input test submitted before the scheduler recorded two
+missing-input reasons, and the daemon correctly refused generation 1 against current generation 3.
+Public CLI inspection confirmed both tasks remained queued and no supply had been accepted.
+The test now waits for the two visible reasons before staging. Both corrected cases pass on the
+same populated fixture and unchanged production assets, covering all 37 scenarios across the full
+run and focused rerun. This is not a single 37/37 invocation.
+
+The full and focused logs are `target/prompt02e/milkdrift-02e-browser-final.log` and
+`target/prompt02e/milkdrift-02e-browser-repair.log`; HTML and screenshots are in
+`target/prompt02e-browser-{final,repair}-{report,results}/`. The project case uses actual browser
+attachment/creation and settings, two workflows in one folder and an identically named workflow in
+another, real Cargo output and preserved existing files, a daemon restart and fresh-client reconnect.
+Inspected renders include project settings, folder creation, desktop coding result, reconnected
+390-pixel phone result, empty discovery and enlarged-text selection. Other cases preserve direct
+connections, automatic work, partial graphs, restricted sources, start races and correction history.
+Chromium and emulated touch/enlarged text are tested; physical phones, screen readers and user
+preference acceptance are not established. Browser assertions use the production UI and public
+Rust fixture commands; they do not seed project records or drive daemon scheduling.
+
+All 30 repository contracts pass in `target/prompt02e/milkdrift-02e-contracts-final.log`.
+The external-consumer check used the pinned Rust 1.95.0 compiler explicitly because the host's
+ambient compiler outside this checkout selected an older version. Its stale generated consumer
+build cache was moved intact to
+`target/client-ready-workflows/strict-checks/consumer-build-before-02e-20261020/`; no user store was
+deleted. `cargo fmt --all --check` and `git diff --check` pass. Automated fixture owners were stopped
+through their maintained control commands and their stores retained. The separate
+[early review fixture](virtual-office/daemon-workflows-implementation/handoff.md#local-review-fixture)
+remains ready; actual review and the prompt-07 integrated gate remain open.
+
+### Physical managed evidence and its limit
+
+The installed rootless Podman 6.1.4, runc 1.5.2 and libpathrs 0.2.6 combination refuses the pinned
+`/proc/<helper>/fd/N` project source across its mount namespace with `EINVAL`, before workload
+entry. The explicit positive attachment test therefore failed, with exit 125 and verified
+container absence recorded in `/tmp/.tmpZGj4CE/attempt-1.json`. No successful writable attachment
+or read-only attachment qualification is claimed. There is no unpinned-path, ownership-change,
+relabel or privileged fallback.
+
+The separate real runtime → model tool loop → managed-worker refusal/recovery case passes after
+the final helper/lifetime refactor in `/tmp/milkdrift-project-lifecycle-SbigRQ/`. Two model rounds
+observe the tool refusal. The child resource hold releases only after verified absence. Updating
+the environment to generation two and removing it preserves the project folder, original bytes,
+UID/GID 1000 and file mode 0640; no claimed model-created file exists. The test uses the approved,
+already present image, digest
+`sha256:d5bd2935d24ac8bd6ef7f451eba687b722424bef48c2534cf9e7b7c1fdbaaf27`.
+
+Existing owned-volume physical behavior passes in `/tmp/milkdrift-linux-JtqFvl/`: `/workspace`
+writes, read-only image root, absent engine socket, reapply/reopen/recovery and preserved removal.
+Its three fresh volumes remain retained under the preservation policy. Protected-installation
+physical behavior passes in `/tmp/milkdrift-protected-D6rLYR/`, including renewal, timeout,
+interrupted recovery and pre-entry integrity. Existing stores, fixture roots and unrelated
+containers were preserved. These regressions establish their existing boundaries, not the
+unsupported positive project mount on this host.
+
+The physical runs invoked these already-built test targets with `--ignored --exact --nocapture`:
+
+| Executable and exact filter | Environment used |
+| --- | --- |
+| `target/debug/deps/linux_mechanism-fb369c4830a020bc real_linux_worker_conformance_reapply_restart_and_preserved_removal` | `MILKDRIFT_LINUX_RECIPE=/tmp/milkdrift-project-lifecycle-CPI9TW/original.json`, `MILKDRIFT_QUADLET_TEST_PARENT=/home/hartolit/.config/containers/systemd`, `MILKDRIFT_SYSTEMD_TEST_DIRECTORY=/home/hartolit/.config/systemd/user` |
+| `target/debug/deps/protected_verification-ace0af4fac4297d8 verifier_renewal_timeout_recovery_and_preentry_integrity` | `MILKDRIFT_PROTECTED_TEST_IMAGE` set to the digest above; evidence parent unset |
+| `target/debug/deps/linux_mechanism-fb369c4830a020bc real_linux_project_runtime_refusal_keeps_folder_and_releases_quiescent_child` | `MILKDRIFT_PROJECT_WORKER_IMAGE` set to that digest, `MILKDRIFT_PROJECT_PIN_HELPER` set to this checkout's `target/debug/milkdrift-daemon`, and the same Quadlet/systemd parents |
+| `target/debug/deps/milkdrift_managed_linux-0da986ee2c2a17c3 worker::project::tests::physical_attachment_preserves_host_files_modes_and_denies_read_only_changes` | The same project image and pin helper |
+
+Their output is retained in the execution transcript and the evidence roots above, not separate
+physical log files. The failed positive test explicitly kept its temporary root for inspection.
+
 ## Prompt 02d canvas and direct authoring verification
 
 Implementation checkpoint `25bcdda` contains the tested canvas, daemon contracts and their consumers.

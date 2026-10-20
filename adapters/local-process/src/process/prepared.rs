@@ -4,9 +4,10 @@ use super::{
     LocalProcessAdapter, Ordering, OsString, PathBuf, SensitiveSecret, bounded,
     materialize_arguments, prepare_working_directory, stdin_bytes,
 };
-use milkdrift_capability_host::MaterializedExecution;
+use milkdrift_capability_host::{MaterializedExecution, ProjectProcessAccess, ProjectProcessKind};
 
 pub(super) struct PreparedProcess {
+    pub(super) project_directory: Option<std::fs::File>,
     pub(super) workspace: Box<dyn MaterializedExecution>,
     pub(super) working_directory: PathBuf,
     pub(super) arguments: Vec<OsString>,
@@ -147,19 +148,59 @@ impl LocalProcessAdapter {
                 "isolated execution root is outside configured read-write roots",
             ));
         }
-        let working_directory = match prepare_working_directory(
-            &canonical_root,
-            &self.profile.working_directory,
-            self.authorized_host_working_directory.as_deref(),
-        ) {
-            Ok(path) => path,
-            Err(message) => {
+        let project = context.project_process(
+            ProjectProcessKind::Native,
+            self.descriptor.identity().as_str(),
+            self.profile.operation.as_str(),
+            self.descriptor.descriptor_revision(),
+        )?;
+        if matches!(project, Some(ProjectProcessAccess::Isolated))
+            && !matches!(
+                self.profile.working_directory,
+                crate::WorkingDirectoryMode::IsolatedRoot
+                    | crate::WorkingDirectoryMode::IsolatedSubdirectory { .. }
+            )
+        {
+            return Err(PreparationFailure::new(
+                ErrorClass::Authorization,
+                "project_process_refused",
+                "no project access permits only an explicitly isolated process profile",
+            ));
+        }
+        let project_directory = match project {
+            Some(ProjectProcessAccess::Directory {
+                physical, identity, ..
+            }) => Some(self.project_directory(physical, identity)?),
+            Some(ProjectProcessAccess::Isolated) | None => None,
+        };
+        let working_directory = match project_directory.as_ref() {
+            #[cfg(target_os = "linux")]
+            Some(directory) => {
+                use std::os::fd::AsRawFd;
+                PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd()))
+            }
+            #[cfg(not(target_os = "linux"))]
+            Some(_) => {
                 return Err(PreparationFailure::new(
                     ErrorClass::InvalidRequest,
-                    "working_directory_rejected",
-                    &message,
+                    "project_platform_unqualified",
+                    "pinned project process directories require Linux",
                 ));
             }
+            None => match prepare_working_directory(
+                &canonical_root,
+                &self.profile.working_directory,
+                self.authorized_host_working_directory.as_deref(),
+            ) {
+                Ok(path) => path,
+                Err(message) => {
+                    return Err(PreparationFailure::new(
+                        ErrorClass::InvalidRequest,
+                        "working_directory_rejected",
+                        &message,
+                    ));
+                }
+            },
         };
         let arguments = match materialize_arguments(&self.profile, request, workspace.as_ref()) {
             Ok(arguments) => arguments,
@@ -201,6 +242,7 @@ impl LocalProcessAdapter {
             )
         })?;
         Ok(PreparedProcess {
+            project_directory,
             workspace,
             working_directory,
             arguments,
@@ -208,5 +250,56 @@ impl LocalProcessAdapter {
             environment,
             resolved_secrets,
         })
+    }
+
+    fn project_directory(
+        &self,
+        physical: &str,
+        identity: &str,
+    ) -> Result<std::fs::File, PreparationFailure> {
+        let refused = |message: &str| {
+            PreparationFailure::new(
+                ErrorClass::Authorization,
+                "project_process_refused",
+                message,
+            )
+        };
+        let physical = std::path::Path::new(physical);
+        match &self.profile.working_directory {
+            crate::WorkingDirectoryMode::Project => {}
+            crate::WorkingDirectoryMode::AuthorizedHostPath { .. }
+                if self.authorized_host_working_directory.as_deref() == Some(physical) => {}
+            _ => {
+                return Err(refused(
+                    "process profile working directory is incompatible with the selected project; configure project mode",
+                ));
+            }
+        }
+        if !self
+            .writable_roots
+            .iter()
+            .any(|root| physical.starts_with(root))
+        {
+            return Err(refused(
+                "project folder is outside the process profile's configured writable roots",
+            ));
+        }
+        let directory =
+            std::fs::File::open(physical).map_err(|error| refused(&error.to_string()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let metadata = directory
+                .metadata()
+                .map_err(|error| refused(&error.to_string()))?;
+            if !metadata.is_dir()
+                || format!("unix:{}:{}", metadata.dev(), metadata.ino()) != identity
+            {
+                return Err(refused(
+                    "project directory changed during process preparation",
+                ));
+            }
+        }
+        Ok(directory)
     }
 }

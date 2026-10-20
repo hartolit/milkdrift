@@ -901,12 +901,9 @@ async fn maximum_text_outputs_allow_bounded_separators_and_non_utf8_keeps_lifecy
         let mut document: serde_json::Value = serde_json::from_slice(&fs::read(&profile)?)?;
         let invalid_bytes = [0xff, 0xfe, b'a'];
         if non_utf8 {
-            let source = directory.path().join("non-utf8.txt");
-            fs::write(&source, invalid_bytes)?;
             *document
                 .pointer_mut("/profile/arguments")
-                .ok_or("profile arguments absent")? =
-                serde_json::json!(["copy", source, "result.txt"]);
+                .ok_or("profile arguments absent")? = serde_json::json!(["non-utf8-output"]);
             *document
                 .pointer_mut("/profile/outputs")
                 .ok_or("profile outputs absent")? = serde_json::json!([{"name":"report","relative_path":"result.txt","media_type":"text/plain","required":true}]);
@@ -944,7 +941,7 @@ async fn maximum_text_outputs_allow_bounded_separators_and_non_utf8_keeps_lifecy
             CONTROLLER_TOKEN,
         )
         .await?;
-        let mut request = create_request(
+        let request = create_request(
             if non_utf8 {
                 "non-utf8-result"
             } else {
@@ -952,22 +949,6 @@ async fn maximum_text_outputs_allow_bounded_separators_and_non_utf8_keeps_lifecy
             },
             true,
         );
-        if non_utf8 {
-            request
-                .tasks
-                .first_mut()
-                .ok_or("fixture task absent")?
-                .definition
-                .paths
-                .push(milkdrift_control_protocol::tasks::PathAccess {
-                    path: directory
-                        .path()
-                        .to_str()
-                        .ok_or("fixture path is not UTF-8")?
-                        .into(),
-                    write: false,
-                });
-        }
         let accepted = daemon.client.create_workflow(&request).await?;
         let task = accepted
             .aliases

@@ -15,6 +15,10 @@ use milkdrift_persistence::StorageFailureClass;
     )
 )]
 pub enum FaultPoint {
+    /// Before a project registration, intent, or settlement transaction commits.
+    BeforeProjectCommit,
+    /// After a project transaction commits, when its response may be lost.
+    AfterProjectCommit,
     /// Before a managed resource transaction becomes durable.
     BeforeManagedCommit,
     /// After a managed transaction committed but before the caller receives its reply.

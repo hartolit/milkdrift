@@ -3,6 +3,7 @@ pub(crate) mod evaluation;
 mod execution;
 pub(crate) use execution::apply_task_resources;
 pub(crate) mod integrity;
+mod task_tool;
 mod uses;
 pub(crate) use execution::{
     accept_serving_resources, enter_serving_resources, terminal_serving_resources,
@@ -147,6 +148,15 @@ fn save_transition(
 }
 
 impl ManagedResourceStore for RedbStore {
+    fn reserve_managed_task_tool(
+        &self,
+        workflow: &milkdrift_blueprint::WorkflowId,
+        parent_invocation: &milkdrift_capability::InvocationId,
+        request: &milkdrift_capability::InvocationRequest,
+        selection: &milkdrift_capability::ResolvedCapabilitySnapshot,
+    ) -> Result<ManagedUse, PersistenceError> {
+        task_tool::reserve(self, workflow, parent_invocation, request, selection)
+    }
     fn begin_managed_evaluation(
         &self,
         request: &ManagedRequest,

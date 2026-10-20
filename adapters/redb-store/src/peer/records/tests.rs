@@ -1,4 +1,5 @@
 //! Independent physical corruption fixtures for both transaction kinds.
+mod native_claims;
 mod serving;
 mod tombstone;
 use milkdrift_peer_protocol::PeerExecutionId;

@@ -16,8 +16,9 @@ The October 18 user recheck rejects that interaction as still bloated and asks f
 left-side details and direct input connections. Assigned [02d](02d-canvas-and-direct-authoring.md)
 implements the replacement and its necessary daemon support; its focused verification is complete. Naming acceptance
 and the substantive task journey remain open. The October 19 project/environment discussion produces
-prepared [02e](02e-projects-and-execution-environments.md). Its design/preparation is authorized;
-production implementation is not assigned. Prompts 02e and 04–07 remain unassigned.
+prepared [02e](02e-projects-and-execution-environments.md), subsequently explicitly assigned for
+implementation. It adds daemon-owned project registration, guarded execution bindings and the shared
+browser/CLI/public-client path. Prompts 04–07 remain unassigned.
 Prompt 07 owns the integrated full-system gate. No push, history rewrite, external service change or
 paid model use occurred.
 
@@ -108,7 +109,7 @@ and planning review, not executed project/Podman evidence or independent user ac
 
 The selected semantics and alternatives are in
 [ADR 0051](../../../decisions/0051-daemon-task-workflows.md#projects-and-execution-environments).
-[02e](02e-projects-and-execution-environments.md) implements that boundary when assigned, including
+[02e](02e-projects-and-execution-environments.md) was subsequently assigned to implement that boundary, including
 current-store adoption, shared project settings, verified Podman attachments and a real Rust
 create/edit/build/reconnect journey. The later method, remote and final-review prompts carry its
 dependencies without changing their numbers. This planning correction changes no production code,
@@ -120,7 +121,7 @@ stores, running services or environment configuration.
 | Original appearance is rejected and the supplied brand is absent. | [02b](02b-visual-design-and-brand.md) implements the supplied visual direction and real logo. The subsequent feedback rejects interaction usability; visual preference acceptance is not reported. |
 | Too many authoring forms, disruptive navigation and unclear creation of multiple workflows. | Assigned [02c](02c-workspace-and-task-creation.md) implemented explicit New workflow/Add task actions and bounded navigation. Its subsequent user recheck rejects the remaining forms and page layout. |
 | The workspace remains bloated; input/output relationships require protocol knowledge. | Assigned [02d](02d-canvas-and-direct-authoring.md) replaces the product authoring forms with a canvas, compact left selection and direct source/result connections, including the required daemon contracts. Implementation and focused checks are complete; the actual user's recheck remains open. |
-| Project location, daemon execution and Podman's role are unclear; related workflows need project grouping. | Prepared [02e](02e-projects-and-execution-environments.md) adds daemon-owned project registrations around user folders and consistent project-level environments. Design selected; implementation and user review remain open. |
+| Project location, daemon execution and Podman's role are unclear; related workflows need project grouping. | Assigned [02e](02e-projects-and-execution-environments.md) adds daemon-owned project registrations around user folders and consistent project-level environments. Physical Podman attachment qualification and actual user review remain open. |
 | No successful substantive journey has been reported. | Resume [02](02-early-user-review.md) after assigned 02e: select a project, locate real output files, create two workflows, connect useful inputs/results, add to one, closure/reconnect, switching, missing-input repair, failure and stop understanding remain open. |
 
 The [retained mockup](assets/milkdrift-ui-sample.png) is byte-identical to the user's
@@ -139,7 +140,7 @@ attachment from `/tmp/codex-clipboard-6fa7640f-9192-45da-8023-b97f21a915b6.png`,
 `e480cbd34fc683a7ae06b75856435f29595bf6657f34e145ec247fc2f8fb64b3`. It illustrates grouping only;
 its app controls and behavior are not Milkdrift requirements or implemented-product evidence.
 
-Next sequence: explicitly assign 02e, finish the actual 02 review including project/files/environment,
+Next sequence: finish the actual 02 review including project/files/environment,
 naming, interaction and model-assignment rechecks, then separately assign 04. The 02c checkpoint and 02d implementation preserve existing
 stores and tested checkpoints. Its automated checks do not settle the actual user's rejection.
 Preserve the completed 03 work and 04–07 numbering. Prompt 07 remains the sole integrated gate;
@@ -147,11 +148,22 @@ this partial feedback is not user acceptance of the journey or the proposed corr
 
 ## Tested checkpoints and evidence
 
+The assigned 02e implementation and focused verification are complete, with positive physical Podman
+attachment qualification explicitly open under its host-prerequisite clause. The
+[02e evidence](../../verification-evidence.md#prompt-02e-projects-and-execution-environments-verification)
+records complete affected owner suites, 106 frontend unit cases, scoped Clippy/rustdoc, API review,
+all 30 repository contracts and the real two-folder Cargo journey. All 37 browser scenarios have
+passing evidence: 35 in the final full invocation, then the two repaired assertions in a focused
+rerun on unchanged production assets. Default binaries and stores are retained; current local
+review instructions are below. Prompt 07 retains the integrated gate and physical qualification
+gap. No actual user acceptance is inferred from these checks.
+
 The 02e planning correction was reviewed against the current project, task, process and managed-worker
 owners, then reread by the delegated reviewer after the identified corrections. All eight documentation
 contracts pass with `cargo test -p milkdrift-evidence --test repository_contracts --all-features documentation::`;
-`git diff --check` passes. These are planning/documentation checks only. Production code remains at
-`25bcdda`, handed off in `a91e86f`; no new project execution or physical Podman evidence is claimed.
+`git diff --check` passes. These were planning/documentation checks only. That planning checkpoint
+used production code `25bcdda`, handed off in `a91e86f`; it established no project execution or
+physical Podman evidence. Subsequent implementation evidence is recorded separately.
 
 Implementation checkpoint `25bcdda` contains the tested 02d code and current owner documentation.
 The implemented 02d replaces the product forms with one canvas and compact left selection, direct
@@ -243,18 +255,21 @@ capabilities. Methods, remote administration and rolling retention remain later 
 
 ## Local review fixture
 
-The latest bounded fixture root is:
+The latest bounded fixture root is `/tmp/milkdrift-02e-user-review-20261020-a/`.
+It was started on October 20 for the project recheck with immutable daemon/fixture copies and a
+four-hour lifetime. The preceding `/tmp/milkdrift-prompt02d-user-review-20261018-b/`,
+`/tmp/milkdrift-prompt02c-user-review-20261018/` and
+`/tmp/milkdrift-prompt02a-user-review-20261017-b/` roots and stores remain preserved. This fixture
+uses new development stores and endpoints, separate from automated browser/CLI evidence. The
+rebuilt production client is served at `http://127.0.0.1:4173/`.
 
-`/tmp/milkdrift-prompt02d-user-review-20261018-b/`
+Daemon/client protocol is 3.4; earlier review daemons need their matching older client. The normal
+review fixture offers captured-input and project-aware Cargo processes and two controlled model
+choices. Additional canvas boundary executors are confined to automated `--canvas-cases` fixtures.
+No project or workflow registration is seeded in this review instance. The existing
+`daemon-a/animation-project/` folder contains `existing.rs`, and the project-aware Cargo profile
+can serve multiple permitted folders.
 
-It was started on October 18 for the 02d recheck with immutable daemon/fixture copies and a four-hour
-lifetime. The preceding roots `/tmp/milkdrift-prompt02c-user-review-20261018/` and
-`/tmp/milkdrift-prompt02a-user-review-20261017-b/` and their stores remain preserved. The new fixture uses
-new development stores and endpoints, separate from automated browser/CLI evidence. The rebuilt
-production client is served at `http://127.0.0.1:4173/`.
-Its daemon/client protocol is 3.3; an old 3.2 review daemon needs its matching older client. The
-normal review fixture offers one configured process and two controlled model choices; the additional
-canvas boundary-test executors are enabled only in automated fixtures with `--canvas-cases`.
 This temporary root may disappear at host reboot; verify readiness rather than assuming it still runs. Its `ready.json`
 records endpoints and process paths; `browser.json` is private. Start the independent production
 static preview from the repository root when needed:
@@ -268,11 +283,35 @@ and matching credential below. No connection name or installation identity field
 
 | Name returned by daemon | Daemon URL | Private credential file under the fixture root |
 | --- | --- | --- |
-| Studio A | `http://127.0.0.1:35437` | `daemon-a/operator.token` |
-| Studio B | `http://127.0.0.1:46031` | `daemon-b/operator.token` |
+| Studio A | `http://127.0.0.1:33961` | `daemon-a/operator.token` |
+| Studio B | `http://127.0.0.1:42769` | `daemon-b/operator.token` |
 
 Paste the matching credential from its local file; never put it in a URL, screenshot or committed
 document. The browser retains it only in memory. The two daemons have separate actors and stores.
+
+Choose **Add project → Use existing folder**, open the permitted `daemon-a` parent and select
+`animation-project`. Its files remain in that host folder. In **Project settings**, choose
+**project cargo** under **Execution environment**, deliberately enable **Allow project changes**
+and save. Choose **New workflow → Add task**, select **controlled-brief-review** as the model and
+write:
+
+```text
+Project fixture: Rust code
+Create, edit and test a small Rust library in this project.
+```
+
+Starting that workflow runs the production model tool loop, native file tools and the same
+project-aware Cargo process used by the automated journey. Inspect `Cargo.toml`, `lib.rs` and
+`target/debug/deps/` in the selected folder; `existing.rs` stays intact. This fixture returns
+controlled tool choices and does not demonstrate real-model quality. Create another workflow
+under the same project, then use **Add project → Create folder** for a second project under the
+permitted parent and choose the same environment. Identical workflow names remain distinct by
+their project. Close and reconnect from a fresh client to find the same registrations and files.
+
+The review environment provides a working host execution choice. Positive Podman project attachment
+is not qualified on this host: the installed runtime refuses the pinned mount before entry. The
+[physical evidence](../../verification-evidence.md#physical-managed-evidence-and-its-limit)
+records that limitation and passing preservation/refusal regressions.
 
 For the naming recheck, connect Studio A in two independent browser tabs/windows. Open **Daemon
 settings** in one, save a new name, and observe the other update within the next live refresh.
@@ -284,17 +323,18 @@ actual-user check, not something automated tests can accept for the user.
 To check restart, keep both browser tabs and run the maintained fixture control:
 
 ```sh
-target/debug/connected-tasks control \
-  --root /tmp/milkdrift-prompt02d-user-review-20261018-b restart-a
+/tmp/milkdrift-02e-user-review-20261020-a/tools/cargo-report control \
+  --root /tmp/milkdrift-02e-user-review-20261020-a restart-a
 ```
 
 The name should return unchanged after reconnect. A saved profile from the previous review can
 remain disconnected; its last observed name is cached. Forgetting that browser profile does not
 delete the daemon's work. These newly allocated endpoints use new development stores.
 
-For input-dependent process work, choose **New workflow**, then **Add task**. Write what the task
+For input-dependent process work inside a project, choose **New workflow**, then **Add task**. Write what the task
 should do and choose **cargo report profile** under **Model or agent**. **Attach file** captures the root or
-runtime `Cargo.toml` and connects it to the configured manifest input. **Start workflow** accepts
+runtime `Cargo.toml` and connects it to the configured manifest input. Under **Tools & autonomy**,
+choose **No project tools or file access** for this isolated captured-input process. **Start workflow** accepts
 the drawing. Results describe the supplied manifest. Close the client while work runs, reconnect
 and discover the retained result.
 
@@ -316,13 +356,14 @@ If the fixture expires, preserve its root and choose an unused new root:
 cargo build -p milkdrift-daemon --bin milkdrift-daemon \
   -p milkdrift-cli --bin milkdrift -p milkdrift-evidence --bin connected-tasks
 target/debug/connected-tasks serve \
-  --root target/daemon-workflows/prompt02d-review-new \
+  --root target/daemon-workflows/prompt02e-review-new \
   --daemon target/debug/milkdrift-daemon --lifetime-secs 14400
 ```
 
 Read that root's `ready.json` for newly allocated URLs. The command refuses an existing root. Current
-task documents use schema 3 and redb internal format 22 (physical schema 20). Only the exact preceding
-19/22 store receives atomic metadata-table adoption; other old formats are refused. This preserves
+task documents use schema 3 and redb internal format 22 (physical schema 21). Exact preceding
+20/22 stores receive additive project-table adoption; exact 19/22 stores receive both daemon metadata
+and project tables. Other old formats are refused. This preserves
 workflow and receipt bytes but does not change frozen execution authority. The expanded Controller
 preset can deny unfinished old work before its next entry; follow the [upgrade guidance](../../../operations/daemon.md)
 and keep matching old binaries/configuration for work that must finish under its original grant.
@@ -331,10 +372,9 @@ leaves prompt 02 open and stops before prompt 04.
 
 ## Resume the visual and task review
 
-The 02c client is the rejected baseline. The rebuilt 02d client has completed focused checks, but does
-not implement the selected project model. Execute 02e only when assigned, then rebuild its review
-environment before asking the user to assess project setup or execution location. The older fixture
-below remains useful only for its existing canvas/model-selection behavior.
+The 02c client is a rejected baseline. The rebuilt 02e client implements the selected project model
+and retains the 02d canvas. Use the current fixture above to assess project setup and execution
+location. Earlier fixtures retain their historical stores and matching client requirements.
 Preserve fixture roots and check readiness; a four-hour endpoint is not an indefinitely running service.
 
 After 02e, first attach/create a folder on the named daemon, choose its environment and locate the

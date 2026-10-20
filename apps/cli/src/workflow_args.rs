@@ -17,6 +17,12 @@ pub(crate) enum WorkflowCommand {
         limit: u32,
         #[arg(long)]
         cursor: Option<String>,
+        /// Restrict discovery to one daemon-owned project.
+        #[arg(long, conflicts_with = "earlier")]
+        project: Option<String>,
+        /// Discover earlier workflows that have not been associated with a project.
+        #[arg(long)]
+        earlier: bool,
     },
     /// Read one page of a workflow's task summaries and actual times.
     Show {

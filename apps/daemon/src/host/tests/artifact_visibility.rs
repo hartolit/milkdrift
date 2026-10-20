@@ -50,7 +50,8 @@ fn narrow(owner: &mut Owner, session: &mut ActorSession, metadata_only: bool) ->
         owner.authority.clone(),
         owner.clock.runtime_adapter(),
         owner.store.clone(),
-    );
+    )
+    .with_projects(owner.store.clone());
     Ok(())
 }
 
@@ -184,11 +185,15 @@ async fn metadata_only_projection_preserves_actual_sensitivities_and_refuses_byt
     Ok(())
 }
 
-fn request() -> TestResult<milkdrift_control_protocol::tasks::CreateWorkflowRequest> {
+fn request(
+    project_id: String,
+) -> TestResult<milkdrift_control_protocol::tasks::CreateWorkflowRequest> {
     Ok(serde_json::from_value(json!({
+        "project_id":project_id,
         "request_id":"visibility-create", "title":"Receipt visibility", "description":"",
         "tasks":[{"alias":"future","definition":{
             "title":"Future work","description":"","instructions":"No entry without supplied text",
+            "execution":{"kind":"explicit","expected_generation":1,"settings":{"environment":{"kind":"host"},"allow_changes":false},"access":"none","tools":[]},
             "capability":{"id":"visibility-model","operation":"model.generate"},
             "inputs":{"brief":{"kind":"supplied","name":"brief","optional":false}},
             "dependencies":[],"required":true,"corrective_of":null,"paths":[]
@@ -230,6 +235,8 @@ async fn retained_task_reply_rechecks_revocation_and_expiry_without_editing_rece
         std::collections::BTreeSet::from(["127.0.0.1:9".to_owned()]),
     )?;
     let host = DaemonHost::start_with_clock(config.validate(root.path())?, clock.clone())?;
+    let project_folder = root.path().join("project");
+    fs::create_dir(&project_folder)?;
     let mut session = host
         .auth
         .authenticate(b"queue-test-token")
@@ -237,7 +244,25 @@ async fn retained_task_reply_rechecks_revocation_and_expiry_without_editing_rece
     let (session, before) = host
         .dispatch(false, move |owner| {
             let check = || -> TestResult<_> {
-                let request = request()?;
+                let project_request = milkdrift_control_protocol::projects::ProjectCommandRequest {
+                    request_id: "visibility-project".into(),
+                    command: milkdrift_control_protocol::projects::ProjectCommandDto::Attach {
+                        name: "Visibility fixture".into(),
+                        folder: project_folder.to_string_lossy().into_owned(),
+                        settings: milkdrift_control_protocol::projects::ProjectSettingsDto {
+                            environment:
+                                milkdrift_control_protocol::projects::ProjectEnvironmentDto::Host,
+                            allow_changes: false,
+                        },
+                    },
+                };
+                let canonical = serde_json::to_vec(&serde_json::to_value(&project_request)?)?;
+                let project = owner
+                    .project_command(&session, project_request, canonical)
+                    .map_err(|error| error.message)?
+                    .project
+                    .ok_or("project absent")?;
+                let request = request(project.id)?;
                 let canonical = serde_json::to_vec(&serde_json::to_value(&request)?)?;
                 owner
                     .create_task_workflow(&session, request.clone(), &canonical)
@@ -258,7 +283,8 @@ async fn retained_task_reply_rechecks_revocation_and_expiry_without_editing_rece
                     owner.authority.clone(),
                     owner.clock.runtime_adapter(),
                     owner.store.clone(),
-                );
+                )
+                .with_projects(owner.store.clone());
                 assert!(
                     owner
                         .task_request_receipt(&session, &request.request_id)

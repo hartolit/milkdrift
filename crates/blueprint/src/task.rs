@@ -250,6 +250,9 @@ pub struct TaskActionPolicy {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskDefinition {
+    /// Reviewed project choice, resolved to immutable effective facts by shared admission.
+    #[serde(default, skip_serializing_if = "crate::TaskExecution::is_legacy")]
+    pub execution: crate::TaskExecution,
     /// Opt in to structured future-work proposals. Ordinary result text is never executable.
     #[serde(default)]
     pub actions: Option<TaskActionPolicy>,
@@ -295,6 +298,30 @@ impl TaskDefinition {
     /// # Errors
     /// Refuses invalid names, paths, bounds, or bindings missing their dependency declaration.
     pub fn validate(&self) -> Result<(), TaskDefinitionError> {
+        if let Some(binding) = self.execution.binding()
+            && (binding.project_id.is_empty()
+                || binding.project_id.len() > 256
+                || binding.generation == 0
+                || binding.folder.identity.is_empty()
+                || binding.folder.identity.len() > 256
+                || binding.folder.physical.len() > 4096
+                || !std::path::Path::new(&binding.folder.physical).is_absolute()
+                || self.paths != binding.paths
+                || binding.paths.len() != binding.scopes.len()
+                || binding
+                    .paths
+                    .iter()
+                    .zip(&binding.scopes)
+                    .any(|(path, scope)| path.path != scope.requested)
+                || (binding.access == crate::TaskProjectAccess::None && !binding.paths.is_empty())
+                || (binding.access != crate::TaskProjectAccess::Write
+                    && binding.paths.iter().any(|path| path.write))
+                || self.tools != binding.tools)
+        {
+            return Err(TaskDefinitionError(
+                "project binding differs from its effective native access or tools".into(),
+            ));
+        }
         if self.title.trim().is_empty() || self.title.len() > 256 || self.description.len() > 4096 {
             return Err(TaskDefinitionError(
                 "task title or description is empty or oversized".into(),
@@ -617,6 +644,9 @@ pub struct NewTask {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowCreate {
+    /// Project selected for new work; absence preserves the earlier typed contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
     /// Searchable workflow title.
     pub title: String,
     /// Bounded description displayed independently of task instructions.

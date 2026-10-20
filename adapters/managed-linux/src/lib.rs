@@ -2,7 +2,8 @@
 //!
 //! The host resource owner commits intent and use claims. This adapter checks exact platform
 //! identities, creates bounded definitions and asks systemd to supervise persistent services.
-//! Workers receive only an installation-owned volume, never manager paths or engine sockets.
+//! Workers receive either an installation-owned volume or one exact authorized project attachment,
+//! never manager paths or engine sockets. Removing workers or installations preserves attached files.
 //! [`LinuxRecipe`] is operator configuration, not a general container administration language.
 
 mod command;
@@ -18,7 +19,7 @@ pub use recipe::{
     ContainerLimits, InferenceBackend, LINUX_RECIPE_SCHEMA_VERSION, LinuxManagerConfig,
     LinuxRecipe, ModelService, ServiceTimeouts, WorkerNetwork,
 };
-pub use worker::ManagedWorkerAdapter;
+pub use worker::{ManagedWorkerAdapter, run_project_pin_helper};
 
 use milkdrift_capability_host::managed::ManagedError;
 fn rejected(value: impl std::fmt::Display) -> ManagedError {

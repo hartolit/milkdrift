@@ -1,9 +1,9 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import CanvasWorkspaceTestHarness from './CanvasWorkspaceTestHarness.svelte';
-import { acceptedTask, session, workflow } from '../lib/canvas.test-fixtures';
-import { addCanvasTask, cacheTask, createCanvas, updateInstructions, type CanvasState } from '../lib/canvas';
-import type { ChangeWorkflowRequest, TaskReadDto } from '../lib/protocol.generated';
+import { acceptedTask, session, workflow, project, projectCanvas as createCanvas } from '../lib/canvas.test-fixtures';
+import { addCanvasTask, cacheTask, updateInstructions, type CanvasState } from '../lib/canvas';
+import type { ChangeWorkflowRequest, TaskProjectBindingDto, TaskReadDto } from '../lib/protocol.generated';
 import { DaemonClient, DaemonError } from '../lib/transport';
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -281,15 +281,16 @@ it('releases discarded draft layout and binding entries for repeated authoring',
   }
 });
 
-it('preserves the whole root when granting an explicitly available root project', async () => {
-  const configured = session(); configured.project_roots = [{ path: '/', label: 'Root project', read: true, write: false }];
+it('expresses read-only project access as an explicit complete selection without a root editor', async () => {
+  const configured = session();
   const { connection } = client(configured); let state!: CanvasState;
   render(CanvasWorkspaceTestHarness, { session: configured, client: connection, onstate: (canvas) => state = canvas });
   await addTask('Inspect selected project');
-  await fireEvent.change(screen.getByLabelText('Project'), { target: { value: '/' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Allow project access' }));
-  expect(state.tasks[0].definition.paths).toEqual([{ path: '/', write: false }]);
-  expect(state.tasks[0].definition.tools).toEqual([{ kind: 'read_file' }]);
+  await fireEvent.change(screen.getByLabelText('Task project access'), { target: { value: 'read' } });
+  expect(state.tasks[0].definition.execution).toEqual({ kind: 'explicit', expected_generation: 1, settings: { environment: { kind: 'host' }, allow_changes: false }, access: 'read', tools: [{ kind: 'read_file' }] });
+  expect(state.tasks[0].definition.paths).toEqual([]);
+  expect(state.tasks[0].definition.tools).toEqual([]);
+  expect(screen.queryByLabelText('Project')).toBeNull();
 });
 
 
@@ -305,6 +306,45 @@ it('a correction retains the original source connections when the new draft beco
   expect(state.tasks[0].definition.corrective_of).toBe(original.id);
 });
 
+it.each(['none', 'read', 'write'] as const)('a correction preserves %s access and its environment after project defaults change', async (access) => {
+  const original = acceptedTask(); original.state = 'stopped';
+  const binding: TaskProjectBindingDto = {
+    project_id: project.id, generation: 1, folder: { requested: project.folder, physical: project.folder, identity: 'original-folder' },
+    settings: { environment: { kind: 'host' }, allow_changes: access === 'write' }, access,
+    paths: access === 'none' ? [] : [{ path: project.folder, write: access === 'write' }], scopes: [],
+    tools: access === 'none' ? [] : [{ kind: 'read_file' }, ...(access === 'write' ? [{ kind: 'write_file' } as const] : [])],
+  };
+  original.definition.execution = { kind: 'bound', binding };
+  const historical = JSON.stringify(original.definition);
+  const currentProject = { ...project, generation: 4, settings: { environment: { kind: 'host' as const }, allow_changes: true } };
+  const snapshot = workflow([original]), configured = session(), initial = createCanvas(configured, { kind: 'existing', workflowId: snapshot.id, title: snapshot.title, generation: snapshot.generation }); cacheTask(initial, original);
+  const { connection, request } = client(configured, [original]); let state!: CanvasState;
+  render(CanvasWorkspaceTestHarness, { session: configured, client: connection, workflow: snapshot, currentProject, initial, onstate: (canvas) => state = canvas });
+  await fireEvent.click(screen.getByRole('button', { name: 'Accepted task · stopped' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Create correction' }));
+  await fireEvent.input(screen.getByLabelText('What should this task do?'), { target: { value: 'Repair with the original permissions' } });
+  const expected = { kind: 'explicit', expected_generation: 4, settings: binding.settings, access, tools: binding.tools };
+  expect(state.tasks[0].definition.execution).toEqual(expected);
+  expect(state.tasks[0].definition.paths).toEqual(binding.paths);
+  expect((screen.getByLabelText('Task project access') as HTMLSelectElement).selectedOptions).toHaveLength(1);
+  await submit();
+  await waitFor(() => expect(request.mock.calls.some(([, body]) => !!body)).toBe(true));
+  expect((request.mock.calls.find(([, body]) => body)![1] as ChangeWorkflowRequest).changes).toMatchObject([{ kind: 'add', definition: { execution: expected, paths: binding.paths } }]);
+  expect(JSON.stringify(original.definition)).toBe(historical);
+});
+
+it('refuses a correction whose original execution selection is hidden', async () => {
+  const original = acceptedTask(); original.state = 'stopped'; original.definition.execution = { kind: 'restricted' };
+  const snapshot = workflow([original]), configured = session(), initial = createCanvas(configured, { kind: 'existing', workflowId: snapshot.id, title: snapshot.title, generation: snapshot.generation }); cacheTask(initial, original);
+  const { connection, request } = client(configured, [original]); let state!: CanvasState;
+  render(CanvasWorkspaceTestHarness, { session: configured, client: connection, workflow: snapshot, initial, onstate: (canvas) => state = canvas });
+  await fireEvent.click(screen.getByRole('button', { name: 'Accepted task · stopped' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Create correction' }));
+  expect(state.tasks).toHaveLength(0);
+  expect(state.error).toContain('execution selection is restricted');
+  expect(request.mock.calls.filter(([, body]) => body)).toHaveLength(0);
+});
+
 
 it('refuses reusing a restricted source and exposes no ungranted project picker', async () => {
   const original = acceptedTask(); original.definition.inputs.context = { kind: 'supplied', name: 'private-context', optional: false };
@@ -315,7 +355,7 @@ it('refuses reusing a restricted source and exposes no ungranted project picker'
   render(CanvasWorkspaceTestHarness, { session: configured, client: connection, workflow: snapshot, initial, onstate: (canvas) => state = canvas });
   await addTask('Consume available context');
   expect(screen.queryByLabelText('Project')).toBeNull();
-  expect(screen.getByText('No project folders are available with this connection’s permissions.')).toBeTruthy();
+  expect(screen.getByLabelText('Task project access')).toBeTruthy();
   await fireEvent.click(screen.getByRole('button', { name: 'Connect from Required input' }));
   await fireEvent.change(screen.getByLabelText('Destination task'), { target: { value: state.tasks[0].id } });
   await fireEvent.click(screen.getByRole('button', { name: 'Connect' }));

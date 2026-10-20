@@ -40,6 +40,9 @@ fn registration_binds_bytes_profile_policy_trust_and_attempt_provenance() -> Tes
             )?)
     );
     let extension = process_extension(&adapter)?;
+    assert!(adapter.accepts_project_without_access());
+    assert!(extension.get("project_directory").is_none());
+    assert!(extension.get("isolated_directory").is_none());
     assert_eq!(
         *extension
             .pointer("/implementation/content_digest")

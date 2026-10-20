@@ -191,6 +191,12 @@ pub struct TaskBindingRedirectDto {
 #[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
 #[serde(deny_unknown_fields)]
 pub struct TaskDefinitionDto {
+    /// Reviewed execution intent or unchanged accepted project provenance.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::task_execution::TaskExecutionDto::is_legacy"
+    )]
+    pub execution: crate::task_execution::TaskExecutionDto,
     /// Optional admission guard for the authoring contract observed while composing this task.
     /// It is not retained as a second capability selector in the accepted definition.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -293,6 +299,10 @@ pub struct WorkflowLimitsDto {
 #[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
 #[serde(deny_unknown_fields)]
 pub struct CreateWorkflowRequest {
+    /// Required project for ordinary new workflows; absent only in historical exact requests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "web-codegen", ts(optional))]
+    pub project_id: Option<String>,
     /// Exact request identity; changed reuse conflicts.
     pub request_id: String,
     /// Discoverable workflow title.
@@ -604,6 +614,9 @@ pub struct TaskSummaryDto {
 #[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowSummaryDto {
+    /// Current project organization; null identifies an earlier unassociated workflow.
+    #[serde(default)]
+    pub project_id: Option<String>,
     /// Stable workflow identity.
     pub id: String,
     /// Discoverable accepted title.
@@ -630,6 +643,9 @@ pub struct WorkflowSummaryDto {
 #[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowReadDto {
+    /// Current organizational project, independent of accepted historical task bindings.
+    #[serde(default)]
+    pub project_id: Option<String>,
     /// Shared daemon-owned sources with bounded previews; absence means no supplied value.
     #[serde(default)]
     pub supplied_inputs: BTreeMap<String, TaskSuppliedInputDto>,

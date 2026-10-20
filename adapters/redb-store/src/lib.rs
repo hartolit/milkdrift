@@ -24,6 +24,7 @@ mod managed;
 mod native_paths;
 pub mod offline;
 mod peer;
+mod project;
 mod schema;
 mod security;
 mod store;

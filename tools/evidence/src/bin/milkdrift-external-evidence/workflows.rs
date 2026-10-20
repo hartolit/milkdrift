@@ -1,7 +1,11 @@
 //! Disposable repository and typed ordinary task requests for external evidence.
 use milkdrift_control_protocol::tasks::{
-    CreateWorkflowRequest, InputBinding, InputValue, NewTaskDto, PathAccess, TaskCapability,
-    TaskDefinitionDto, TaskOutputDeclarationDto,
+    CreateWorkflowRequest, InputBinding, InputValue, NewTaskDto, TaskCapability, TaskDefinitionDto,
+    TaskOutputDeclarationDto,
+};
+use milkdrift_control_protocol::{
+    projects::{ProjectDto, ProjectEnvironmentDto, ProjectSettingsDto},
+    task_execution::{TaskExecutionDto, TaskProjectAccessDto},
 };
 use milkdrift_model_provider::EndpointProfile;
 use serde_json::Value;
@@ -134,8 +138,30 @@ pub(crate) fn definition(
     title: &str,
     instructions: &str,
     repository: Option<&Path>,
+    project: &ProjectDto,
 ) -> TaskDefinitionDto {
     TaskDefinitionDto {
+        execution: TaskExecutionDto::Explicit {
+            expected_generation: project.generation,
+            settings: ProjectSettingsDto {
+                environment: if repository.is_some() {
+                    ProjectEnvironmentDto::Process {
+                        capability: capability.into(),
+                        operation: "process.execute".into(),
+                        generation: 1,
+                    }
+                } else {
+                    ProjectEnvironmentDto::Host
+                },
+                allow_changes: repository.is_some(),
+            },
+            access: if repository.is_some() {
+                TaskProjectAccessDto::Write
+            } else {
+                TaskProjectAccessDto::None
+            },
+            tools: Vec::new(),
+        },
         authoring_generation: None,
         actions: None,
         tools: Vec::new(),
@@ -156,14 +182,7 @@ pub(crate) fn definition(
         dependencies: vec![],
         required: true,
         corrective_of: None,
-        paths: repository
-            .map(|path| {
-                vec![PathAccess {
-                    path: path.to_string_lossy().into_owned(),
-                    write: true,
-                }]
-            })
-            .unwrap_or_default(),
+        paths: Vec::new(),
     }
 }
 pub(crate) fn output(
@@ -186,9 +205,19 @@ pub(crate) fn text(value: &str) -> InputBinding {
         value: InputValue::Text { text: value.into() },
     }
 }
-pub(crate) fn process_request(capability: &str, repository: &Path) -> CreateWorkflowRequest {
+pub(crate) fn process_request(
+    capability: &str,
+    repository: &Path,
+    project: &ProjectDto,
+) -> CreateWorkflowRequest {
     let prompt = "Inspect this disposable Rust repository. Fix calculator::add so the existing Rust test passes. Create the ignored target/ directory, compile test_calculator.rs with rustc --test and direct its -o output into target/, then run that executable. Keep source changes bounded, do not commit, and report the result.";
-    let mut coding = definition(capability, "Initial coding", prompt, Some(repository));
+    let mut coding = definition(
+        capability,
+        "Initial coding",
+        prompt,
+        Some(repository),
+        project,
+    );
     coding.inputs.insert("prompt".into(), text(prompt));
     output(&mut coding, "diff", None, 1_048_576);
     let mut verify = definition(
@@ -196,6 +225,7 @@ pub(crate) fn process_request(capability: &str, repository: &Path) -> CreateWork
         "Controlled verification",
         "Run the independent verification with the declared controlled check failure.",
         Some(repository),
+        project,
     );
     verify.dependencies.push("coding".into());
     output(
@@ -221,6 +251,7 @@ pub(crate) fn process_request(capability: &str, repository: &Path) -> CreateWork
         "Independent review",
         "Read the settled verification outcome and review the need for a corrective task.",
         Some(repository),
+        project,
     );
     review.dependencies.push("verify".into());
     review.inputs.insert(
@@ -237,6 +268,7 @@ pub(crate) fn process_request(capability: &str, repository: &Path) -> CreateWork
         524_288,
     );
     CreateWorkflowRequest {
+        project_id: Some(project.id.clone()),
         request_id: "external-process-create".into(),
         title: PROCESS_WORKFLOW.into(),
         description: "Controlled failure, independent review and explicit corrective future work"
@@ -260,7 +292,11 @@ pub(crate) fn process_request(capability: &str, repository: &Path) -> CreateWork
         limits: None,
     }
 }
-pub(crate) fn model_request(capability: &str, repository: &Path) -> CreateWorkflowRequest {
+pub(crate) fn model_request(
+    capability: &str,
+    repository: &Path,
+    project: &ProjectDto,
+) -> CreateWorkflowRequest {
     let mut tasks = Vec::new();
     for (alias, payload) in [
         (
@@ -278,6 +314,7 @@ pub(crate) fn model_request(capability: &str, repository: &Path) -> CreateWorkfl
             alias,
             "Publish the exact named evidence",
             Some(repository),
+            project,
         );
         source.inputs.insert("payload".into(), text(payload));
         if alias == "evidence-b" {
@@ -297,6 +334,7 @@ pub(crate) fn model_request(capability: &str, repository: &Path) -> CreateWorkfl
         "Model analysis",
         "Using only the explicitly selected evidence, respond exactly MILKDRIFT_EVIDENCE_OK and nothing else.",
         None,
+        project,
     );
     for name in ["evidence-a", "evidence-b"] {
         model.dependencies.push(name.into());
@@ -336,6 +374,7 @@ pub(crate) fn model_request(capability: &str, repository: &Path) -> CreateWorkfl
         definition: model,
     });
     CreateWorkflowRequest {
+        project_id: Some(project.id.clone()),
         request_id: "external-model-create".into(),
         title: MODEL_WORKFLOW.into(),
         description: "Explicit immutable input selection across a durable pre-entry wait".into(),

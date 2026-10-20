@@ -63,7 +63,10 @@ impl Model {
                 "next_checks":["Confirm the declared dependency and feature choices against the supplied brief","Compile the chosen targets before accepting an implementation"],
                 "evidence_scope":"Repeatable transport and input-isolation fixture; no real-model quality claim"
             }).to_string();
-            let animation = super::animation::respond(&fixture_root, &body)?;
+            let animation = match super::projects::respond(&body)? {
+                Some(reply) => Some(reply),
+                None => super::animation::respond(&fixture_root, &body)?,
+            };
             let (status, message, finish_reason) = match animation {
                 Some(reply) => (reply.status, reply.message, reply.finish_reason),
                 None => (200, json!({"role":"assistant","content":ordinary}), "stop"),
@@ -106,7 +109,7 @@ impl Model {
             json!(format!("http://{}", self.server.address())),
         );
         object.insert("model".into(), json!("controlled-brief-review"));
-        object.insert("features".into(), json!(["system_role"]));
+        object.insert("features".into(), json!(["system_role", "tools"]));
         object.insert("billing".into(),json!({"type":"unbilled","source":"bounded local controlled fixture has no provider charge"}));
         object.insert("token_limits".into(),json!({"type":"byte_bpe","template_tokens_per_message":64,"template_tokens_per_request":128,"maximum_input_tokens":65536,"maximum_output_tokens":4096,"output_control":"max_tokens","source":"bounded controlled fixture input and content response"}));
         Ok(profile)

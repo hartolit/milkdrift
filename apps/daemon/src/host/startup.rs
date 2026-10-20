@@ -313,6 +313,12 @@ impl Owner {
             peers,
             shutdown,
         } = plan;
+        let mut project_protected_paths = storage.project_protected_paths.clone();
+        project_protected_paths.push(
+            std::env::current_exe()
+                .and_then(|path| path.canonicalize())
+                .map_err(|_| "daemon executable identity unavailable".to_owned())?,
+        );
         let host_identity = milkdrift_capability::PeerId::new(host_id.clone())
             .map_err(|error| error.to_string())?;
         let input_budget = milkdrift_workspace::WorkspaceBudget::new(
@@ -326,6 +332,12 @@ impl Owner {
         .map_err(|error| error.to_string())?;
         fs::create_dir_all(&storage.data_root)
             .map_err(|error| format!("data root creation failed: {:?}", error.kind()))?;
+        project_protected_paths.push(
+            storage
+                .data_root
+                .canonicalize()
+                .map_err(|_| "daemon storage identity unavailable".to_owned())?,
+        );
         if storage.data_root.join(LEGACY_SIDECAR_FILE).exists() {
             return Err(
                 "legacy control-state-v1.json is unsupported; this release refuses sidecar state instead of silently importing or ignoring idempotency truth"
@@ -385,7 +397,7 @@ impl Owner {
         .map_err(|error| error.to_string())?;
         let adapter_storage = Arc::new(super::storage_ports::AdapterStorage::new(&store));
         capability_host
-            .install_native_path_store(adapter_storage.clone())
+            .install_native_path_store(adapter_storage.clone(), project_protected_paths.clone())
             .map_err(|error| error.to_string())?;
         let mut startup_cleanup = StartupCleanup {
             host: Some(capability_host.clone()),
@@ -427,7 +439,8 @@ impl Owner {
                         authority.clone(),
                         clock.runtime_adapter(),
                         store.clone(),
-                    ),
+                    )
+                    .with_projects(store.clone()),
                     tasks,
                 })
             } else {
@@ -437,6 +450,11 @@ impl Owner {
                 startup_cleanup.host.take();
                 return Ok((
                     Self {
+                        project_protected_paths,
+                        project_protected_root: storage
+                            .data_root
+                            .canonicalize()
+                            .map_err(|_| "daemon storage identity unavailable".to_owned())?,
                         host_id: host_identity,
                         input_budget,
                         recovery_controls,
@@ -549,6 +567,11 @@ impl Owner {
             health.set_active_effects(0);
             Ok((
                 Self {
+                    project_protected_paths,
+                    project_protected_root: storage
+                        .data_root
+                        .canonicalize()
+                        .map_err(|_| "daemon storage identity unavailable".to_owned())?,
                     host_id: host_identity,
                     input_budget,
                     recovery_controls,

@@ -1,4 +1,7 @@
 //! Opt-in physical lane. This invokes real Podman/systemd and never substitutes fake isolation.
+#[path = "support/project_tools.rs"]
+#[cfg(target_os = "linux")]
+mod project_tools;
 #[path = "support/serving.rs"]
 mod support;
 use milkdrift_authority::*;
@@ -195,6 +198,136 @@ fn check_retained(
             use_id: id,
             expected_claim: usage.claim,
         },
+    )?;
+    Ok(())
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+#[ignore = "requires an approved preloaded image, daemon pin helper and disposable rootless Podman/systemd directories"]
+fn real_linux_project_model_tool_and_generation_replacement_preserve_folder() -> Result {
+    project_model_tool_lifecycle(false)
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+#[ignore = "qualifies exact runc fd-mount refusal through the real managed model-tool path, not successful attachment"]
+fn real_linux_project_runtime_refusal_keeps_folder_and_releases_quiescent_child() -> Result {
+    project_model_tool_lifecycle(true)
+}
+
+#[cfg(target_os = "linux")]
+fn project_model_tool_lifecycle(expect_refusal: bool) -> Result {
+    use std::os::unix::fs::PermissionsExt;
+    let image = std::env::var("MILKDRIFT_PROJECT_WORKER_IMAGE")?;
+    let root = tempfile::Builder::new()
+        .prefix("milkdrift-project-lifecycle-")
+        .tempdir()?
+        .keep();
+    let quadlet = tempfile::tempdir_in(std::env::var("MILKDRIFT_QUADLET_TEST_PARENT")?)?.keep();
+    #[expect(
+        clippy::print_stderr,
+        reason = "The opt-in physical lane reports retained evidence before possible failure"
+    )]
+    {
+        eprintln!(
+            "project model-tool lifecycle evidence: {}; Quadlet: {}",
+            root.display(),
+            quadlet.display()
+        );
+    }
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))?;
+    std::fs::set_permissions(&quadlet, std::fs::Permissions::from_mode(0o700))?;
+    let mut recipe = LinuxRecipe::from_json(include_bytes!("fixtures/owned-recipe-v2.json"))?;
+    recipe.name = ManagedName::new("project-test-original")?;
+    recipe.worker_image = image;
+    recipe.model_service = ModelService::Disabled {};
+    recipe.task_timeout_ms = 30_000;
+    recipe.output_bytes = 65_536;
+    let original = root.join("original.json");
+    std::fs::write(&original, serde_json::to_vec(&recipe)?)?;
+    let mut replacement = recipe.clone();
+    replacement.name = ManagedName::new("project-test-replacement")?;
+    let next = root.join("replacement.json");
+    std::fs::write(&next, serde_json::to_vec(&replacement)?)?;
+    for path in [&original, &next] {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    let platform = Arc::new(LinuxManagedPlatform::new(LinuxManagerConfig {
+        state_root: root.clone(),
+        quadlet_directory: quadlet,
+        systemd_directory: PathBuf::from(std::env::var("MILKDRIFT_SYSTEMD_TEST_DIRECTORY")?),
+        recipes: vec![original, next],
+    })?);
+    let store = Arc::new(RedbStore::open(root.join("store"))?);
+    let manager = owner(store.clone(), platform.clone());
+    let installation = ManagedName::new("project-tool")?;
+    operation(
+        &manager,
+        &store,
+        &installation,
+        "apply-project",
+        ManagedAction::Apply {
+            recipe: recipe.reference()?,
+        },
+    )?;
+    let record = store
+        .managed_installation(&installation)?
+        .ok_or("installation missing")?;
+    assert!(record.pending.is_none(), "{record:?}");
+    let setup = record.current.ok_or("setup missing")?;
+    project_tools::run(store.clone(), platform, &setup, &root, expect_refusal)?;
+    let project = store
+        .project("project:managed-tool")?
+        .ok_or("project disappeared")?;
+    let before = std::fs::read(project.folder.physical.join("from-model")).ok();
+    operation(
+        &manager,
+        &store,
+        &installation,
+        "replace-project",
+        ManagedAction::Update {
+            recipe: replacement.reference()?,
+            allow_interruption: true,
+        },
+    )?;
+    let replaced = store
+        .managed_installation(&installation)?
+        .ok_or("replacement missing")?;
+    assert!(replaced.pending.is_none(), "{replaced:?}");
+    assert_eq!(replaced.generation, 2);
+    assert_eq!(
+        std::fs::read(project.folder.physical.join("from-model")).ok(),
+        before
+    );
+    operation(
+        &manager,
+        &store,
+        &installation,
+        "remove-project",
+        ManagedAction::Remove {},
+    )?;
+    assert!(
+        store
+            .managed_installation(&installation)?
+            .ok_or("removal missing")?
+            .removed
+    );
+    assert_eq!(
+        std::fs::read(project.folder.physical.join("from-model")).ok(),
+        before
+    );
+    assert_eq!(
+        std::fs::read(project.folder.physical.join("retained"))?,
+        b"retained"
+    );
+    std::fs::write(
+        root.join("project-environment-removal.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "installation": installation, "replacement_generation": 2, "environment_removed": true,
+        "project": project.folder.physical, "retained_bytes": "retained",
+        "created_file_preserved": !expect_refusal, "runtime_fd_mount_refused": expect_refusal
+        }))?,
     )?;
     Ok(())
 }

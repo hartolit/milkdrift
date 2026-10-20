@@ -21,10 +21,55 @@ use crate::{
 };
 
 impl CapabilityHost {
+    pub(crate) fn verify_current_project(
+        &self,
+        binding: &milkdrift_blueprint::TaskProjectBinding,
+    ) -> Result<(), ExecutorError> {
+        match self.core.native_paths.get() {
+            Some(claims) => claims.verify_project(binding),
+            None => crate::verify_project_binding(binding),
+        }
+    }
+
+    pub(crate) fn claim_serving_paths(
+        &self,
+        record: &milkdrift_persistence::PeerExecutionRecord,
+        paths: &[milkdrift_blueprint::TaskPathAccess],
+    ) -> Result<Option<String>, ExecutorError> {
+        if paths.is_empty() {
+            return Ok(None);
+        }
+        self.core
+            .native_paths
+            .get()
+            .ok_or_else(|| {
+                ExecutorError::BoundaryBeforeEntry(
+                    "native path claim owner is not configured for serving execution".into(),
+                )
+            })?
+            .acquire_serving(record, paths)
+    }
+
+    pub(crate) fn revalidate_native_owner(&self, owner: &str) -> Result<(), ExecutorError> {
+        self.core
+            .native_paths
+            .get()
+            .ok_or_else(|| {
+                ExecutorError::BoundaryBeforeEntry(
+                    "native path claim owner disappeared before entry".into(),
+                )
+            })?
+            .revalidate(owner)
+    }
+
     pub(crate) fn model_path_roots(
         &self,
         context: &AdapterExecutionContext,
     ) -> Result<Vec<milkdrift_persistence::NativePathRoot>, AdapterError> {
+        if let Some(binding) = context.project_binding() {
+            self.verify_current_project(binding)
+                .map_err(|error| AdapterError::rejected(error.to_string()))?;
+        }
         if context.task_paths.is_empty() {
             return Ok(Vec::new());
         }
@@ -32,31 +77,140 @@ impl CapabilityHost {
             .workflow()
             .ok_or_else(|| AdapterError::rejected("model path claims require task provenance"))?
             .attempt();
-        self.core
+        let roots = self
+            .core
             .native_paths
             .get()
             .ok_or_else(|| AdapterError::rejected("native path owner missing"))?
             .roots(attempt.as_str())
-            .map_err(|error| AdapterError::rejected(error.to_string()))
+            .map_err(|error| AdapterError::rejected(error.to_string()))?;
+        // Configured process directories also hold claims, but never become file-tool permission.
+        Ok(roots
+            .into_iter()
+            .filter_map(|mut root| {
+                let path = context.task_paths.iter().find(|path| {
+                    root.requested == std::path::Path::new(&path.path)
+                        && (!path.write || root.write)
+                })?;
+                root.write = path.write;
+                Some(root)
+            })
+            .collect())
     }
 
     pub(crate) fn revalidate_model_paths(
         &self,
         context: &AdapterExecutionContext,
     ) -> Result<(), AdapterError> {
-        if !context.task_paths.is_empty() {
+        if let Some(binding) = context.project_binding() {
+            self.verify_current_project(binding)
+                .map_err(|error| AdapterError::rejected(error.to_string()))?;
+        }
+        if !context.task_paths.is_empty()
+            || context
+                .task_tools
+                .iter()
+                .any(|tool| matches!(tool, milkdrift_blueprint::TaskTool::Process { .. }))
+        {
             let attempt = context
                 .workflow()
                 .ok_or_else(|| AdapterError::rejected("model path claims require task provenance"))?
                 .attempt();
-            self.core
+            let claims = self
+                .core
                 .native_paths
                 .get()
-                .ok_or_else(|| AdapterError::rejected("native path owner missing"))?
-                .revalidate(attempt.as_str())
-                .map_err(|error| AdapterError::rejected(error.to_string()))?;
+                .ok_or_else(|| AdapterError::rejected("native path owner missing"))?;
+            if context.task_paths.is_empty() {
+                claims.revalidate_if_present(attempt.as_str())
+            } else {
+                claims.revalidate(attempt.as_str())
+            }
+            .map_err(|error| AdapterError::rejected(error.to_string()))?;
         }
         Ok(())
+    }
+
+    pub(crate) fn declared_native_paths(
+        &self,
+        snapshot: &ResolvedCapabilitySnapshot,
+        request: &InvocationRequest,
+        context: &AdapterExecutionContext,
+    ) -> Result<Vec<milkdrift_blueprint::TaskPathAccess>, ExecutorError> {
+        snapshot
+            .validate_request(request)
+            .map_err(|error| ExecutorError::InvalidDispatch(error.to_string()))?;
+        let adapter = {
+            let state = self.core.state.lock().map_err(|_| {
+                ExecutorError::BoundaryBeforeEntry("host registry unavailable".into())
+            })?;
+            if !state.admission_open || state.shutdown {
+                return Err(ExecutorError::AdmissionClosed);
+            }
+            let generation = state
+                .generations
+                .get(&GenerationKey {
+                    capability: snapshot.capability().clone(),
+                    revision: snapshot.descriptor_revision(),
+                })
+                .ok_or_else(|| ExecutorError::UnavailableGeneration {
+                    capability: snapshot.capability().clone(),
+                    descriptor_revision: snapshot.descriptor_revision(),
+                })?;
+            snapshot.validate_against(&generation.descriptor)?;
+            generation.adapter.clone()
+        };
+        let invocation = invocation_view(snapshot, request, Some(context));
+        match catch_unwind(AssertUnwindSafe(|| adapter.native_path_claims(&invocation))) {
+            Ok(Ok(paths)) if paths.len() <= 16 => paths
+                .into_iter()
+                .map(|scope| {
+                    let path = scope.path.to_str().ok_or_else(|| {
+                        ExecutorError::BoundaryBeforeEntry(
+                            "configured native scope must be a UTF-8 path".into(),
+                        )
+                    })?;
+                    Ok(milkdrift_blueprint::TaskPathAccess {
+                        path: path.to_owned(),
+                        write: scope.write,
+                    })
+                })
+                .collect(),
+            Ok(Ok(_)) => Err(ExecutorError::BoundaryBeforeEntry(
+                "configured native scope exceeds sixteen directories".into(),
+            )),
+            Ok(Err(error)) => Err(executor_error_from_adapter(&error)),
+            Err(_) => Err(ExecutorError::AdapterPanicked { after_entry: false }),
+        }
+    }
+
+    pub(crate) fn verify_process_tool_claims(
+        &self,
+        snapshot: &ResolvedCapabilitySnapshot,
+        request: &InvocationRequest,
+        context: &AdapterExecutionContext,
+    ) -> Result<(), ExecutorError> {
+        let paths = self.declared_native_paths(snapshot, request, context)?;
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let owner = context
+            .workflow()
+            .ok_or_else(|| {
+                ExecutorError::BoundaryBeforeEntry(
+                    "configured process tools require a durable parent attempt".into(),
+                )
+            })?
+            .attempt();
+        self.core
+            .native_paths
+            .get()
+            .ok_or_else(|| {
+                ExecutorError::BoundaryBeforeEntry(
+                    "configured process tool native claim owner is unavailable".into(),
+                )
+            })?
+            .verify_configured(owner.as_str(), &paths)
     }
 
     pub(crate) fn loop_adapter(
@@ -120,6 +274,9 @@ impl CapabilityHost {
         request: &InvocationRequest,
         context: Option<&AdapterExecutionContext>,
     ) -> Result<PreparedHostInvocation, ExecutorError> {
+        if let Some(binding) = context.and_then(AdapterExecutionContext::project_binding) {
+            self.verify_current_project(binding)?;
+        }
         let (adapter, mut permit) = self.acquire(snapshot, request)?;
         let invocation = invocation_view(snapshot, request, context);
         let prepared = match catch_unwind(AssertUnwindSafe(|| adapter.prepare(&invocation))) {
@@ -253,6 +410,13 @@ impl CapabilityHost {
 }
 
 impl TaskExecutor for CapabilityHost {
+    fn pin_project_paths(
+        &self,
+        binding: &milkdrift_blueprint::TaskProjectBinding,
+    ) -> Result<Vec<milkdrift_blueprint::TaskProjectFolder>, ExecutorError> {
+        self.verify_current_project(binding)?;
+        crate::native_paths::pin_project_paths(binding)
+    }
     fn resolve(
         &self,
         _requirement: &CapabilityRequirement,
@@ -277,26 +441,47 @@ impl TaskExecutor for CapabilityHost {
         &'a self,
         dispatch: &ExecutionDispatch,
     ) -> Result<PreparedExecution<'a>, ExecutorError> {
+        if let Some(binding) = dispatch.project_binding() {
+            self.verify_current_project(binding)?;
+        }
         let claims = self.core.native_paths.get();
-        if dispatch.is_task() && !dispatch.native_path_claims().is_empty() {
+        let context = AdapterExecutionContext::from_dispatch(dispatch)
+            .map_err(|error| ExecutorError::InvalidDispatch(error.to_string()))?;
+        let mut native_paths = dispatch.native_path_claims().to_vec();
+        if dispatch.is_task() {
+            for configured in
+                self.declared_native_paths(dispatch.resolution(), dispatch.request(), &context)?
+            {
+                if let Some(existing) = native_paths
+                    .iter_mut()
+                    .find(|path| path.path == configured.path)
+                {
+                    existing.write |= configured.write;
+                } else {
+                    native_paths.push(configured);
+                }
+            }
+        }
+        if dispatch.is_task() && !native_paths.is_empty() {
             claims
                 .ok_or_else(|| {
                     ExecutorError::BoundaryBeforeEntry(
                         "native project path owner is not configured".to_owned(),
                     )
                 })?
-                .acquire(dispatch.attempt().as_str(), dispatch.native_path_claims())?;
+                .acquire(dispatch.attempt().as_str(), &native_paths)?;
         }
-        let context = AdapterExecutionContext::from_dispatch(dispatch)
-            .map_err(|error| ExecutorError::InvalidDispatch(error.to_string()))?;
         let prepared =
             self.prepare_invocation(dispatch.resolution(), dispatch.request(), Some(&context))?;
         Ok(PreparedExecution::new(
             dispatch,
             prepared.envelope().clone(),
             move |dispatch, reporter| {
+                if let Some(binding) = dispatch.project_binding() {
+                    self.verify_current_project(binding)?;
+                }
                 if dispatch.is_task()
-                    && !dispatch.native_path_claims().is_empty()
+                    && !native_paths.is_empty()
                     && let Some(claims) = claims
                 {
                     claims.revalidate(dispatch.attempt().as_str())?;

@@ -49,6 +49,23 @@ impl TaskRuntime {
         )
     }
 
+    /// Recovers a typed creation before resolving its current project defaults.
+    ///
+    /// # Errors
+    /// Returns canonical encoding, conflicting request reuse, or receipt storage failures.
+    pub fn replay_create(
+        &self,
+        actor: &str,
+        key: &str,
+        request: &WorkflowCreate,
+    ) -> Result<Option<WorkflowCommandReceipt>, RuntimeError> {
+        self.replay(
+            actor,
+            key,
+            &canonical_request(None, serde_json::to_value(request)?)?,
+        )
+    }
+
     /// Stable daemon namespace used by authorization before admission; replay allocates no IDs.
     ///
     /// # Errors
@@ -90,7 +107,29 @@ impl TaskRuntime {
             key,
             request,
             decision,
-            Some(canonical_transport),
+            Some(canonical_transport_value(canonical_transport)?),
+        )
+    }
+
+    /// Admits resolved content while retaining the original typed creation's receipt identity.
+    /// The control owner supplies the project resolution of that same request.
+    ///
+    /// # Errors
+    /// Returns canonical encoding or ordinary creation admission failures.
+    pub fn create_resolved(
+        &self,
+        owner_actor: &str,
+        key: &str,
+        request: WorkflowCreate,
+        decision: AuthorityDecisionSnapshot,
+        original: &WorkflowCreate,
+    ) -> Result<WorkflowCommandReceipt, RuntimeError> {
+        self.create_request(
+            owner_actor,
+            key,
+            request,
+            decision,
+            Some(serde_json::to_value(original)?),
         )
     }
 
@@ -100,16 +139,13 @@ impl TaskRuntime {
         key: &str,
         request: WorkflowCreate,
         decision: AuthorityDecisionSnapshot,
-        transport: Option<&[u8]>,
+        transport: Option<serde_json::Value>,
     ) -> Result<WorkflowCommandReceipt, RuntimeError> {
         let _guard = self
             .gate
             .lock()
             .map_err(|_| invalid("task admission lock unavailable"))?;
-        let request_identity = transport
-            .map(canonical_transport_value)
-            .transpose()?
-            .unwrap_or(serde_json::to_value(&request)?);
+        let request_identity = transport.unwrap_or(serde_json::to_value(&request)?);
         let canonical_request = canonical_request(None, request_identity)?;
         if let Some(receipt) = self.replay(owner_actor, key, &canonical_request)? {
             return Ok(receipt);
@@ -191,7 +227,9 @@ impl TaskRuntime {
                 .validate_supplied_inputs(&request.inputs)
                 .map_err(invalid)?;
         }
-        let record = WorkflowRecord {
+        let mut record = WorkflowRecord {
+            admission_project_guard: None,
+            project_id: request.project_id,
             decision_generation: 1,
             admissions: BTreeMap::new(),
             admitted_model_batches: 0,
@@ -225,6 +263,9 @@ impl TaskRuntime {
             canonical_request,
             result: serde_json::json!({"workflow_id":id,"generation":1,"aliases":aliases}),
         };
+        for task in record.tasks.values() {
+            guard_project_settings(&mut record.admission_project_guard, &task.definition)?;
+        }
         for task in record.tasks.values() {
             self.validate_future_definition(&record, &task.definition)?;
         }
@@ -262,7 +303,29 @@ impl TaskRuntime {
             key,
             workflow,
             batch,
-            Some(canonical_transport),
+            Some(canonical_transport_value(canonical_transport)?),
+            None,
+        )
+    }
+
+    /// Admits resolved edits with the original typed batch's storage-bounded receipt identity.
+    ///
+    /// # Errors
+    /// Returns canonical encoding or ordinary edit admission failures.
+    pub fn edit_resolved(
+        &self,
+        owner_actor: &str,
+        key: &str,
+        workflow: &WorkflowId,
+        batch: TaskBatch,
+        original: &TaskBatch,
+    ) -> Result<WorkflowCommandReceipt, RuntimeError> {
+        self.edit_request(
+            owner_actor,
+            key,
+            workflow,
+            batch,
+            Some(serde_json::to_value(original)?),
             None,
         )
     }
@@ -273,17 +336,14 @@ impl TaskRuntime {
         key: &str,
         workflow: &WorkflowId,
         batch: TaskBatch,
-        transport: Option<&[u8]>,
+        transport: Option<serde_json::Value>,
         model_source: Option<(&TaskId, bool)>,
     ) -> Result<WorkflowCommandReceipt, RuntimeError> {
         let _guard = self
             .gate
             .lock()
             .map_err(|_| invalid("task admission lock unavailable"))?;
-        let request_identity = transport
-            .map(canonical_transport_value)
-            .transpose()?
-            .unwrap_or(serde_json::to_value(&batch)?);
+        let request_identity = transport.unwrap_or(serde_json::to_value(&batch)?);
         let canonical_request = canonical_request(Some(workflow), request_identity)?;
         if let Some(receipt) = self.replay(owner_actor, key, &canonical_request)? {
             return Ok(receipt);
@@ -353,6 +413,7 @@ impl TaskRuntime {
                     super::policy::change_limits(&mut record, limits)?
                 }
                 TaskChange::Add { alias, definition } => {
+                    guard_project_settings(&mut record.admission_project_guard, &definition)?;
                     self.validate_future_definition(&record, &definition)?;
                     let id = aliases
                         .get(&alias)
@@ -391,6 +452,11 @@ impl TaskRuntime {
                     expected_version,
                     definition,
                 } => {
+                    if record.tasks.get(&task).is_some_and(|previous| {
+                        previous.definition.execution != definition.execution
+                    }) {
+                        guard_project_settings(&mut record.admission_project_guard, &definition)?;
+                    }
                     self.validate_future_definition(&record, &definition)?;
                     let value = future_task(&mut record, &task, expected_version)?;
                     if value.previous_definitions.len() >= 128 {
@@ -681,7 +747,7 @@ fn validate_redirect_output(
     contract.validate_reference(replacement).map_err(invalid)
 }
 
-fn canonical_transport_value(bytes: &[u8]) -> Result<serde_json::Value, RuntimeError> {
+pub(super) fn canonical_transport_value(bytes: &[u8]) -> Result<serde_json::Value, RuntimeError> {
     if bytes.is_empty() || bytes.len() > 1_000_000 {
         return Err(invalid(
             "canonical public request exceeds its bounded receipt allowance",
@@ -692,6 +758,22 @@ fn canonical_transport_value(bytes: &[u8]) -> Result<serde_json::Value, RuntimeE
         return Err(invalid("public request must be a canonical JSON object"));
     }
     Ok(value)
+}
+
+fn guard_project_settings(
+    selected: &mut Option<(String, u64)>,
+    definition: &TaskDefinition,
+) -> Result<(), RuntimeError> {
+    if let Some(binding) = definition.execution.binding() {
+        let guard = (binding.project_id.clone(), binding.generation);
+        if selected.as_ref().is_some_and(|prior| prior != &guard) {
+            return Err(invalid(
+                "one batch cannot resolve different project settings generations",
+            ));
+        }
+        *selected = Some(guard);
+    }
+    Ok(())
 }
 
 fn canonical_request(

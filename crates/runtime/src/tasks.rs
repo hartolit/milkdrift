@@ -154,6 +154,11 @@ pub struct TaskRecord {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowRecord {
+    #[serde(skip)]
+    admission_project_guard: Option<(String, u64)>,
+    /// Initial project association; later organizational associations live in the project store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
     /// Last accepted edit or task start. Progress reports do not change an author's snapshot.
     pub decision_generation: u64,
     /// Durable model response admissions, keyed by their unique source task.
@@ -223,6 +228,19 @@ pub struct TaskRuntime {
 }
 
 impl TaskRuntime {
+    /// Pins native project scopes before admission using the same host that will execute them.
+    ///
+    /// # Errors
+    /// Refuses replaced, escaped or unsupported folders without accepting task content.
+    pub fn pin_project_paths(
+        &self,
+        definition: &mut milkdrift_blueprint::TaskDefinition,
+    ) -> Result<(), RuntimeError> {
+        if let milkdrift_blueprint::TaskExecution::Bound { binding } = &mut definition.execution {
+            binding.scopes = self.executor.pin_project_paths(binding)?;
+        }
+        Ok(())
+    }
     /// Connects one durable task owner to explicit execution, authority, clock and ID boundaries.
     #[must_use]
     pub fn new(
@@ -388,6 +406,12 @@ impl TaskRuntime {
             })
             .transpose()?;
         let outcome = self.store.commit_workflow(WorkflowCommit {
+            project_guard: record.admission_project_guard.clone(),
+            project_id: if expected_generation.is_none() {
+                record.project_id.clone()
+            } else {
+                None
+            },
             expected_generation,
             snapshot: WorkflowSnapshot {
                 workflow: record.id.clone(),

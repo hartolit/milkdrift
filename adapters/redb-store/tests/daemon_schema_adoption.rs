@@ -21,6 +21,8 @@ const DAEMON_RECEIPTS: TableDefinition<'static, &'static str, &'static [u8]> =
 
 fn task_commit() -> Result<WorkflowCommit, Box<dyn std::error::Error>> {
     Ok(WorkflowCommit {
+        project_guard: None,
+        project_id: None,
         expected_generation: None,
         snapshot: WorkflowSnapshot {
             workflow: WorkflowId::new("workflow:preserved")?,
@@ -55,6 +57,15 @@ fn create_previous(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let write = db.begin_write()?;
     assert!(write.delete_table(DAEMON_METADATA)?);
     assert!(write.delete_table(DAEMON_RECEIPTS)?);
+    assert!(write.delete_table(TableDefinition::<&str, &[u8]>::new(
+        "milkdrift.v1.projects.registrations"
+    ))?);
+    assert!(write.delete_table(TableDefinition::<&str, &[u8]>::new(
+        "milkdrift.v1.projects.operations"
+    ))?);
+    assert!(write.delete_table(TableDefinition::<&str, &str>::new(
+        "milkdrift.v1.projects.workflow_associations"
+    ))?);
     write
         .open_table(METADATA)?
         .insert("storage_schema_version", 19)?;
@@ -104,7 +115,7 @@ fn prompt03_adoption_preserves_task_bytes_receipts_and_installation()
     create_previous(root.path())?;
     let before = task_bytes(root.path())?;
     let store = RedbStore::open(root.path())?;
-    assert_eq!(store.schema_info()?.stored_version, 20);
+    assert_eq!(store.schema_info()?.stored_version, 21);
     let host = PeerId::new("host:original")?;
     assert_eq!(
         store
@@ -157,7 +168,7 @@ fn interrupted_adoption_is_wholly_old_or_new_and_reopens_without_losing_tasks()
             let expected = if point == FaultPoint::BeforeDaemonSchemaAdoptionCommit {
                 (19, 44)
             } else {
-                (20, 46)
+                (21, 49)
             };
             assert_eq!(
                 read.open_table(METADATA)?
@@ -169,7 +180,7 @@ fn interrupted_adoption_is_wholly_old_or_new_and_reopens_without_losing_tasks()
             assert_eq!(read.list_tables()?.count(), expected.1);
         }
         let store = RedbStore::open(root.path())?;
-        assert_eq!(store.schema_info()?.stored_version, 20);
+        assert_eq!(store.schema_info()?.stored_version, 21);
         assert!(
             store
                 .workflow_receipt("alice", "original-command")?
@@ -244,3 +255,62 @@ fn malformed_previous_tables_or_accounting_are_refused_before_source_writes()
 
 #[path = "support/fault.rs"]
 mod fault;
+
+#[test]
+fn prompt02d_adoption_preserves_existing_workflow_and_rename_receipt_bytes()
+-> Result<(), Box<dyn std::error::Error>> {
+    use milkdrift_authority::ActorRef;
+    use milkdrift_persistence::{DaemonRename, ProjectStore};
+    let root = tempfile::tempdir()?;
+    let store = RedbStore::open(root.path())?;
+    let host = PeerId::new("host:original")?;
+    store.initialize_daemon_metadata(&host, &DaemonDisplayName::new("Initial")?)?;
+    let actor = ActorRef::new("alice")?;
+    store.rename_daemon(DaemonRename{installation:host.clone(),actor:actor.clone(),key:"rename-original".into(),expected_generation:1,display_name:DaemonDisplayName::new("Shared studio")?,canonical_request:serde_json::to_vec(&serde_json::json!({"request_id":"rename-original","name":"Shared studio","expected_generation":1}))?})?;
+    store.commit_workflow(task_commit()?)?;
+    let receipt = store.daemon_rename_receipt(&host, &actor, "rename-original")?;
+    drop(store);
+    let before = task_bytes(root.path())?;
+    let db = Database::open(root.path().join("milkdrift.redb"))?;
+    let write = db.begin_write()?;
+    assert!(write.delete_table(TableDefinition::<&str, &[u8]>::new(
+        "milkdrift.v1.projects.registrations"
+    ))?);
+    assert!(write.delete_table(TableDefinition::<&str, &[u8]>::new(
+        "milkdrift.v1.projects.operations"
+    ))?);
+    assert!(write.delete_table(TableDefinition::<&str, &str>::new(
+        "milkdrift.v1.projects.workflow_associations"
+    ))?);
+    write
+        .open_table(METADATA)?
+        .insert("storage_schema_version", 20)?;
+    write.commit()?;
+    drop(db);
+    let store = RedbStore::open(root.path())?;
+    assert_eq!(store.schema_info()?.stored_version, 21);
+    assert_eq!(
+        store.daemon_rename_receipt(&host, &actor, "rename-original")?,
+        receipt
+    );
+    assert_eq!(
+        store
+            .daemon_metadata(&host)?
+            .ok_or("metadata missing")?
+            .display_name
+            .as_str(),
+        "Shared studio"
+    );
+    assert!(
+        store
+            .project_for_workflow(&WorkflowId::new("workflow:preserved")?)?
+            .is_none()
+    );
+    assert!(matches!(
+        store.commit_workflow(task_commit()?)?,
+        WorkflowCommitOutcome::Replay(_)
+    ));
+    drop(store);
+    assert_eq!(task_bytes(root.path())?, before);
+    Ok(())
+}

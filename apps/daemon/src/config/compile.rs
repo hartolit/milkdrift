@@ -54,7 +54,12 @@ impl DaemonConfig {
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
-        config.validate(parent)
+        let mut plan = config.validate(parent)?;
+        plan.storage.project_protected_paths.push(
+            path.canonicalize()
+                .map_err(|error| ConfigError::Read(error.kind().to_string()))?,
+        );
+        Ok(plan)
     }
 
     /// Compiles a programmatically built configuration, resolving paths relative to `base`.
@@ -172,6 +177,7 @@ impl DaemonConfig {
                 Ok((reference, source))
             })
             .collect::<Result<BTreeMap<_, _>, ConfigError>>()?;
+        let project_protected_paths = super::project_paths::configured(&self)?;
         Ok(DaemonPlan {
             role: self.role,
             host_id: self.host_id,
@@ -180,6 +186,7 @@ impl DaemonConfig {
             bind: self.bind,
             storage: StoragePlan {
                 data_root: self.data_root,
+                project_protected_paths,
                 security_audit_record_bound: self.security_audit_record_bound,
             },
             authentication: AuthenticationPlan {

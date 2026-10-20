@@ -84,12 +84,15 @@ impl ManagedGenerationPublisher for RegistryProjection {
                         self.data.clone(),
                     )?)
                 } else {
-                    Arc::new(ManagedWorkerAdapter::new(
-                        self.platform.clone(),
-                        self.store.clone(),
-                        setup.clone(),
-                        self.data.clone(),
-                    )?)
+                    Arc::new(
+                        ManagedWorkerAdapter::new(
+                            self.platform.clone(),
+                            self.store.clone(),
+                            setup.clone(),
+                            self.data.clone(),
+                        )?
+                        .with_project_pin_helper(std::env::current_exe().map_err(failure)?),
+                    )
                 };
             self.host
                 .register(descriptor.clone(), adapter, None)

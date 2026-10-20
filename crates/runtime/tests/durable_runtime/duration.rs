@@ -241,6 +241,7 @@ impl Fixture {
 
     fn create(&self, tasks: usize) -> TestResult<WorkflowId> {
         let request = WorkflowCreate {
+            project_id: None,
             title: "Cumulative duration".into(),
             description: String::new(),
             tasks: (0..tasks)
@@ -330,6 +331,7 @@ fn context() -> TestResult<ActorAuthorityContext> {
 
 fn definition() -> TestResult<TaskDefinition> {
     Ok(TaskDefinition {
+        execution: milkdrift_blueprint::TaskExecution::Legacy,
         title: "Controlled duration".into(),
         description: String::new(),
         instructions: "Use only the admitted execution duration.".into(),
@@ -713,6 +715,8 @@ fn missing_enforceable_duration_refuses_entry_and_old_document_version_refuses_m
     fixture
         .store
         .commit_workflow(milkdrift_persistence::WorkflowCommit {
+            project_guard: None,
+            project_id: None,
             expected_generation: Some(prior),
             snapshot: snapshot.clone(),
             command: None,

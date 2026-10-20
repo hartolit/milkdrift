@@ -1,6 +1,6 @@
 use redb::TableDefinition;
 
-pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 20;
+pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 21;
 pub(crate) const SCHEMA_VERSION_KEY: &str = "storage_schema_version";
 pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION: u64 = 22;
 pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION_KEY: &str = "internal_document_format_version";
@@ -21,28 +21,39 @@ macro_rules! physical_tables {
         pub(crate) fn initialize_tables(write: &redb::WriteTransaction) -> Result<(), milkdrift_persistence::PersistenceError> {
             $(drop(write.open_table($table).map_err(crate::error::redb)?);)*
             initialize_daemon_tables(write)?;
+            initialize_project_tables(write)?;
             Ok(())
         }
 
         pub(crate) fn validate_tables(read: &redb::ReadTransaction) -> Result<(), milkdrift_persistence::PersistenceError> {
-            validate_table_membership(read, true)
+            validate_table_membership(read, 21)
         }
 
         pub(crate) fn validate_previous_tables(read: &redb::ReadTransaction) -> Result<(), milkdrift_persistence::PersistenceError> {
-            validate_table_membership(read, false)
+            validate_table_membership(read, 19)
         }
 
-        fn validate_table_membership(read: &redb::ReadTransaction, daemon_metadata: bool) -> Result<(), milkdrift_persistence::PersistenceError> {
+        pub(crate) fn validate_daemon_tables(read: &redb::ReadTransaction) -> Result<(), milkdrift_persistence::PersistenceError> {
+            validate_table_membership(read, 20)
+        }
+
+        fn validate_table_membership(read: &redb::ReadTransaction, version: u64) -> Result<(), milkdrift_persistence::PersistenceError> {
             use redb::TableHandle as _;
             // Typed opens independently reject absent tables and wrong key/value encodings.
             $(drop(read.open_table($table).map_err(crate::error::redb)?);)*
-            if daemon_metadata {
+            if version >= 20 {
                 drop(read.open_table(DAEMON_METADATA).map_err(crate::error::redb)?);
                 drop(read.open_table(DAEMON_RENAME_RECEIPTS).map_err(crate::error::redb)?);
             }
+            if version >= 21 {
+                drop(read.open_table(PROJECTS).map_err(crate::error::redb)?);
+                drop(read.open_table(PROJECT_OPERATIONS).map_err(crate::error::redb)?);
+                drop(read.open_table(WORKFLOW_PROJECTS).map_err(crate::error::redb)?);
+            }
             for table in read.list_tables().map_err(crate::error::redb)? {
                 if !matches!(table.name(), $($name)|*)
-                    && !(daemon_metadata && matches!(table.name(), DAEMON_METADATA_TABLE | DAEMON_RENAME_RECEIPTS_TABLE))
+                    && !(version >= 20 && matches!(table.name(), DAEMON_METADATA_TABLE | DAEMON_RENAME_RECEIPTS_TABLE))
+                    && !(version >= 21 && matches!(table.name(), PROJECTS_TABLE | PROJECT_OPERATIONS_TABLE | WORKFLOW_PROJECTS_TABLE))
                 {
                     return Err(crate::error::corruption("unexpected physical table"));
                 }
@@ -53,6 +64,33 @@ macro_rules! physical_tables {
             Ok(())
         }
     };
+}
+
+const PROJECTS_TABLE: &str = "milkdrift.v1.projects.registrations";
+const PROJECT_OPERATIONS_TABLE: &str = "milkdrift.v1.projects.operations";
+const WORKFLOW_PROJECTS_TABLE: &str = "milkdrift.v1.projects.workflow_associations";
+pub(crate) const PROJECTS: TableDefinition<'static, &'static str, &'static [u8]> =
+    TableDefinition::new(PROJECTS_TABLE);
+pub(crate) const PROJECT_OPERATIONS: TableDefinition<'static, &'static str, &'static [u8]> =
+    TableDefinition::new(PROJECT_OPERATIONS_TABLE);
+pub(crate) const WORKFLOW_PROJECTS: TableDefinition<'static, &'static str, &'static str> =
+    TableDefinition::new(WORKFLOW_PROJECTS_TABLE);
+
+pub(crate) fn initialize_project_tables(
+    write: &redb::WriteTransaction,
+) -> Result<(), milkdrift_persistence::PersistenceError> {
+    drop(write.open_table(PROJECTS).map_err(crate::error::redb)?);
+    drop(
+        write
+            .open_table(PROJECT_OPERATIONS)
+            .map_err(crate::error::redb)?,
+    );
+    drop(
+        write
+            .open_table(WORKFLOW_PROJECTS)
+            .map_err(crate::error::redb)?,
+    );
+    Ok(())
 }
 
 const DAEMON_METADATA_TABLE: &str = "milkdrift.v1.daemon.metadata";

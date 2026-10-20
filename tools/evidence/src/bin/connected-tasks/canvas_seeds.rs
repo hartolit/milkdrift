@@ -1,6 +1,7 @@
 //! Bounded browser review cases admitted through the same public API as ordinary work.
 
 use milkdrift_control_client::{BearerCredential, ClientConfig, ControlClient};
+use milkdrift_control_protocol::projects::ProjectDto;
 use milkdrift_control_protocol::tasks::{
     TaskReadDto, TaskStateDto, WorkflowReadDto, WorkflowReceipt,
 };
@@ -56,10 +57,21 @@ pub(super) async fn seed(root: &Path) -> EvidenceResult {
         config,
         BearerCredential::new(required_text(&browser, &["a", "token"])?)?,
     )?;
-    let offpage = offpage(&client).await?;
-    let historical = historical(&client).await?;
-    let proposal = proposal(&client).await?;
-    let denied = denied_source(&client).await?;
+    let folder = root.join("daemon-a/animation-project");
+    let project = match client
+        .projects(None, 100)
+        .await?
+        .items
+        .into_iter()
+        .find(|item| Path::new(&item.folder) == folder)
+    {
+        Some(project) => project,
+        None => super::projects::attach(&client, &folder, "canvas-project-attach").await?,
+    };
+    let offpage = offpage(&client, &project).await?;
+    let historical = historical(&client, &project).await?;
+    let proposal = proposal(&client, &project).await?;
+    let denied = denied_source(&client, &project).await?;
     write_private(
         &root.join("canvas-seeds.json"),
         &serde_json::to_vec_pretty(
@@ -69,7 +81,7 @@ pub(super) async fn seed(root: &Path) -> EvidenceResult {
     Ok(())
 }
 
-async fn denied_source(client: &ControlClient) -> EvidenceResult<Value> {
+async fn denied_source(client: &ControlClient, project: &ProjectDto) -> EvidenceResult<Value> {
     let title = "Canvas review: restricted source";
     let text = "Private canvas review context";
     let upload = client
@@ -80,7 +92,7 @@ async fn denied_source(client: &ControlClient) -> EvidenceResult<Value> {
             text: text.into(),
         })
         .await?;
-    let mut task = definition("Awaiting authorized context", "controlled-model");
+    let mut task = definition("Awaiting authorized context", "controlled-model", project);
     field(
         &mut task,
         "inputs",
@@ -90,7 +102,7 @@ async fn denied_source(client: &ControlClient) -> EvidenceResult<Value> {
         }),
     )?;
     let request = serde_json::from_value(json!({
-        "request_id":"canvas-denied-source","title":title,"description":"An inspectable workflow does not grant access to its captured source or daemon folders.",
+        "request_id":"canvas-denied-source","project_id":project.id,"title":title,"description":"An inspectable workflow does not grant access to its captured source or daemon folders.",
         "tasks":[{"alias":"consumer","definition":task}],
         "inputs":{"private-context":{"kind":"uploaded","input_id":upload.input_id}},
         "finish_when_settled":false,"limits":null
@@ -101,17 +113,18 @@ async fn denied_source(client: &ControlClient) -> EvidenceResult<Value> {
     )
 }
 
-fn definition(title: &str, capability: &str) -> Value {
-    json!({"title":title,"description":"Bounded canvas review case","instructions":"Produce the configured finite review output.","capability":{"id":capability,"operation":if capability.starts_with("canvas-") { "process.execute" } else { "model.generate" }},"inputs":{},"outputs":{},"dependencies":[],"required":true,"corrective_of":null,"paths":[],"tools":[],"actions":null})
+fn definition(title: &str, capability: &str, project: &ProjectDto) -> Value {
+    json!({"title":title,"description":"Bounded canvas review case","instructions":"Produce the configured finite review output.","capability":{"id":capability,"operation":if capability.starts_with("canvas-") { "process.execute" } else { "model.generate" }},"execution":{"kind":"explicit","expected_generation":project.generation,"settings":{"environment":{"kind":"host"},"allow_changes":false},"access":"none","tools":[]},"inputs":{},"outputs":{},"dependencies":[],"required":true,"corrective_of":null,"paths":[],"tools":[],"actions":null})
 }
 
 async fn create(
     client: &ControlClient,
+    project: &ProjectDto,
     key: &str,
     title: &str,
     tasks: Vec<Value>,
 ) -> EvidenceResult<WorkflowReceipt> {
-    Ok(client.create_workflow(&serde_json::from_value(json!({"request_id":key,"title":title,"description":"Public API canvas review fixture","tasks":tasks,"inputs":{},"finish_when_settled":false,"limits":null}))?).await?)
+    Ok(client.create_workflow(&serde_json::from_value(json!({"request_id":key,"project_id":project.id,"title":title,"description":"Public API canvas review fixture","tasks":tasks,"inputs":{},"finish_when_settled":false,"limits":null}))?).await?)
 }
 
 async fn change(
@@ -154,10 +167,36 @@ async fn settled(
     }
 }
 
-async fn offpage(client: &ControlClient) -> EvidenceResult<Value> {
+async fn held_tasks(client: &ControlClient, receipt: &WorkflowReceipt) -> EvidenceResult {
+    let deadline = Instant::now() + Duration::from_secs(45);
+    for task in receipt.aliases.values() {
+        loop {
+            let current = client.task(&receipt.workflow_id, task).await?;
+            ensure(
+                current.state == TaskStateDto::Queued && current.frozen.is_none(),
+                "canvas fixture task entered before its required input was supplied",
+            )?;
+            if current.reason.as_deref() == Some("missing supplied input review-hold") {
+                break;
+            }
+            ensure(
+                Instant::now() < deadline,
+                "canvas fixture task did not report its missing required input",
+            )?;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+    Ok(())
+}
+
+async fn offpage(client: &ControlClient, project: &ProjectDto) -> EvidenceResult<Value> {
     let title = "Canvas review: paged tasks";
     let task = |index: usize| -> EvidenceResult<Value> {
-        let mut task = definition(&format!("Paged task {index:02}"), "controlled-model");
+        let mut task = definition(
+            &format!("Paged task {index:02}"),
+            "controlled-model",
+            project,
+        );
         field(
             &mut task,
             "inputs",
@@ -172,6 +211,7 @@ async fn offpage(client: &ControlClient) -> EvidenceResult<Value> {
     };
     let initial = create(
         client,
+        project,
         "canvas-page-first",
         title,
         (0..32)
@@ -179,6 +219,9 @@ async fn offpage(client: &ControlClient) -> EvidenceResult<Value> {
             .collect::<EvidenceResult<Vec<_>>>()?,
     )
     .await?;
+    // Recording each queued task's missing-input reason advances the workflow. Observe those
+    // durable reasons before taking the generation used by the next guarded edit.
+    held_tasks(client, &initial).await?;
     let added = change(
         client,
         &initial.workflow_id,
@@ -190,6 +233,7 @@ async fn offpage(client: &ControlClient) -> EvidenceResult<Value> {
             .collect::<EvidenceResult<Vec<_>>>()?,
     )
     .await?;
+    held_tasks(client, &added).await?;
     let mut ids: Vec<_> = initial
         .aliases
         .values()
@@ -215,9 +259,9 @@ async fn offpage(client: &ControlClient) -> EvidenceResult<Value> {
     )
 }
 
-async fn historical(client: &ControlClient) -> EvidenceResult<Value> {
+async fn historical(client: &ControlClient, project: &ProjectDto) -> EvidenceResult<Value> {
     let title = "Canvas review: retained correction";
-    let mut source = definition("Historical failed report", "canvas-source");
+    let mut source = definition("Historical failed report", "canvas-source", project);
     field(
         &mut source,
         "outputs",
@@ -225,6 +269,7 @@ async fn historical(client: &ControlClient) -> EvidenceResult<Value> {
     )?;
     let initial = create(
         client,
+        project,
         "canvas-history-source",
         title,
         vec![json!({"alias":"source","definition":source})],
@@ -241,7 +286,7 @@ async fn historical(client: &ControlClient) -> EvidenceResult<Value> {
                 .is_some_and(|result| result.outputs.contains_key("report")),
         "historical case lacks a failed undeclared published report",
     )?;
-    let mut consumer = definition("Future report consumer", "controlled-model");
+    let mut consumer = definition("Future report consumer", "controlled-model", project);
     field(
         &mut consumer,
         "inputs",
@@ -254,7 +299,7 @@ async fn historical(client: &ControlClient) -> EvidenceResult<Value> {
         ("wrong-media", "Wrong media correction"),
         ("oversized", "Oversized evidence correction"),
     ] {
-        let mut correction = definition(label, &format!("canvas-{name}"));
+        let mut correction = definition(label, &format!("canvas-{name}"), project);
         field(&mut correction, "corrective_of", json!(original))?;
         changes.push(json!({"kind":"add","alias":name,"definition":correction}));
     }
@@ -279,9 +324,9 @@ async fn historical(client: &ControlClient) -> EvidenceResult<Value> {
     )
 }
 
-async fn proposal(client: &ControlClient) -> EvidenceResult<Value> {
+async fn proposal(client: &ControlClient, project: &ProjectDto) -> EvidenceResult<Value> {
     let title = "Canvas review: proposal and human wait";
-    let mut task = definition("Rejected follow-up proposal", "controlled-planner");
+    let mut task = definition("Rejected follow-up proposal", "controlled-planner", project);
     field(
         &mut task,
         "instructions",
@@ -297,6 +342,7 @@ async fn proposal(client: &ControlClient) -> EvidenceResult<Value> {
     )?;
     let initial = create(
         client,
+        project,
         "canvas-proposal-create",
         title,
         vec![json!({"alias":"proposal","definition":task})],

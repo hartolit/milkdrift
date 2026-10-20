@@ -10,6 +10,19 @@ The daemon maps the credential to an actor and grant; each operation checks the 
 
 ## Ordinary tasks
 
+Use `projects`, `project`, `project_directories` and `project_environments` to discover current
+authorized project choices on the daemon. `project_command` performs attach/create, rename/settings,
+association and unused-registration removal. Preserve the complete request for `project_receipt`
+or exact replay. `project_operations` exposes this actor's unresolved creations; explicitly reconcile
+the original intended folder or abandon its registration without deleting any files.
+
+New workflow requests select `project_id`, and each new task deliberately chooses reviewed project
+settings or a complete explicit selection. Empty explicit access/tools stay empty. Authorized task
+reads return their effective binding, which a text-only edit can retain unchanged. If current
+project scope does not permit its disclosure, the read instead carries `Restricted` and omits
+execution paths/tools; that projection cannot be reused as an authoring definition. Use
+`workflows_in_project` for one project's workflow page or the earlier unassociated workflow page.
+
 `task_session` reports the installation identity, shared daemon name and name generation, current
 actor, rename permission, effective limits and task choices. After first authentication, use
 `with_daemon_identity` to bind subsequent requests to the learned identity. Retain that pin with

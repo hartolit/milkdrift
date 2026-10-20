@@ -9,7 +9,7 @@ use milkdrift_peer_protocol::{
 #[path = "direct/archival.rs"]
 mod archival;
 
-fn client_policy(actors: &[ActorRef]) -> TestResult<ServingClientPolicy> {
+pub(super) fn client_policy(actors: &[ActorRef]) -> TestResult<ServingClientPolicy> {
     let mut grants = Vec::new();
     for actor in actors {
         let base =

@@ -41,9 +41,8 @@ enum Command {
     StorageAdmin(storage_admin::Arguments),
 }
 
-#[tokio::main]
-async fn main() {
-    let exit = match run().await {
+fn main() {
+    let exit = match run_entry() {
         Ok(()) => 0,
         Err(error) => {
             #[expect(
@@ -59,6 +58,35 @@ async fn main() {
     if exit != 0 {
         std::process::exit(exit);
     }
+}
+
+fn run_entry() -> Result<(), Box<dyn std::error::Error>> {
+    let raw: Vec<_> = std::env::args_os().collect();
+    if raw
+        .get(1)
+        .is_some_and(|value| value == "--internal-project-pin")
+    {
+        let [_, _, folder, identity, lifetime] = raw.as_slice() else {
+            return Err(
+                "internal project pin requires folder, native identity and lifetime".into(),
+            );
+        };
+        return milkdrift_managed_linux::run_project_pin_helper(
+            std::path::Path::new(folder),
+            identity
+                .to_str()
+                .ok_or("project pin identity is not UTF-8")?,
+            lifetime
+                .to_str()
+                .ok_or("project pin lifetime is not UTF-8")?
+                .parse()?,
+        )
+        .map_err(Into::into);
+    }
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(run())
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {

@@ -36,6 +36,7 @@ use url::Url;
 
 mod invocation;
 mod metadata;
+mod projects;
 mod sse;
 mod tasks;
 

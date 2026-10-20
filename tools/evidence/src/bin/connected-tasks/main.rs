@@ -4,6 +4,7 @@ mod animation_check;
 mod canvas_seeds;
 mod check;
 mod model;
+mod projects;
 mod report;
 mod setup;
 
@@ -107,7 +108,22 @@ async fn main() -> EvidenceResult {
                 Control::CrashB => "crash-b",
                 Control::Stop => "stop",
             };
-            write_private(&root.join("control-request"), operation.as_bytes())?;
+            let pending = root.join("control-request.pending");
+            let request = root.join("control-request");
+            write_private(&pending, operation.as_bytes())?;
+            // Publish a complete request exclusively. Its removal acknowledges readiness,
+            // so a caller cannot reconnect between the old process exiting and its replacement.
+            let published = fs::hard_link(&pending, &request);
+            fs::remove_file(pending)?;
+            published?;
+            let deadline = Instant::now() + Duration::from_secs(45);
+            while request.try_exists()? {
+                ensure(
+                    Instant::now() < deadline,
+                    "fixture lifecycle operation did not acknowledge completion within 45 seconds",
+                )?;
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
             Ok(())
         }
     }
@@ -352,8 +368,8 @@ async fn serve_loop(
     while Instant::now() < deadline {
         if control.try_exists()? {
             let request = fs::read_to_string(&control)?;
-            fs::remove_file(&control)?;
             if request == "stop" {
+                fs::remove_file(&control)?;
                 break;
             }
             let (index, abrupt) = match request.as_str() {
@@ -373,6 +389,7 @@ async fn serve_loop(
             }
             instance.child = start(daemon, &instance.config, &instance.log)?;
             ready(instance).await?;
+            fs::remove_file(&control)?;
         }
         for instance in instances.iter_mut() {
             ensure(

@@ -140,6 +140,8 @@ fn artifact_commit_accepts_an_authoritative_invocation_provenance_fact()
 
     let store = RedbStore::open(directory.path())?;
     store.commit_workflow(WorkflowCommit {
+        project_guard: None,
+        project_id: None,
         expected_generation: None,
         snapshot,
         command: None,

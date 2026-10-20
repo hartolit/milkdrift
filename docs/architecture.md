@@ -28,18 +28,24 @@ one atomic request. Mechanical `RunId`, `RevisionId`, `NodeId` and attempt coord
 frozen task provenance through independent capability and peer contracts; they do not identify
 an alternate graph scheduler.
 
-### Selected project boundary
+### Projects and execution
 
-The next selected correction adds daemon-owned project registrations and a project reference on
-new workflows. The project identifies a user-controlled local folder and default execution settings;
+Daemon-owned project registrations group new workflows around ordinary local folders.
+The project identifies a user-controlled folder and default execution settings;
 accepted task definitions retain the effective settings used for that work. The existing runtime,
 capability host and adapters continue to schedule and execute it. Host file access, process working
-directories and Podman attachments must resolve to the same authorized folder.
+directories and Podman attachments resolve to the same pinned authorized folder. Shared control
+resolves an explicit inherit/override choice before acceptance and storage checks the reviewed
+project generation with the workflow commit. Accepted bindings retain exact environment generation,
+access, tools and native scopes; text-only edits preserve them.
 
-This boundary is not implemented yet: current workflow records have no project association, session
-root choices reflect filesystem grants, process directories are profile configuration, and managed
-workers use owned volumes. [ADR 0051](decisions/0051-daemon-task-workflows.md#projects-and-execution-environments)
-owns the selected defaults, adoption and lifetime rules; [status](product/status.md) owns delivery.
+Folder creation reserves durable intent before creating one child under a pinned parent. A crash
+can leave ownership unresolved; the project owner offers explicit reconciliation or abandonment
+without deleting the directory. Existing-workflow association is a separate additive fact so old
+workflow bytes and receipts stay unchanged. The process adapter's project mode pins its working
+directory; managed workers separately verify the `/project` attachment. Their existing `/workspace`
+owned-volume contract remains intact. [ADR 0051](decisions/0051-daemon-task-workflows.md#projects-and-execution-environments)
+owns the design and lifetime rules; [status](product/status.md) owns qualified delivery evidence.
 
 ## Owners and dependency direction
 
@@ -49,7 +55,7 @@ owns the selected defaults, adoption and lifetime rules; [status](product/status
 | `authority` | Scoped grants, resource facts and current authorization decisions. |
 | `control` | Shared authenticated admission of create and prospective edit commands. |
 | `runtime` | Task readiness, frozen starts, entry, reports, cancellation, completion and recovery. |
-| `persistence` | Atomic workflow and daemon-name receipts, artifacts, native claims, managed and peer storage ports. |
+| `persistence` | Atomic workflow, project and daemon-name receipts, artifacts, native claims, managed and peer storage ports. |
 | `redb-store` | Durable transactions, bounded accounting, integrity and fresh-format refusal. |
 | `capability` and `workspace` | External operation contracts, immutable artifacts and causal identities. |
 | `capability-host` | Selected generation permits, preparation, execution lifetime, materialization and resource claims. |
@@ -210,12 +216,12 @@ uses one durable high-water owner for request and worker paths, avoiding clock r
 queue lock inversion.
 
 Unsupported configuration, protocol and store formats are refused explicitly. The current reader
-can adopt physical schema 19 only with internal document format 22 and its exact valid table set.
-One transaction adds the daemon metadata tables and changes the physical marker to 20 without
+can adopt physical schemas 19 and 20 only with internal document format 22 and their exact valid table sets.
+One transaction adds the required metadata/project tables and changes the physical marker to 21 without
 rewriting workflow, receipt or installation-identity rows. Earlier graph/task formats still require
 a separate fresh root; this narrow addition does not restore their readers or change frozen grants.
 Daemon configuration stays at version 14 because the optional name seed preserves existing reads;
-control protocol 3.3 requires coordinated client upgrades. Do not stop existing services, reset a
+control protocol 3.4 requires coordinated client upgrades. Do not stop existing services, reset a
 store or repoint an existing installation merely to try the new task client. See
 [operation](operations/daemon.md), [authority](operations/authority.md) and the
 [public API](reference/control-api.md) for configuration and transport details.

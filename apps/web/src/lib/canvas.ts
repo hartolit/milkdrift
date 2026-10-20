@@ -1,11 +1,11 @@
 import { readableReason } from './presentation';
-import type { ChangeWorkflowRequest, CreateWorkflowRequest, InputBinding, InputValue, TaskCapability, TaskChangeDto, TaskDefinitionDto, TaskReadDto, TaskSessionDto, TaskUploadRequest, WorkflowLimitsDto, WorkflowReadDto } from './protocol.generated';
+import type { ChangeWorkflowRequest, CreateWorkflowRequest, InputBinding, InputValue, ProjectDto, TaskCapability, TaskChangeDto, TaskDefinitionDto, TaskReadDto, TaskSessionDto, TaskUploadRequest, WorkflowLimitsDto, WorkflowReadDto } from './protocol.generated';
 
 export const canvasBounds = { changes: 32, tasks: 200, sources: 400, edges: 1024, draftBytes: 2 * 1024 * 1024, cacheBytes: 8 * 1024 * 1024 } as const;
 export const capabilityKey = (capability: TaskCapability): string => JSON.stringify([capability.id, capability.operation]);
 export const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 export const byteLength = (value: string): number => new TextEncoder().encode(value).length;
-export type CanvasTarget = { kind: 'new' } | { kind: 'existing'; workflowId: string; title: string; generation: number };
+export type CanvasTarget = { kind: 'new'; projectId?: string } | { kind: 'existing'; workflowId: string; title: string; generation: number; projectId?: string | null };
 export interface Point { x: number; y: number }
 export function positionCapacity(canvas: CanvasState): void { if (Object.keys(canvas.positions).length >= 600) throw new Error('The canvas has reached its 600-card layout bound. Clear cached details from Workflow to free old layout entries; drafts remain intact.'); }
 function freePosition(canvas: CanvasState, source: boolean): Point {
@@ -19,7 +19,7 @@ function freePosition(canvas: CanvasState, source: boolean): Point {
 export interface CanvasTask { id: string; definition: TaskDefinitionDto; version: number | null; titleEdited: boolean; contractGeneration: number | null; explicitDependencies: string[] }
 export interface CanvasSource { id: string; label: string; value: InputValue | null; sharedName: string | null; text: string; deferred: boolean }
 export interface CanvasState {
-  id: string; daemonId: string; actorId: string; target: CanvasTarget; disposed: boolean; capacityBlocked: boolean;
+  id: string; daemonId: string; actorId: string; target: CanvasTarget; project: ProjectDto | null; disposed: boolean; capacityBlocked: boolean;
   title: string; tasks: CanvasTask[]; sources: CanvasSource[]; changes: TaskChangeDto[];
   details: TaskReadDto[]; positions: Record<string, Point>; bindings: Record<string, string>; camera: Point & { zoom: number };
   selected: string; inspector: boolean; presentation: 'canvas' | 'list' | 'timeline';
@@ -32,8 +32,8 @@ export interface CanvasState {
 export interface GraphNode { id: string; kind: 'task' | 'source' | 'boundary'; label: string; detail: string; state: string; draft: boolean; position: Point }
 export interface GraphEdge { id: string; source: string; target: string; label: string; input: string | null; binding: InputBinding | null; draft: boolean }
 
-export function createCanvas(session: TaskSessionDto, target: CanvasTarget): CanvasState {
-  return { id: crypto.randomUUID(), daemonId: session.daemon_id, actorId: session.actor_id, target: { ...target }, disposed: false, capacityBlocked: false, title: '', tasks: [], sources: [], changes: [], details: [], positions: {}, bindings: {}, camera: { x: 50, y: 60, zoom: 1 }, selected: '', inspector: false, presentation: 'canvas', finishWhenSettled: true, limits: null, pending: null, pendingUpload: null, busy: false, error: '', conflict: false, notice: '' };
+export function createCanvas(session: TaskSessionDto, target: CanvasTarget, project: ProjectDto | null = null): CanvasState {
+  return { id: crypto.randomUUID(), daemonId: session.daemon_id, actorId: session.actor_id, target: { ...target }, project: project ? copy(project) : null, disposed: false, capacityBlocked: false, title: '', tasks: [], sources: [], changes: [], details: [], positions: {}, bindings: {}, camera: { x: 50, y: 60, zoom: 1 }, selected: '', inspector: false, presentation: 'canvas', finishWhenSettled: true, limits: null, pending: null, pendingUpload: null, busy: false, error: '', conflict: false, notice: '' };
 }
 
 export function hasChanges(canvas: CanvasState): boolean { return !!(canvas.tasks.length || canvas.sources.length || canvas.changes.length || canvas.pending || canvas.pendingUpload); }
@@ -63,7 +63,7 @@ export function addCanvasTask(canvas: CanvasState, session: TaskSessionDto, pref
   const available = session.capabilities;
   const capability = available.find((item) => preferred && capabilityKey(item) === capabilityKey(preferred)) ?? (available.length === 1 ? available[0] : undefined);
   const id = `draft_${crypto.randomUUID().replaceAll('-', '')}`;
-  const task: CanvasTask = { id, version: null, titleEdited: false, contractGeneration: capability ? authoring(session, capability)?.generation ?? null : null, explicitDependencies: [], definition: { title: '', description: '', instructions: '', capability: copy(capability ?? { id: '', operation: '' }), inputs: {}, outputs: {}, dependencies: [], required: true, corrective_of: null, paths: [], actions: null, tools: [] } };
+  const task: CanvasTask = { id, version: null, titleEdited: false, contractGeneration: capability ? authoring(session, capability)?.generation ?? null : null, explicitDependencies: [], definition: { title: '', description: '', instructions: '', capability: copy(capability ?? { id: '', operation: '' }), inputs: {}, outputs: {}, dependencies: [], required: true, corrective_of: null, paths: [], actions: null, tools: [], execution: canvas.project ? { kind: 'project', expected_generation: canvas.project.generation } : { kind: 'legacy' } } };
   const before = canvas.tasks;
   canvas.tasks = [...canvas.tasks, task];
   try { assertCapacity(canvas); } catch (failure) { canvas.tasks = before; throw failure; }
@@ -206,7 +206,8 @@ export function freezeCanvas(canvas: CanvasState, session: TaskSessionDto): NonN
   if (!tasks.length) throw new Error('Add the first task to this unsaved workflow.');
   const title = canvas.title.trim() || tasks[0].definition.title;
   if (byteLength(title) > 256) throw new Error('Use a workflow title of at most 256 bytes.');
-  return { path: '/v1/workflows', request: { request_id, title, description: '', tasks, inputs: {}, finish_when_settled: canvas.finishWhenSettled, limits: copy(canvas.limits) } };
+  if (!canvas.target.projectId) throw new Error('Choose a project before starting a workflow. Your drawing is retained.');
+  return { path: '/v1/workflows', request: { request_id, project_id: canvas.target.projectId, title, description: '', tasks, inputs: {}, finish_when_settled: canvas.finishWhenSettled, limits: copy(canvas.limits) } };
 }
 
 export function cacheTask(canvas: CanvasState, task: TaskReadDto): void {

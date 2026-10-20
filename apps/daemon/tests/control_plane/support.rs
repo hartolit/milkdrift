@@ -38,6 +38,7 @@ pub(super) type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 pub(super) const CONTROLLER_TOKEN: &str = "controller-integration-token";
 pub(super) const OBSERVER_TOKEN: &str = "observer-integration-token";
+static FIXTURE_PROJECT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
 pub(super) struct RunningDaemon {
     pub(super) endpoint: Url,
@@ -114,6 +115,14 @@ impl RunningDaemon {
 }
 
 pub(super) async fn start(config: DaemonPlan, token: &str) -> TestResult<RunningDaemon> {
+    let document: toml::Value = toml::from_str(config.redacted_toml())?;
+    let shared_fixture_host =
+        document.get("host_id").and_then(toml::Value::as_str) == Some("host:local");
+    let project_folder = document
+        .get("data_root")
+        .and_then(toml::Value::as_str)
+        .and_then(|root| std::path::Path::new(root).parent())
+        .map(|root| root.join("test-project"));
     let host = DaemonHost::start(config)?;
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
     let address = listener.local_addr()?;
@@ -142,7 +151,55 @@ pub(super) async fn start(config: DaemonPlan, token: &str) -> TestResult<Running
         health = client.readiness().await;
     }
     match health {
-        Ok(health) if health.ready => Ok(daemon),
+        Ok(health) if health.ready => {
+            if let Some(folder) = project_folder {
+                if !folder.exists() {
+                    fs::create_dir(&folder)?;
+                }
+                let setup = self::client(&daemon.endpoint, CONTROLLER_TOKEN)?;
+                let result = setup.project_command(&milkdrift_control_protocol::projects::ProjectCommandRequest {
+                    request_id:"fixture-project".into(),
+                    command:milkdrift_control_protocol::projects::ProjectCommandDto::Attach {
+                        name:"Test project".into(),folder:folder.to_string_lossy().into_owned(),
+                        settings:milkdrift_control_protocol::projects::ProjectSettingsDto {
+                            environment:milkdrift_control_protocol::projects::ProjectEnvironmentDto::Host,allow_changes:false,
+                        },
+                    },
+                }).await;
+                match result {
+                    Ok(receipt) => {
+                        let project = receipt
+                            .project
+                            .ok_or("fixture project receipt missing registration")?;
+                        if shared_fixture_host {
+                            if let Some(previous) = FIXTURE_PROJECT.get() {
+                                if previous != &project.id {
+                                    return Err("fixture project identity changed".into());
+                                }
+                            } else {
+                                let _accepted_or_raced = FIXTURE_PROJECT.set(project.id);
+                            }
+                        }
+                    }
+                    Err(ClientError::Api(error))
+                        if matches!(
+                            error.code,
+                            ErrorCode::Unauthenticated
+                                | ErrorCode::Unauthorized
+                                | ErrorCode::NotFound
+                                | ErrorCode::UnsupportedVersion
+                        ) => {}
+                    Err(error) => {
+                        let cleanup = daemon.stop().await;
+                        return Err(format!(
+                            "project fixture setup failed: {error}; cleanup: {cleanup:?}"
+                        )
+                        .into());
+                    }
+                }
+            }
+            Ok(daemon)
+        }
         result => {
             let cleanup = daemon.stop().await;
             Err(format!("daemon did not become ready: {result:?}; cleanup: {cleanup:?}").into())
@@ -286,6 +343,7 @@ pub(super) fn write_secret(path: &std::path::Path, value: &str) -> TestResult {
 
 pub(super) fn task_definition(capability: &str, operation: &str) -> TaskDefinitionDto {
     TaskDefinitionDto {
+        execution: isolated_execution(),
         authoring_generation: None,
         actions: None,
         tools: Vec::new(),
@@ -334,6 +392,7 @@ pub(super) fn captured_file_profile(directory: &TempDir) -> TestResult<std::path
 
 pub(super) fn create_request(id: &str, supplied: bool) -> CreateWorkflowRequest {
     CreateWorkflowRequest {
+        project_id: FIXTURE_PROJECT.get().cloned(),
         request_id: id.into(),
         title: format!("Project analysis {id}"),
         description: "Retained integration work".into(),
@@ -353,6 +412,22 @@ pub(super) fn create_request(id: &str, supplied: bool) -> CreateWorkflowRequest 
         },
         finish_when_settled: true,
         limits: None,
+    }
+}
+
+pub(super) fn fixture_project_id() -> Option<String> {
+    FIXTURE_PROJECT.get().cloned()
+}
+
+pub(super) fn isolated_execution() -> milkdrift_control_protocol::task_execution::TaskExecutionDto {
+    milkdrift_control_protocol::task_execution::TaskExecutionDto::Explicit {
+        expected_generation: 1,
+        settings: milkdrift_control_protocol::projects::ProjectSettingsDto {
+            environment: milkdrift_control_protocol::projects::ProjectEnvironmentDto::Host,
+            allow_changes: false,
+        },
+        access: milkdrift_control_protocol::task_execution::TaskProjectAccessDto::None,
+        tools: Vec::new(),
     }
 }
 

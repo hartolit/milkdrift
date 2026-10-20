@@ -45,11 +45,13 @@ mod preparation;
 
 fn request() -> TestResult<WorkflowCreate> {
     Ok(WorkflowCreate {
+        project_id: None,
         title: "Inspect the supplied Cargo project".into(),
         description: "Read the captured manifest and report its targets".into(),
         tasks: vec![NewTask {
             alias: TaskId::new("inspect")?,
             definition: TaskDefinition {
+                execution: milkdrift_blueprint::TaskExecution::Legacy,
                 title: "Read Cargo manifest".into(),
                 description: String::new(),
                 instructions:
@@ -1476,6 +1478,8 @@ fn discovery_fields_cannot_contradict_the_authoritative_workflow_document() -> T
             _ => unreachable!(),
         }
         store.commit_workflow(WorkflowCommit {
+            project_guard: None,
+            project_id: None,
             expected_generation: Some(expected),
             snapshot,
             command: None,

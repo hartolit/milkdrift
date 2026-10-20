@@ -93,6 +93,10 @@ pub struct WorkflowCommandReceipt {
 /// All durable facts of a task transition, committed atomically.
 #[derive(Clone, Debug)]
 pub struct WorkflowCommit {
+    /// Reviewed project generation for newly resolved task bindings, checked in this transaction.
+    pub project_guard: Option<(String, u64)>,
+    /// Initial project association, committed with a new workflow and never inferred from paths.
+    pub project_id: Option<String>,
     /// None means a new identity must be absent; Some guards an existing state.
     pub expected_generation: Option<u64>,
     /// Next complete runtime state and its discovery fields.

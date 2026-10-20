@@ -49,7 +49,29 @@ Capability selection checks the profile's full resource ceilings, even for a sma
 grant's `artifact_bytes` must cover `max_total_materialized_bytes + max_total_output_bytes`;
 duration, invocation, and concurrency grants must also cover the declared requirements.
 
-### Persistent authorized repository working directory
+### Project working directories
+
+For tasks in daemon-owned projects, configure `"working_directory": {"type": "project"}`.
+The same registered process profile can then serve several projects beneath its configured
+`read_write` roots. The accepted task pins the selected folder, project generation, tool selection
+and permissions. The adapter checks that the selected process generation matches that binding
+and enters the pinned directory. Native file tools and the process therefore operate on the same
+project. Input materialization and declared output files still use the separate invocation root;
+use configured input-path or execution-root substitutions when an argument refers to those files.
+
+Project mode requires writable project access. A trusted host executable can mutate files even
+when the model has no `write_file` tool, so a read-only task cannot select it. Durable directory
+claims coordinate Milkdrift tasks across workflows and aliases and remain held while a writer is
+uncertain. They do not block an external editor or sandbox the configured executable. Prepare
+separate worktrees when alternatives need independent writable trees. Linux project entry retains
+an open directory handle so a replacement cannot redirect the process into a new directory.
+
+An explicit task with no project access and no project tools may use an isolated process profile
+for captured inputs. This choice does not run that process in the project. The task keeps that
+distinction in its accepted execution settings; selecting a project never silently retargets an
+isolated or fixed-directory profile.
+
+### Fixed authorized repository working directory
 
 `working_directory` normally uses `isolated_root` or a relative directory beneath the fresh
 Milkdrift-owned execution root. Dependent coding tasks may instead select one exact operator-owned
@@ -69,8 +91,13 @@ read-write roots before process entry. Separate invocations therefore receive fr
 isolated Milkdrift materialization/output roots while their child processes intentionally share the
 same repository files.
 
-This mode is for operator-authorized sequential work. It is not safe implicit concurrency and does
-not implement Git, branch selection, dirty-tree checks, credentials, merges, cleanup, or rollback.
+This mode remains for independent operator-authorized invocations. It is not offered as a project
+environment; use project mode for ordinary project tasks. Its configured directory joins the same
+durable writer claims for earlier tasks, model process tools, direct invocations and peer serving.
+Overlapping project readers and writers refuse entry while that owner is active or uncertain.
+Terminal evidence releases the claim; safe pre-entry serving recovery also releases it without
+claiming an external effect occurred. The claim does not implement Git, branch selection,
+dirty-tree checks, credentials, merges, cleanup, or rollback.
 Those remain explicit process/capability operations and operator-owned repository policy.
 Parallel alternatives should use separately prepared worktrees or another adapter with a stronger
 workspace isolation contract.

@@ -100,20 +100,23 @@ impl TaskControlService {
             if has_distinct_wait(record, source) {
                 return Ok(());
             }
-            let result = Self::feedback_batch(record, source).and_then(|batch| {
+            let result = Self::feedback_batch(record, source).and_then(|mut batch| {
                 self.authorize_batch(&context, record, &batch)?;
-                Ok(self.runtime.admit_model_batch(
+                let original = serde_json::to_vec(&serde_json::to_value(&batch)?)?;
+                self.resolve_project_batch(&context, record, &mut batch, true)?;
+                Ok(self.runtime.admit_model_batch_exact(
                     context.actor().as_str(),
                     &record.id,
                     source,
                     batch,
                     true,
+                    &original,
                 )?)
             });
             if let Err(error) = result {
                 // Feedback uses the same exact receipt boundary as the original proposal.
                 // An unavailable store is not proof that a repair was refused or uncommitted.
-                if persistence_error(&error).is_some() && !is_capacity_error(&error) {
+                if persistence_error(&error).is_some() && !is_definite_storage_refusal(&error) {
                     return Err(error);
                 }
                 // An explicit wait may win after the read above but before checked admission.
@@ -132,23 +135,26 @@ impl TaskControlService {
         }
         let result = self
             .read_batch(record, source, artifacts)
-            .and_then(|batch| {
+            .and_then(|mut batch| {
                 self.authorize_batch(&context, record, &batch)?;
-                Ok(self.runtime.admit_model_batch(
+                let original = serde_json::to_vec(&serde_json::to_value(&batch)?)?;
+                self.resolve_project_batch(&context, record, &mut batch, false)?;
+                Ok(self.runtime.admit_model_batch_exact(
                     context.actor().as_str(),
                     &record.id,
                     source,
                     batch,
                     false,
+                    &original,
                 )?)
             });
         if let Err(error) = result {
             // Storage outages are retried from Pending. A durable admission may have committed
             // despite a lost response, so never convert an indeterminate store result to rejection.
-            if persistence_error(&error).is_some() && !is_capacity_error(&error) {
+            if persistence_error(&error).is_some() && !is_definite_storage_refusal(&error) {
                 return Err(error);
             }
-            let repair = !is_capacity_error(&error)
+            let repair = !is_definite_storage_refusal(&error)
                 && !matches!(
                     error,
                     ControlError::AuthorizationDenied { .. }
@@ -371,13 +377,14 @@ fn persistence_error(error: &ControlError) -> Option<&PersistenceError> {
     }
 }
 
-fn is_capacity_error(error: &ControlError) -> bool {
-    // Capacity cannot improve by generating another task. Rejection/refusal rereads the source
-    // under the runtime gate, so an admission that committed before this error stays accepted.
+fn is_definite_storage_refusal(error: &ControlError) -> bool {
+    // Capacity and stale project authority cannot improve by generating another task.
+    // These are known transaction refusals; source history remains accepted and unchanged.
     matches!(
         persistence_error(error),
         Some(
             PersistenceError::Bounds { .. }
+                | PersistenceError::ProjectGenerationConflict { .. }
                 | PersistenceError::Storage {
                     class: StorageFailureClass::ResourceExhausted,
                     ..

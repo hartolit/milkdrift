@@ -1,16 +1,18 @@
 <script lang="ts">
   import { onDestroy, tick, untrack } from 'svelte';
-  import type { InputBinding, TaskCapability, TaskChangeDto, TaskReadDto, TaskSessionDto, TaskUploadReceipt, WorkflowLimitsDto, WorkflowReadDto, WorkflowReceipt } from '../lib/protocol.generated';
+  import type { InputBinding, ProjectDto, TaskCapability, TaskChangeDto, TaskReadDto, TaskSessionDto, TaskUploadReceipt, WorkflowLimitsDto, WorkflowReadDto, WorkflowReceipt } from '../lib/protocol.generated';
   import { addCanvasTask, addSource, assertCapacity, assertEditable, authoring, cacheTask, capabilityKey, changeCount, chooseCapability, connectBinding, copy, freezeCanvas, hasChanges, inputSlots, projectGraph, removeConnection, reviseTask, sourceBinding, stageChange, synchronizeDependencies, updateDefinition, updateInstructions, updateSource, type CanvasState, type CanvasTask, type GraphEdge } from '../lib/canvas';
   import { DaemonClient, DaemonError } from '../lib/transport';
   import { captureTextRequest } from '../lib/task-input';
   import { executionLanes, readableReason, saveBlob, stateLabel, timeLabel } from '../lib/presentation';
   import WorkflowCanvas from './WorkflowCanvas.svelte';
   import TaskPermissions from './TaskPermissions.svelte';
+  import ExecutionDetails from './ExecutionDetails.svelte';
   import '../canvas.css';
 
-  let { canvas, workflow, session, client, preferredCapability, onaccepted, onreviewed, onrefresh, onpage, onerror, oncapabilitychoice, onmodels, ondiscard }: {
+  let { canvas, currentProject = null, workflow, session, client, preferredCapability, onaccepted, onreviewed, onrefresh, onpage, onerror, oncapabilitychoice, onmodels, ondiscard }: {
     canvas: CanvasState; workflow: WorkflowReadDto | null; session: TaskSessionDto; client: DaemonClient;
+    currentProject?: ProjectDto | null;
     preferredCapability?: TaskCapability; onaccepted: (receipt: WorkflowReceipt) => Promise<void>;
     onreviewed: (workflow: WorkflowReadDto) => void; onrefresh: () => Promise<void>;
     onpage: (cursor?: string) => Promise<void>; onerror: (failure: unknown) => void;
@@ -84,7 +86,12 @@
   }
 
   export async function addTask() {
-    attempt(() => { if (canvas.target.kind === 'existing' && !hasChanges(canvas) && workflow) canvas.target.generation = workflow.generation; addCanvasTask(canvas, session, preferredCapability); connection = null; edge = null; });
+    attempt(() => {
+      if (!canvas.target.projectId) throw new Error('Choose an accessible project before adding a task. Earlier workflows can be associated from their project notice.');
+      if (!hasChanges(canvas) && currentProject) canvas.project = copy(currentProject);
+      if (canvas.target.kind === 'existing' && !hasChanges(canvas) && workflow) canvas.target.generation = workflow.generation;
+      addCanvasTask(canvas, session, preferredCapability); connection = null; edge = null;
+    });
     await tick(); instructionsElement?.focus();
   }
   export function canNavigate() { return true; }
@@ -317,14 +324,19 @@
 
   function createCorrection(task: TaskReadDto) {
     attempt(() => {
+      if (!canvas.target.projectId) throw new Error('Choose an accessible project before creating a correction.');
+      if (task.definition.execution?.kind === 'restricted') throw new Error('This task’s execution selection is restricted. Create a new task with an accessible project and reviewed permissions.');
+      if (!hasChanges(canvas) && currentProject) canvas.project = copy(currentProject);
       if (canvas.target.kind === 'existing' && !hasChanges(canvas) && workflow) canvas.target.generation = workflow.generation;
       const selected = canvas.selected, inspectorOpen = canvas.inspector;
       const draft = addCanvasTask(canvas, session, task.definition.capability);
       try {
-      draft.definition = { ...copy(task.definition), title: `Correction: ${task.definition.title}`, instructions: '', corrective_of: task.id };
+      const original = copy(task.definition), binding = original.execution?.kind === 'bound' ? original.execution.binding : null;
+      draft.definition = { ...original, title: `Correction: ${task.definition.title}`, instructions: '', corrective_of: task.id, execution: binding && canvas.project ? { kind: 'explicit', expected_generation: canvas.project.generation, settings: binding.settings, access: binding.access, tools: binding.tools } : draft.definition.execution, paths: binding?.paths ?? [], tools: [] };
       draft.titleEdited = true; draft.explicitDependencies = [...task.definition.dependencies];
       assertCapacity(canvas);
       canvas.selected = draft.id;
+      if (binding) canvas.notice = 'This correction keeps the original environment and permissions. The daemon checks them against current authority when you submit it.';
       } catch (failure) { canvas.tasks = canvas.tasks.filter((item) => item.id !== draft.id); delete canvas.positions[draft.id]; canvas.selected = selected; canvas.inspector = inspectorOpen; throw failure; }
     });
     void tick().then(() => instructionsElement?.focus());
@@ -369,6 +381,11 @@
 <section class="canvas-workspace" aria-label="Workflow workspace">
   <header class="canvas-toolbar"><div class="canvas-title"><p class="eyebrow">{canvas.target.kind === 'new' ? 'Unsaved workflow' : session.daemon_name}</p><h1>{workflow?.title ?? (canvas.title || 'New workflow')}</h1></div><div class="canvas-toolbar-actions"><button class="quiet" onclick={() => { canvas.selected = 'workflow'; canvas.inspector = true; connection = null; edge = null; }}>Workflow</button><button class="primary" data-add-task onclick={addTask} disabled={canvas.busy || !!canvas.pending || !!canvas.pendingUpload}>+ Add task</button><button onclick={() => addText()} disabled={canvas.busy || !!canvas.pending || !!canvas.pendingUpload}>+ Text</button><button onclick={() => attachFile()} disabled={canvas.busy || !!canvas.pending || !!canvas.pendingUpload}>Attach file</button></div></header>
   <input bind:this={attachment} class="visually-hidden" tabindex="-1" aria-label="Attach text file" type="file" accept="text/*,.md,.toml,.json,.csv,.rs,.txt" onchange={(event) => { const file = event.currentTarget.files?.[0]; if (file) void captureFile(file, attachmentTarget); event.currentTarget.value = ''; }} />
+  {#if currentProject && canvas.project && currentProject.generation !== canvas.project.generation && canvas.tasks.some((task) => task.definition.execution?.kind === 'project')}
+    <div class="notice warning canvas-message">Project settings changed. Review {currentProject.settings.environment.kind === 'host' ? 'host file tools' : currentProject.settings.environment.kind} with {currentProject.settings.allow_changes ? 'read and write' : 'read-only'} access before submitting.
+      <button disabled={canvas.busy || !!canvas.pending} onclick={() => attempt(() => { canvas.project = copy(currentProject!); for (const task of canvas.tasks) if (task.definition.execution?.kind === 'project') task.definition.execution.expected_generation = currentProject!.generation; canvas.conflict = false; })}>Use reviewed project settings</button>
+    </div>
+  {/if}
   <div class="canvas-body" class:inspector-visible={canvas.inspector}>
     {#if canvas.inspector}
       <aside class="canvas-inspector" aria-label="Selected item" bind:this={inspector}>
@@ -398,7 +415,7 @@
               <div class="input-actions"><button type="button" onclick={() => addText(draftTask!.id)}>+ Add input</button><button type="button" class="quiet" onclick={() => attachFile(draftTask!.id)}>Attach file</button></div>
               {#if selectedEdges.length}<ul class="inspector-connections">{#each selectedEdges as input (input.id)}<li><button type="button" onclick={() => inspectEdge(input)}>{graph.nodes.find((node) => node.id === input.source)?.label}<small>{input.label}</small></button></li>{/each}</ul>{/if}
               <details><summary>More actions</summary><button type="button" onclick={() => addText(draftTask!.id, true)}>Wait for a required input</button><label>Run after<select value="" onchange={(event) => { if (event.currentTarget.value) attempt(() => { draftTask!.explicitDependencies = [...new Set([...draftTask!.explicitDependencies, event.currentTarget.value])]; synchronizeDependencies(draftTask!); }); }}><option value="">Choose a prerequisite task</option>{#each graph.nodes.filter((node) => node.kind === 'task' && node.id !== draftTask!.id) as node (node.id)}<option value={node.id}>{taskLabel(node.id)}</option>{/each}</select></label><label class="checkbox-label"><input type="checkbox" bind:checked={draftTask.definition.required} /> This task must succeed for the workflow to finish</label></details>
-              {#if contract?.category === 'model'}<TaskPermissions definition={draftTask.definition} {session} onchange={(definition) => attempt(() => updateDefinition(canvas, draftTask!, definition))} onerror={(message) => canvas.error = message} />{/if}
+              <TaskPermissions definition={draftTask.definition} {session} project={canvas.project} onchange={(definition) => attempt(() => updateDefinition(canvas, draftTask!, definition))} onerror={(message) => canvas.error = message} />
               {#if draftTask.definition.corrective_of}<p class="field-hint">Corrects {taskLabel(draftTask.definition.corrective_of)}. The original result remains in history.</p>{/if}
             </fieldset>
             <div class="inspector-footer"><button class="primary" disabled={canvas.busy || !!canvas.pending || !!canvas.pendingUpload || canvas.conflict}>{submitLabel}</button><button class="quiet" type="button" onclick={() => discardTask(draftTask!)} disabled={canvas.busy || !!canvas.pending || !!canvas.pendingUpload}>Discard {draftTask.version === null ? 'task' : 'edit'}</button></div>
@@ -406,6 +423,7 @@
         {:else if selectedTask}
           <h2>{selectedTask.definition.title}</h2><span class="badge {selectedTask.state}">{stateLabel(selectedTask)}</span>
           <p class="assigned-model">{authoring(session, selectedTask.definition.capability)?.label ?? selectedTask.definition.capability.id}</p>
+          <ExecutionDetails definition={selectedTask.definition} project={currentProject ?? canvas.project} {session} />
           {#if selectedTask.reason}<p class="notice {selectedTask.state === 'failed' ? 'error' : 'warning'}">{readableReason(selectedTask.reason)}</p>{/if}
           {#if selectedTask.stop_requested && selectedTask.state !== 'stopped'}<p class="field-hint">Stop requested. The daemon has not reported that this task stopped.</p>{/if}
           <p class="task-instructions">{selectedTask.definition.instructions.slice(0, 700)}</p>

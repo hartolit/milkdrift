@@ -29,6 +29,7 @@ mod managed;
 mod metadata;
 mod peer_store;
 mod peers;
+mod projects;
 mod queue;
 mod read_model;
 mod requests;
@@ -38,6 +39,7 @@ mod storage_ports;
 mod tasks;
 mod uploads;
 pub(crate) use metadata::DaemonMetadataRequest;
+pub(crate) use projects::ProjectRequest;
 pub(crate) use tasks::TaskRequest;
 
 use clock::DurableClock;
@@ -165,6 +167,8 @@ pub(crate) struct ArtifactContentRead {
 }
 
 struct Owner {
+    project_protected_root: std::path::PathBuf,
+    project_protected_paths: Vec<std::path::PathBuf>,
     host_id: PeerId,
     input_budget: WorkspaceBudget,
     recovery_controls: bool,

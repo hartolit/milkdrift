@@ -180,8 +180,9 @@ impl ResolvedCapability {
 }
 
 /// Frozen run authority plus exact scheduling coordinates supplied to candidate resolution.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CapabilityResolutionContext {
+    project_binding: Option<milkdrift_blueprint::TaskProjectBinding>,
     basis: ExecutionAuthorityBasis,
     revision: RevisionId,
     node: NodeId,
@@ -201,6 +202,7 @@ impl CapabilityResolutionContext {
         attempt: AttemptId,
     ) -> Self {
         Self {
+            project_binding: None,
             basis,
             revision,
             node,
@@ -216,6 +218,22 @@ impl CapabilityResolutionContext {
     ) -> Self {
         self.filesystem = filesystem;
         self
+    }
+
+    /// Carries the admitted project identity to candidate compatibility checks.
+    #[must_use]
+    pub fn with_project_binding(
+        mut self,
+        binding: Option<milkdrift_blueprint::TaskProjectBinding>,
+    ) -> Self {
+        self.project_binding = binding;
+        self
+    }
+
+    /// Accepted project provenance used by local capability resolution.
+    #[must_use]
+    pub const fn project_binding(&self) -> Option<&milkdrift_blueprint::TaskProjectBinding> {
+        self.project_binding.as_ref()
     }
 
     /// Frozen run-level authority inherited by this attempt.
@@ -315,6 +333,8 @@ fn maximum_budget(left: Option<u64>, right: Option<u64>) -> Option<u64> {
 /// Dispatch value delivered to an executor after schedule and lease facts are durable.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ExecutionDispatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    project_binding: Option<milkdrift_blueprint::TaskProjectBinding>,
     #[serde(default)]
     task_inputs: bool,
     #[serde(default)]
@@ -363,6 +383,7 @@ impl ExecutionDispatch {
             .validate_request(&request)
             .map_err(|error| ExecutorError::InvalidDispatch(error.to_string()))?;
         Ok(Self {
+            project_binding: None,
             task_inputs: false,
             task_artifact_budget: None,
             native_path_claims: Vec::new(),
@@ -427,6 +448,7 @@ impl ExecutionDispatch {
             dispatch.native_path_claims = self.native_path_claims.clone();
             dispatch.task_tools = self.task_tools.clone();
             dispatch.maximum_tool_calls = self.maximum_tool_calls;
+            dispatch.project_binding = self.project_binding.clone();
             dispatch
         })
     }
@@ -485,6 +507,22 @@ impl ExecutionDispatch {
         self.task_tools = tools;
         self.maximum_tool_calls = maximum_calls;
         self
+    }
+
+    /// Retains the accepted native folder and environment through preparation and entry.
+    #[must_use]
+    pub fn with_project_binding(
+        mut self,
+        binding: Option<milkdrift_blueprint::TaskProjectBinding>,
+    ) -> Self {
+        self.project_binding = binding;
+        self
+    }
+
+    /// Exact project selection frozen with this invocation, if it is project work.
+    #[must_use]
+    pub const fn project_binding(&self) -> Option<&milkdrift_blueprint::TaskProjectBinding> {
+        self.project_binding.as_ref()
     }
 
     /// Exact tools admitted with this definition.
@@ -724,6 +762,18 @@ impl<'a> PreparedExecution<'a> {
 /// and distinguish failure before entry from loss of an outcome after entry. They must
 /// not append run events, retry effects independently, or substitute a newer generation.
 pub trait TaskExecutor: Send + Sync {
+    /// Captures effective project scopes using the execution host's native identity owner.
+    ///
+    /// # Errors
+    /// Refuses unsupported native paths, escaped roots or substituted registered directories.
+    fn pin_project_paths(
+        &self,
+        _binding: &milkdrift_blueprint::TaskProjectBinding,
+    ) -> Result<Vec<milkdrift_blueprint::TaskProjectFolder>, ExecutorError> {
+        Err(ExecutorError::BoundaryBeforeEntry(
+            "project filesystem identity is unsupported by this executor".into(),
+        ))
+    }
     /// Releases durable native path claims only after runtime has committed settlement evidence.
     ///
     /// # Errors

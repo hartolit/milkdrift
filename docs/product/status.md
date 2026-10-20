@@ -18,11 +18,26 @@ forms with that canvas and adds the daemon contracts needed by its connections. 
 verification is complete; actual user acceptance remains open. The October 19 discussion selects
 daemon-owned projects, ordinary host folders and project-level execution settings. The resulting
 [02e correction](../development/virtual-office/daemon-workflows-implementation/02e-projects-and-execution-environments.md)
-is prepared, not assigned or implemented. Prompt 04 waits for this correction and completed early
-review. Prompt 07 retains the final integrated gate. Hosted quality run 227
+implements the project boundary and has completed its focused checks, with the physical Podman
+qualification gap below. Prompt 04 waits for completed early review and its own assignment.
+Prompt 07 retains the final integrated gate. Hosted quality run 227
 failed on the earlier `e720bb9`; no later hosted pass is claimed.
 
 ## Implemented now
+
+Projects belong to one daemon and identify ordinary user folders. Public clients can attach a
+folder, create one child in a permitted parent, rename a registration, change guarded defaults and
+remove an unused registration without deleting files. Folder creation persists intent before its
+external effect; unresolved ownership remains available for explicit reconciliation or abandonment.
+New workflows require a project. Earlier workflows can be associated without rewriting accepted
+definitions, results or exact receipts.
+
+New tasks choose reviewed project defaults or complete explicit restrictions. Acceptance freezes
+folder identity, access, tools and environment generation. Model-authored additions use the same
+resolver. Native tools address host paths; project-aware processes use a pinned working directory,
+and the managed adapter verifies an explicit `/project` attachment separately from its owned volume.
+Changing defaults never silently changes accepted work. The browser groups projects and workflows,
+offers bounded folder choices and keeps model selection separate from tool execution.
 
 The public path creates tasks with client-local aliases, supplies text and captured text files,
 starts configured external process/model capabilities, and retains results for later discovery.
@@ -69,8 +84,8 @@ generations. A draft result connection adds its actual output declaration and im
 Retained named results may be selected even when the historical producer did not declare them;
 shared admission verifies publication metadata and current source authority. Correction redirect
 preserves the original media contract and finite output allowance. Bounded inline/shared-input reads
-rebuild source cards, while started tasks retain frozen inputs. File tools select permitted project
-roots and explicit access modes independently of captured client files.
+rebuild source cards, while started tasks retain frozen inputs. File tools use the accepted project
+binding and explicit access mode independently of captured client files.
 Before a local task receives artifact bytes, the host checks its accepted actor's current read
 permission against the actual artifact, sensitivity and size. Capability execution permission alone
 does not authorize those reads.
@@ -78,7 +93,7 @@ does not authorize those reads.
 The canvas exposes prospective edits, correction/rebinding, stop, removal, wait/resume, completion,
 limits and rejected-model-proposal dismissal through contextual actions. The former definition,
 composer and JSON batch editor product paths are removed. Exact pending requests and up to eight
-dirty drawings remain scoped in memory to the authenticated daemon and actor; navigation never
+dirty drawings remain scoped in memory to the authenticated daemon, actor, project and workflow; navigation never
 submits them. Graph/detail caches are bounded and off-page connections remain explicit. A full draft
 cache still permits viewing other workflows. Conflicts retain the drawing for a new decision;
 lost replies offer exact recovery. Spatial layout owns no scheduling or elapsed-time meaning;
@@ -94,12 +109,13 @@ stop requests, uncertainty and restart cannot refund unresolved work.
 
 ## Limitations now
 
-There is no durable project catalog or workflow-to-project association yet. The current **Project**
-folder choices are filesystem grant roots, with file tools configured per task. Persistent process
-working directories are fixed by operator profiles. Managed Podman workers use installation-owned
-volumes and reject arbitrary host mounts. The selected project correction must make a user-chosen
-folder consistent across tools and add a verified attached-folder mode; selecting a model today does
-not provision a Rust project, toolchain or shared working directory automatically.
+Host tools remain trusted processes; native claims do not sandbox them or lock out external
+editors. Project-aware process profiles are configured by the operator. Fixed-directory and isolated
+profiles retain their separate meanings and are not silently retargeted. Selecting a model does not
+install a toolchain. Podman project attachments preserve the pinned source and refuse incompatible
+host/runtime prerequisites. The local rootless OCI runtime has refused the fd-backed source mount
+before workload entry; successful physical attached-project execution remains unqualified. See
+[verification evidence](../development/verification-evidence.md) for the measured boundary and gap.
 
 The user rejected the earlier compact form layout. Canvas behavior and model assignment have
 focused verification; the actual user has not rechecked the replacement. Naming and visual
@@ -121,8 +137,8 @@ The current store format is a development cutover. Earlier graph, revision, prop
 structured-child, prompt-sequence, workflow-publication and evaluated-learning product paths are
 retired. There is no migration or compatibility reader for those stores in the new executable.
 Internal document format 22 refuses earlier task records lacking the current duration and model
-admission facts. Physical schema 20 adopts only prompt-03 schema 19 with internal format 22, adding
-daemon metadata without rewriting workflow records or receipts. Earlier formats remain refused.
+admission facts. Physical schema 21 adopts only exact schema 19 or 20 stores with internal format 22,
+adding daemon/project tables without rewriting workflow records or receipts. Earlier formats remain refused.
 The expanded Controller preset changes its grant digest: unfinished work bound to an older grant
 can be denied before its next external entry. Follow the [upgrade guidance](../operations/daemon.md)
 and preserve matching binaries/configurations for old work. Existing stores/services and Git preservation checkpoints remain intact. Generic managed

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { addCanvasTask, addSource, cacheTask, capabilityKey, chooseCapability, connectBinding, createCanvas, freezeCanvas, projectGraph, removeConnection, reviseTask, sourceBinding, stageChange, synchronizeDependencies, updateDefinition, updateInstructions, updateSource } from './canvas';
+import { addCanvasTask, addSource, cacheTask, capabilityKey, chooseCapability, connectBinding, freezeCanvas, projectGraph, removeConnection, reviseTask, sourceBinding, stageChange, synchronizeDependencies, updateDefinition, updateInstructions, updateSource } from './canvas';
 
-import { acceptedTask, session, workflow } from './canvas.test-fixtures';
+import { acceptedTask, session, workflow, projectCanvas as createCanvas } from './canvas.test-fixtures';
 
 describe('bounded canvas authoring', () => {
   it('keeps an empty canvas unsaved and requires deliberate choice when more than one executor exists', () => {

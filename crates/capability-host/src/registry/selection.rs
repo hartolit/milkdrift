@@ -18,18 +18,26 @@ use super::{
 use crate::CapabilityAdapter;
 
 impl CapabilityHost {
-    /// Installs the daemon's durable native-directory claim owner before task admission.
-    /// A configured owner cannot be replaced while accepted or uncertain work may retain claims.
+    /// Installs native claims with the daemon composition's canonical protected operator paths.
+    /// These current inputs constrain project bindings, including accepted work resumed after
+    /// restart; they do not change independent process-profile authority.
     ///
     /// # Errors
-    /// Refuses a second installation; create one host per owning daemon store.
+    /// Refuses a second installation, relative paths or more than 4,096 protected inputs.
     pub fn install_native_path_store(
         &self,
         store: Arc<dyn milkdrift_persistence::NativePathClaimStore>,
+        protected_paths: Vec<std::path::PathBuf>,
     ) -> Result<(), HostError> {
+        if protected_paths.len() > 4_096 || protected_paths.iter().any(|path| !path.is_absolute()) {
+            return Err(HostError::InvalidConfig);
+        }
         self.core
             .native_paths
-            .set(crate::native_paths::NativePathClaims::new(store))
+            .set(
+                crate::native_paths::NativePathClaims::new(store)
+                    .with_project_protection(protected_paths),
+            )
             .map_err(|_| HostError::InvalidConfig)
     }
 
@@ -139,6 +147,9 @@ impl CapabilityHost {
         })?;
         let accepts_direct_inputs =
             lifecycle_call(|| Ok::<_, crate::AdapterError>(adapter.accepts_direct_inputs()))?;
+        let accepts_project_without_access = lifecycle_call(|| {
+            Ok::<_, crate::AdapterError>(adapter.accepts_project_without_access())
+        })?;
         let pending_limit =
             lifecycle_call(|| Ok::<_, crate::AdapterError>(adapter.maximum_pending_workflows()))?;
         if pending_limit == Some(0) {
@@ -178,6 +189,7 @@ impl CapabilityHost {
             Generation {
                 task_authoring,
                 accepts_direct_inputs,
+                accepts_project_without_access,
                 descriptor,
                 descriptor_digest,
                 adapter,
@@ -281,6 +293,9 @@ impl CapabilityHost {
         evaluator: &dyn AuthorityEvaluator,
         observed_at_unix_ms: u64,
     ) -> Result<ResolvedCapability, ExecutorError> {
+        if let Some(binding) = authority.project_binding() {
+            self.verify_current_project(binding)?;
+        }
         let state = self.core.state.lock().map_err(|_error| {
             ExecutorError::BoundaryBeforeEntry("registry unavailable".to_owned())
         })?;
@@ -307,6 +322,14 @@ impl CapabilityHost {
             let Some(_contract) = generation.descriptor.operation(requirement.operation()) else {
                 continue;
             };
+            if let Some(binding) = authority.project_binding() {
+                validate_project_candidate(
+                    binding,
+                    &generation.descriptor,
+                    requirement.operation(),
+                    generation.accepts_project_without_access,
+                )?;
+            }
             let request = authority.candidate_request(
                 &generation.descriptor,
                 requirement.operation(),
@@ -488,6 +511,130 @@ impl CapabilityHost {
             ResolvedCapabilitySnapshot::from_descriptor(&descriptor, requirement.operation())?;
         ResolvedCapability::new(descriptor, snapshot)
     }
+}
+
+fn validate_project_candidate(
+    binding: &milkdrift_blueprint::TaskProjectBinding,
+    descriptor: &CapabilityDescriptor,
+    operation: &milkdrift_capability::OperationId,
+    accepts_project_without_access: bool,
+) -> Result<(), ExecutorError> {
+    use milkdrift_blueprint::{ProjectEnvironment, TaskProjectAccess};
+    use milkdrift_capability::{CapabilityCategory, Locality};
+    let refused = |message: &str| ExecutorError::BoundaryBeforeEntry(message.to_owned());
+    if descriptor.category() == &CapabilityCategory::Model {
+        return Ok(());
+    }
+    if descriptor.category() != &CapabilityCategory::Process {
+        return Err(refused(
+            "project bindings require a supported local process or model; remote paths are not shared",
+        ));
+    }
+    if binding.access == TaskProjectAccess::None && binding.tools.is_empty() {
+        return if accepts_project_without_access {
+            Ok(())
+        } else {
+            Err(refused(
+                "no project access requires an isolated profile or explicit peer transfer",
+            ))
+        };
+    }
+    if descriptor.locality() != Locality::Local {
+        return Err(refused(
+            "project paths cannot be passed to a remote process",
+        ));
+    }
+    let (capability, selected_operation, generation, podman) = match &binding.settings.environment {
+        ProjectEnvironment::Host => {
+            return Err(refused(
+                "this project has no configured process environment",
+            ));
+        }
+        ProjectEnvironment::Process {
+            capability,
+            operation,
+            generation,
+        } => (capability, operation, generation, false),
+        ProjectEnvironment::Podman {
+            capability,
+            operation,
+            generation,
+        } => (capability, operation, generation, true),
+    };
+    if descriptor.identity().as_str() != capability
+        || operation.as_str() != selected_operation
+        || descriptor.descriptor_revision() != *generation
+    {
+        return Err(refused(
+            "process capability or generation differs from the accepted project environment",
+        ));
+    }
+    if binding.access == TaskProjectAccess::None
+        || (!podman && binding.access != TaskProjectAccess::Write)
+    {
+        return Err(refused(
+            "trusted host processes require writable project access; read-only work requires an enforced read-only worker",
+        ));
+    }
+    let compatible = descriptor.extensions().iter().any(|(key, value)| {
+        if podman {
+            key.as_str() == "milkdrift.managed/project-attachment"
+        } else {
+            key.as_str() == "org.milkdrift/process-profile"
+                && value
+                    .value()
+                    .get("project_directory")
+                    .and_then(serde_json::Value::as_bool)
+                    == Some(true)
+        }
+    });
+    if !compatible {
+        return Err(refused(
+            "configured environment does not support a pinned project directory",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[test]
+fn remote_process_requires_explicit_no_project_access() -> Result<(), Box<dyn std::error::Error>> {
+    use milkdrift_blueprint::{
+        ProjectEnvironment, ProjectSettings, TaskProjectAccess, TaskProjectBinding,
+        TaskProjectFolder,
+    };
+    let mut document: serde_json::Value = serde_json::from_slice(include_bytes!(
+        "../../../capability/tests/fixtures/descriptor-v1.json"
+    ))?;
+    *document
+        .pointer_mut("/descriptor/category")
+        .ok_or("category absent")? = serde_json::json!({"type":"process"});
+    let descriptor = CapabilityDescriptorDocument::from_json(&serde_json::to_vec(&document)?)?;
+    let operation = milkdrift_capability::OperationId::new("model.generate")?;
+    let mut binding = TaskProjectBinding {
+        project_id: "project:organization".into(),
+        generation: 1,
+        folder: TaskProjectFolder {
+            requested: "/project".into(),
+            physical: "/project".into(),
+            identity: "unix:1:1".into(),
+        },
+        settings: ProjectSettings {
+            environment: ProjectEnvironment::Host,
+            allow_changes: false,
+        },
+        access: TaskProjectAccess::None,
+        paths: Vec::new(),
+        scopes: Vec::new(),
+        tools: Vec::new(),
+    };
+    assert!(validate_project_candidate(&binding, descriptor.body(), &operation, false).is_err());
+    validate_project_candidate(&binding, descriptor.body(), &operation, true)?;
+    binding.access = TaskProjectAccess::Read;
+    assert!(validate_project_candidate(&binding, descriptor.body(), &operation, true).is_err());
+    binding.access = TaskProjectAccess::Write;
+    assert!(validate_project_candidate(&binding, descriptor.body(), &operation, true).is_err());
+    Ok(())
 }
 
 fn shutdown_failed_registration(adapter: &dyn CapabilityAdapter) -> Result<(), HostError> {

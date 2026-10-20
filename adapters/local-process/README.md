@@ -32,7 +32,17 @@ a shell. The configured executable still determines how it interprets those argu
 `WorkingDirectoryMode` is a consequential choice. Isolated modes use the leased execution directory.
 `AuthorizedHostPath` enters an explicitly allowed persistent repository while input materialization
 and declared output paths remain under the separate leased root. Sequential invocations can therefore
-share repository progress; parallel branches need explicitly separate workspaces.
+share repository progress. `Project` instead uses the daemon's immutable task project binding and
+permits one profile to serve different authorized folders. It requires writable project access,
+matches the selected environment generation, and retains the pinned directory handle through spawn.
+The task's durable native claim coordinates that writer with other workflows and aliases. These
+claims do not sandbox the trusted process or lock out external editors. Parallel alternatives need
+explicitly prepared separate worktrees. An explicit no-project-access task can still use an isolated
+profile; the adapter never turns that mode into a project working directory.
+Configured `AuthorizedHostPath` directories also enter that claim owner, including when an earlier
+task has no explicit paths or a model calls the profile as a tool. Direct and peer serving acquire
+the same claim under their exact durable invocation, retaining it for uncertain work and releasing
+it in their terminal or safe pre-entry recovery transaction.
 
 The child environment starts empty and receives only allowlisted non-secret variables and resolved
 secret references. A secret-bearing profile must disable text progress streaming. Captured stdout

@@ -1222,6 +1222,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "milkdrift-authority",
+ "milkdrift-blueprint",
  "milkdrift-capability",
  "milkdrift-capability-host",
  "milkdrift-contracts",
@@ -1237,6 +1238,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tracing",
  "url",
 ]
 

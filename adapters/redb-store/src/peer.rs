@@ -7,6 +7,7 @@
 
 mod claims;
 mod records;
+pub(crate) use records::guard_native_path_claim;
 pub(crate) use records::snapshot_in_read_transaction_text;
 use records::{
     available_key, bump_record, catalog_in_transaction, claim_key, corruption, decode_ordered_time,

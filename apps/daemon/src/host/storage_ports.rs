@@ -43,6 +43,14 @@ impl NativePathClaimStore for AdapterStorage {
         self.store()?.claim_native_paths(claim)
     }
 
+    fn claim_serving_native_paths(
+        &self,
+        record: &milkdrift_persistence::PeerExecutionRecord,
+        claim: &NativePathClaim,
+    ) -> Result<(), PersistenceError> {
+        self.store()?.claim_serving_native_paths(record, claim)
+    }
+
     fn native_path_claim(&self, owner: &str) -> Result<Option<NativePathClaim>, PersistenceError> {
         self.store()?.native_path_claim(owner)
     }

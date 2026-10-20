@@ -22,24 +22,26 @@ the current handoff.
 
 ## Project correction after the canvas
 
-Prepared [02e](02e-projects-and-execution-environments.md) adds the selected
+Assigned [02e](02e-projects-and-execution-environments.md) implements the selected
 [project boundary](../../../decisions/0051-daemon-task-workflows.md#projects-and-execution-environments).
-The following paths were inspected for this correction; the changes remain unimplemented.
+The following paths own its implementation and consumers. Qualified evidence remains in
+[verification evidence](../../verification-evidence.md).
 
 | Current owner | Complete responsibility in 02e |
 | --- | --- |
-| `crates/blueprint/src/task.rs`, `crates/runtime/src/tasks.rs`, `tasks/admission.rs`, `crates/control/src/tasks.rs` | Project definition/reference and explicit default resolution; preserve accepted task meaning, current authority and original canonical request recovery. No second scheduler. |
+| `crates/blueprint/src/project.rs`, `task_project.rs`, `crates/runtime/src/tasks.rs`, `tasks/admission.rs`, `crates/control/src/tasks/projects.rs` | Project definition/reference and explicit default resolution; preserve accepted task meaning, current authority and original canonical request recovery. No second scheduler. |
 | `crates/authority`, `crates/persistence`, `adapters/redb-store` task/application owners | Scoped project operations, bounded project records and folder-create intent/results; additive current-store adoption, exact receipts and reference-aware removal. |
-| `apps/daemon/src/host/tasks/authoring.rs`, daemon Owner/config/HTTP composition | Replace grant-root-as-project presentation with authorized catalog/directory/environment reads and public operations; coordinate folder effects under the existing queue and native-path owner. |
+| `apps/daemon/src/host/projects.rs` and its private modules, `http/projects.rs`, daemon Owner/config composition | Authorized catalog/directory/environment reads and public operations; coordinate folder effects under the existing queue and native-path owner. |
 | `crates/control-protocol/src/tasks.rs`, `crates/control-client`, CLI task/project command consumers, generated web types | Explicit project creation/association, generation guards and inheritance versus explicit empty permissions; update callers and versioned reader/replay handling together. |
 | `crates/capability-host/src/native_paths.rs`, `model_loop/files.rs`, preparation/materialization and managed owners | One effective folder across model context and all tools; cross-workflow writer claims, exact invocation binding and protected resource lifetime. Native tools use host paths today. |
 | `adapters/local-process/src/config.rs`, `process.rs`, `process/prepare.rs` | Add the necessary typed project-aware directory mode; current authorized host paths are fixed at profile registration and cannot be retargeted by frontend selection. |
 | `adapters/managed-linux/src/recipe.rs`, `worker.rs`, `platform.rs`, lifecycle/mechanism tests | Explicit attached-project mount and container working directory, actual mount/identity validation, permission-preserving user mapping and cleanup. Preserve the owned-volume mode and protected installations. |
-| `apps/web/src/App.svelte`, navigation, `CanvasWorkspace.svelte`, `TaskPermissions.svelte`, client draft/transport owners | Daemon/project/workflow navigation, compact attach/create/settings actions, inherited execution display and preserved canvas/model selection; bounded scoped drafts and exact recovery. |
+| `apps/web/src/App.svelte`, `ProjectSettings.svelte`, `ExecutionDetails.svelte`, `CanvasWorkspace.svelte`, `TaskPermissions.svelte`, client draft/transport owners | Daemon/project/workflow navigation, compact attach/create/settings actions, inherited execution display and preserved canvas/model selection; bounded scoped drafts and exact recovery. |
 | Existing Rust connected-task harness, browser cases and owner contract suites | Public create/edit/build/reconnect in two real project folders, default/replay races, interrupted creation, current-store adoption and real Podman qualification where authorized. |
 
 The native process and managed worker test suites retain their own enforcement claims. No host-folder
-mount is supported merely because Podman can represent one; the current worker verifier rejects it.
+mount is qualified merely because Podman can represent one; only the explicit verified project
+attachment is admitted, and this host's OCI runtime still refuses its held-directory mount.
 Phase 04 adopts these project bindings at expansion, phase 05 distinguishes remote locations and
 protects project files from retention, and 06/07 review and verify the integrated experience.
 

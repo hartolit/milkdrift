@@ -40,13 +40,23 @@ The [model guide](../../docs/guides/local-model-endpoint.md) explains supported 
 
 ## Submit, discover and recover
 
-Configure `MILKDRIFT_URL` and `MILKDRIFT_TOKEN_FILE`, or use the CLI's `--url` and `--token-file` flags.
+Configure `MILKDRIFT_ENDPOINT` and `MILKDRIFT_TOKEN_FILE`, or use the CLI's `--endpoint` and `--token-file` flags.
 Inspect available choices and substitute the exact advertised capability in the request file.
 `process.json`, `model.json` and `starter.json` are `CreateWorkflowRequest` documents, not graphs.
 `peer-placement.json` requires replacing its placeholder with the advertised exact peer capability.
+Grant read access to a project folder outside the daemon store, browse `project directories`, and
+attach it with `project attach NAME FOLDER`. Replace each request's `project_id` with the returned
+identity and `execution.expected_generation` with its reviewed generation. These captured-input
+examples deliberately select no project tools or file access; the local process profile uses an
+isolated invocation directory. To operate on project files, configure the typed project directory
+mode and use a compatible project environment. A remote capability receives explicit transferred
+inputs, never an implicit mount of this daemon's project folder.
 
 ```sh
 milkdrift --json workflow capabilities
+milkdrift --json project directories
+milkdrift --json project attach "Operator work" /absolute/authorized/project
+milkdrift --json project environments
 milkdrift --json workflow create process.json
 milkdrift --json workflow list --search Operator
 milkdrift --json workflow show WORKFLOW_ID

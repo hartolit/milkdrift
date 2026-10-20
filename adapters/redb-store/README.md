@@ -4,12 +4,13 @@ This adapter implements Milkdrift's [persistence contracts](../../crates/persist
 one redb database and owned artifact directories. Runtime decides what task transitions mean; this
 package makes accepted snapshots, receipts, resource holds and artifacts durable.
 
-The current task format uses internal document format 22 and physical schema 20. Earlier task
+The current task format uses internal document format 22 and physical schema 21. Earlier task
 documents lack the enforced-duration reservations and elapsed-time watermarks required by runtime.
 Existing databases are locked through a read-only
 handle and copied privately for the format check before redb can open the source for housekeeping
-writes. The exact prompt-03 format (physical schema 19, internal format 22) gains two empty daemon
-metadata tables and the new physical marker in one transaction. Existing task, receipt and host
+writes. Exact physical schemas 19 and 20 with internal format 22 gain three empty project families
+and the new physical marker in one transaction; schema 19 also receives its missing daemon
+metadata tables. Existing task, receipt and host
 identity rows keep their exact bytes. Unexpected tables, partial adoption and invalid accounting
 refuse before the source opens for writes. Other older formats are refused without migration.
 Keep preserved generations with their matching
@@ -36,6 +37,15 @@ generation and mark each copy inspection-only. The [operator procedure](../../do
 explains private destinations, copy limits, completion verification and explicit activation.
 
 ## What a write makes durable
+
+[`project.rs`](src/project.rs) owns at most 1,024 registrations and 8,192 exact operations.
+Each unresolved directory creation reserves a registration and one reconciliation receipt. The
+database records intent before the daemon creates one child outside the transaction; it does not
+claim filesystem/database atomicity. Settlement records the inspected directory identity or explicit
+abandonment. New admission refuses at capacity while existing creation recovery remains available.
+Workflow associations are additive records. New associations and reviewed project-generation guards
+commit with the workflow, while organizational association of earlier work leaves its bytes unchanged.
+Registration removal checks retained references and never removes a user directory.
 
 [`daemon.rs`](src/daemon.rs) binds a shared display name to the stable installation identity.
 Initialization uses the configured seed only when metadata is absent. A guarded rename saves its

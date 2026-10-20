@@ -1,6 +1,9 @@
 mod context;
 mod direct;
-pub use context::{AdapterExecutionContext, AdapterInputSelection, WorkflowExecutionContext};
+pub use context::{
+    AdapterExecutionContext, AdapterInputSelection, ProjectProcessAccess, ProjectProcessKind,
+    WorkflowExecutionContext,
+};
 pub use direct::DirectInputSelection;
 
 use std::sync::Arc;
@@ -11,6 +14,16 @@ use milkdrift_capability::{
     InvocationAdmissionEnvelope, InvocationEvent, InvocationRequest, ResolvedCapabilitySnapshot,
 };
 use thiserror::Error;
+
+/// A configured native directory whose possible effects must share the host's durable claims.
+/// This scope describes an adapter effect, not a task's permission to use native file tools.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativePathScope {
+    /// Absolute configured directory, captured and revalidated by the host before entry.
+    pub path: std::path::PathBuf,
+    /// Whether the adapter may change files beneath this directory.
+    pub write: bool,
+}
 
 /// Stable class of a bounded adapter failure summary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -239,6 +252,24 @@ pub trait CapabilityAdapter: Send + Sync + 'static {
     /// Workflow-only adapters remain absent from the independent invocation catalog.
     fn accepts_direct_inputs(&self) -> bool {
         false
+    }
+
+    /// Whether an explicit task choice with no project access can use isolated process storage.
+    /// Captured at registration; it does not change the descriptor of an earlier process profile.
+    fn accepts_project_without_access(&self) -> bool {
+        false
+    }
+
+    /// Configured native directories used independently of a task's explicit file-tool scope.
+    /// The task host claims these before preparation and retains uncertain writers until settlement.
+    ///
+    /// # Errors
+    /// Refuses unavailable configured roots or an invocation whose native scope cannot be resolved.
+    fn native_path_claims(
+        &self,
+        _invocation: &AdapterInvocation<'_>,
+    ) -> Result<Vec<NativePathScope>, AdapterError> {
+        Ok(Vec::new())
     }
 
     /// Prepares local request data without contacting an external capability.

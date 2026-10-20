@@ -1031,3 +1031,7 @@ mod process_cleanup;
 
 #[path = "process_execution/shutdown.rs"]
 mod shutdown;
+
+#[cfg(target_os = "linux")]
+#[path = "process_execution/projects.rs"]
+mod projects;

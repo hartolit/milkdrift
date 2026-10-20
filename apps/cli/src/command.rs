@@ -8,6 +8,7 @@ mod daemon;
 mod input;
 mod invocation;
 mod peer;
+mod project;
 mod resource;
 mod stream;
 mod workflow;
@@ -36,6 +37,7 @@ impl Cli {
     pub(crate) fn operation(&self) -> &'static str {
         use crate::{ArtifactCommand, CapabilityCommand, DaemonCommand, PeerCommand};
         match &self.command {
+            TopCommand::Project(_) => "project",
             TopCommand::Workflow(args) => match args.command {
                 crate::workflow_args::WorkflowCommand::List { .. } => "workflow.list",
                 crate::workflow_args::WorkflowCommand::Show { .. } => "workflow.show",
@@ -109,6 +111,7 @@ pub(crate) async fn execute(cli: Cli) -> Result<(), CliError> {
     }
     let session = CliSession::connect(cli).await?;
     match &session.cli().command {
+        TopCommand::Project(args) => project::execute(&session, args).await,
         TopCommand::Workflow(args) => workflow::execute(&session, args).await,
         TopCommand::Resource(args) => resource::execute(&session, args).await,
         TopCommand::Invocation { command } => invocation::execute(&session, command).await,

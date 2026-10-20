@@ -14,6 +14,9 @@ use serde::Deserialize;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct TaskListQuery {
+    project_id: Option<String>,
+    #[serde(default)]
+    earlier: bool,
     #[serde(default)]
     search: String,
     cursor: Option<String>,
@@ -73,6 +76,8 @@ pub(super) async fn list(
         &state,
         &headers,
         TaskRequest::List {
+            project_id: query.project_id,
+            earlier: query.earlier,
             search: query.search,
             cursor: query.cursor,
             limit: query.limit,

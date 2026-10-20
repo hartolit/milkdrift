@@ -1,8 +1,13 @@
 # 02e — Daemon-owned projects and execution environments
 
-**Prepared, not assigned.** The user approved preparing this correction on October 19 after asking
-where work executes and how projects relate to Podman. Implement only when this prompt is explicitly
-assigned. The outcome is a coherent **daemon → project → workflow** experience with real project
+**Assigned.** The user approved preparing this correction on October 19 after asking
+where work executes and how projects relate to Podman, then explicitly assigned its implementation.
+Implementation and focused verification are complete. Positive physical Podman attachment remains
+unqualified on this host under the prerequisite clause below; actual user review and prompt 07's
+integrated gate remain open. The [handoff](handoff.md) and
+[verification evidence](../../verification-evidence.md#prompt-02e-projects-and-execution-environments-verification)
+record the tested result and runnable review environment.
+The outcome is a coherent **daemon → project → workflow** experience with real project
 files, consistent execution and one project-level environment choice. Stop at the repaired early
 review handoff before 04; 03 remains complete and 07 retains the integrated full-system gate.
 

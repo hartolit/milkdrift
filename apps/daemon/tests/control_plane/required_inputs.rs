@@ -52,6 +52,7 @@ fn task(alias: &str, optional: bool) -> NewTaskDto {
 
 fn request(id: &str, tasks: Vec<NewTaskDto>, value: InputValue) -> CreateWorkflowRequest {
     CreateWorkflowRequest {
+        project_id: fixture_project_id(),
         request_id: id.to_owned(),
         title: format!("Input availability {id}"),
         description: "Count actual process entries for supplied input readiness".to_owned(),

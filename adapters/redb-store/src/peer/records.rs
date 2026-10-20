@@ -138,12 +138,46 @@ pub(super) fn put_execution(
     record: &PeerExecutionRecord,
 ) -> Result<(), PersistenceError> {
     validate_record(record)?;
+    if matches!(
+        record.phase,
+        PeerExecutionPhase::Terminal { .. } | PeerExecutionPhase::DispatchAvailable { .. }
+    ) {
+        crate::native_paths::release_in_transaction(write, record.managed_invocation()?.as_str())?;
+    }
     let bytes = json::encode(record, "peer execution")?;
     write
         .open_table(PEER_EXECUTIONS)
         .map_err(error::redb)?
         .insert(record.execution.as_str(), bytes.as_slice())
         .map_err(error::redb)?;
+    Ok(())
+}
+
+pub(crate) fn guard_native_path_claim(
+    write: &redb::WriteTransaction,
+    expected: &PeerExecutionRecord,
+    owner: &str,
+) -> Result<(), PersistenceError> {
+    let conflict = || PersistenceError::ImmutableConflict {
+        entity: "serving native path claim",
+        identity: expected.execution.to_string(),
+    };
+    let current =
+        execution_optional_in_transaction(write, &expected.execution)?.ok_or_else(conflict)?;
+    let PeerExecutionPhase::DispatchClaimed {
+        claim: expected_claim,
+    } = &expected.phase
+    else {
+        return Err(conflict());
+    };
+    if current.caller != expected.caller
+        || current.request != expected.request
+        || current.managed_invocation()?.as_str() != owner
+        || !matches!(&current.phase,PeerExecutionPhase::DispatchClaimed{claim}
+            if claim.worker==expected_claim.worker && claim.generation==expected_claim.generation)
+    {
+        return Err(conflict());
+    }
     Ok(())
 }
 

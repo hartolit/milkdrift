@@ -31,6 +31,11 @@ impl Owner {
         {
             return public_receipt(receipt);
         }
+        let project_id = request
+            .project_id
+            .as_deref()
+            .ok_or_else(|| failure("Choose a project before creating a workflow"))?;
+        self.require_project_available(session, project_id)?;
         let tasks = request
             .tasks
             .into_iter()
@@ -47,6 +52,11 @@ impl Owner {
             .map(|(name, value)| Ok((name, self.task_value(session, value)?)))
             .collect::<Result<_, PublicFailure>>()?;
         let create = WorkflowCreate {
+            project_id: Some(
+                request
+                    .project_id
+                    .ok_or_else(|| failure("Choose a project before creating a workflow"))?,
+            ),
             title: request.title,
             description: request.description,
             tasks,

@@ -681,3 +681,7 @@ mod selection;
 
 #[path = "registry/lifecycle.rs"]
 mod lifecycle;
+
+#[cfg(unix)]
+#[path = "registry/project_protection.rs"]
+mod project_protection;

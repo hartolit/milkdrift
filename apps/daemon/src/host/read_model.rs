@@ -152,6 +152,8 @@ pub(super) fn public_persistence(error: PersistenceError) -> PublicFailure {
             failure
         }
         PersistenceError::DaemonGenerationConflict { .. }
+        | PersistenceError::ProjectGenerationConflict { .. }
+        | PersistenceError::ProjectIdempotencyConflict { .. }
         | PersistenceError::DaemonIdempotencyConflict { .. }
         | PersistenceError::WorkflowIdempotencyConflict { .. }
         | PersistenceError::ImmutableConflict { .. }

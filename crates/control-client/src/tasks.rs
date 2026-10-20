@@ -34,6 +34,26 @@ impl ControlClient {
         cursor: Option<&str>,
         limit: u32,
     ) -> Result<WorkflowPageDto, ClientError> {
+        self.workflows_in_project(search, cursor, limit, None, false)
+            .await
+    }
+
+    /// Lists one project's workflows or earlier unassociated workflows with an actor-bound cursor.
+    /// # Errors
+    /// Returns invalid filters/bounds, expired cursor, authority or transport failures.
+    pub async fn workflows_in_project(
+        &self,
+        search: &str,
+        cursor: Option<&str>,
+        limit: u32,
+        project: Option<&str>,
+        earlier: bool,
+    ) -> Result<WorkflowPageDto, ClientError> {
+        if earlier && project.is_some() {
+            return Err(ClientError::Configuration(
+                "choose a project or earlier workflows".into(),
+            ));
+        }
         if !(1..=200).contains(&limit) || search.len() > 256 {
             return Err(ClientError::Configuration(
                 "workflow pages require 1..=200 items and search at most 256 bytes".into(),
@@ -45,6 +65,12 @@ impl ControlClient {
             .append_pair("limit", &limit.to_string());
         if let Some(cursor) = cursor {
             url.query_pairs_mut().append_pair("cursor", cursor);
+        }
+        if let Some(project) = project {
+            url.query_pairs_mut().append_pair("project_id", project);
+        }
+        if earlier {
+            url.query_pairs_mut().append_pair("earlier", "true");
         }
         let path = format!("v1/workflows?{}", url.query().unwrap_or_default());
         self.safe_get(&path).await

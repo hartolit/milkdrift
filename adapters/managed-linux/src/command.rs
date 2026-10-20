@@ -52,26 +52,9 @@ pub(crate) fn run(
     #[cfg(target_os = "linux")]
     {
         use rustix::fs::{OFlags, fcntl_getfl, fcntl_setfl};
-        use std::{io::Read, os::unix::process::CommandExt};
-        let home = std::env::var("HOME").map_err(rejected)?;
-        let runtime = std::env::var("XDG_RUNTIME_DIR")
-            .map_err(|_| rejected("an active systemd user session is required"))?;
-        let mut command = Command::new(program);
-        command
-            .args(args)
-            .env_clear()
-            .env("HOME", &home)
-            .env("XDG_RUNTIME_DIR", &runtime)
-            .env(
-                "DBUS_SESSION_BUS_ADDRESS",
-                format!("unix:path={runtime}/bus"),
-            )
-            .env("PATH", "/usr/bin:/bin")
-            .env("LANG", "C.UTF-8")
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .process_group(0);
+        use std::io::Read;
+        let mut command = configured(program)?;
+        command.args(args).stdin(Stdio::null());
         for (key, value) in extra_env {
             command.env(key, value);
         }
@@ -206,9 +189,32 @@ pub(crate) fn run(
 }
 
 #[cfg(target_os = "linux")]
-struct OwnedChild {
-    child: std::process::Child,
-    reaped: bool,
+pub(crate) fn configured(program: &Path) -> Result<Command, ManagedError> {
+    use std::os::unix::process::CommandExt;
+    let home = std::env::var("HOME").map_err(rejected)?;
+    let runtime = std::env::var("XDG_RUNTIME_DIR")
+        .map_err(|_| rejected("an active systemd user session is required"))?;
+    let mut command = Command::new(program);
+    command
+        .env_clear()
+        .env("HOME", home)
+        .env("XDG_RUNTIME_DIR", &runtime)
+        .env(
+            "DBUS_SESSION_BUS_ADDRESS",
+            format!("unix:path={runtime}/bus"),
+        )
+        .env("PATH", "/usr/bin:/bin")
+        .env("LANG", "C.UTF-8")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0);
+    Ok(command)
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) struct OwnedChild {
+    pub(crate) child: std::process::Child,
+    pub(crate) reaped: bool,
 }
 #[cfg(target_os = "linux")]
 impl OwnedChild {
@@ -218,6 +224,22 @@ impl OwnedChild {
     ) -> Result<CommandOutput, ManagedError> {
         if self.reaped {
             return outcome;
+        }
+        if let Err(error) = self.terminate() {
+            return Err(platform_error(format!(
+                "{error}; original={}",
+                outcome
+                    .as_ref()
+                    .err()
+                    .map_or_else(|| "completed helper".to_owned(), ToString::to_string)
+            )));
+        }
+        outcome
+    }
+
+    pub(crate) fn terminate(&mut self) -> Result<(), ManagedError> {
+        if self.reaped {
+            return Ok(());
         }
         let group = rustix::process::kill_process_group(
             rustix::process::Pid::from_child(&self.child),
@@ -235,14 +257,10 @@ impl OwnedChild {
         self.reaped = reaped.is_ok();
         if group.is_err() || reaped.is_err() {
             return Err(platform_error(format!(
-                "helper cleanup unconfirmed: group={group:?}, kill={kill:?}, reap={reaped:?}; original={}",
-                outcome
-                    .as_ref()
-                    .err()
-                    .map_or_else(|| "completed helper".to_owned(), ToString::to_string),
+                "helper cleanup unconfirmed: group={group:?}, kill={kill:?}, reap={reaped:?}"
             )));
         }
-        outcome
+        Ok(())
     }
 }
 

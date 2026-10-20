@@ -65,6 +65,7 @@ async fn real_cli_and_public_client_replay_discover_and_preserve_private_capture
     assert_eq!(report.get("qualifying"), Some(&Value::Bool(false)));
     for fact in [
         "cli_submission",
+        "cli_project_operations",
         "public_client_discovery",
         "exact_replay_after_restart",
         "captured_input_survives_local_edit",
@@ -75,6 +76,20 @@ async fn real_cli_and_public_client_replay_discover_and_preserve_private_capture
             "missing observed {fact}"
         );
     }
+    let projects = report
+        .pointer("/projects/projects")
+        .and_then(Value::as_array)
+        .ok_or("project evidence absent")?;
+    let [first, second] = projects.as_slice() else {
+        return Err("expected two project evidence records".into());
+    };
+    assert_ne!(first.get("folder"), second.get("folder"));
+    assert!(
+        projects
+            .iter()
+            .all(|project| project["cargo_test"] == true
+                && project["preserved_existing_file"] == true)
+    );
     assert_eq!(
         report.get("model_requests").and_then(Value::as_u64),
         Some(1)

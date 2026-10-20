@@ -8,7 +8,7 @@ use milkdrift_control_protocol::{
         WorkflowPageDto, WorkflowReadDto, WorkflowSummaryDto,
     },
 };
-use milkdrift_persistence::WorkflowStore;
+use milkdrift_persistence::{ProjectStore, WorkflowStore};
 use milkdrift_runtime::{TaskRecord, TaskState, WorkflowRecord};
 use std::collections::BTreeMap;
 
@@ -63,6 +63,8 @@ impl Owner {
         search: &str,
         cursor: Option<&str>,
         limit: u16,
+        project_id: Option<&str>,
+        earlier: bool,
     ) -> Result<WorkflowPageDto, PublicFailure> {
         if !(1..=200).contains(&limit) || search.len() > 256 {
             return Err(failure("page bounds or search are invalid"));
@@ -74,7 +76,14 @@ impl Owner {
         {
             return Err(super::super::read_model::unauthorized());
         }
-        let feed = format!("tasks:{}:{}", self.host_id, blake3::hash(search.as_bytes()));
+        if earlier && project_id.is_some() {
+            return Err(failure("choose a project or earlier workflows"));
+        }
+        if let Some(project) = project_id {
+            self.authorized_project(session, project, AuthorityOperation::InspectProject)?;
+        }
+        let query = serde_json::to_vec(&(search, project_id, earlier)).map_err(failure)?;
+        let feed = format!("tasks:{}:{}", self.host_id, blake3::hash(&query));
         let binding = session.cursor_binding(&feed);
         let mut after = cursor
             .map(|cursor| {
@@ -116,6 +125,23 @@ impl Owner {
                 {
                     continue;
                 }
+                let association = self
+                    .store
+                    .project_for_workflow(&snapshot.workflow)
+                    .map_err(failure)?;
+                let association_id = association.as_ref().map(|p| p.id.as_str());
+                if (earlier && association_id.is_some())
+                    || project_id.is_some_and(|id| association_id != Some(id))
+                {
+                    continue;
+                }
+                // A workflow grant does not disclose a project name or folder outside its scope.
+                let disclosed_project = association
+                    .filter(|p| {
+                        self.authorized_project(session, &p.id, AuthorityOperation::InspectProject)
+                            .is_ok()
+                    })
+                    .map(|p| p.id);
                 let record: WorkflowRecord =
                     serde_json::from_value(snapshot.document).map_err(failure)?;
                 let title_matches = search.is_empty()
@@ -137,7 +163,7 @@ impl Owner {
                         continue;
                     }
                 }
-                let summary = workflow_summary(&record)?;
+                let summary = workflow_summary(&record, disclosed_project)?;
                 let bytes = serde_json::to_vec(&summary).map_err(failure)?.len();
                 if page_bytes + bytes > 900_000 && !items.is_empty() {
                     after = previous_after;
@@ -257,6 +283,15 @@ impl Owner {
             None
         };
         Ok(WorkflowReadDto {
+            project_id: self
+                .store
+                .project_for_workflow(&record.id)
+                .map_err(failure)?
+                .filter(|p| {
+                    self.authorized_project(session, &p.id, AuthorityOperation::InspectProject)
+                        .is_ok()
+                })
+                .map(|p| p.id),
             supplied_inputs: self.supplied_input_reads(session, record.inputs.iter(), 65_536)?,
             wait_question: record.wait_question.clone(),
             admitted_tasks: record.admitted_tasks,
@@ -297,6 +332,24 @@ impl Owner {
         workflow: &str,
         task: &TaskRecord,
     ) -> Result<TaskReadDto, PublicFailure> {
+        let mut definition = mapping::definition(&task.definition)?;
+        if let Some(binding) = task.definition.execution.binding()
+            && let Err(error) = self.authorized_project(
+                session,
+                &binding.project_id,
+                AuthorityOperation::InspectProject,
+            )
+        {
+            if !matches!(error.code, ErrorCode::NotFound | ErrorCode::Unauthorized) {
+                return Err(error);
+            }
+            // Workflow visibility does not disclose another filesystem scope. Keep the
+            // task inspectable while making this incomplete projection impossible to reuse.
+            definition.execution =
+                milkdrift_control_protocol::task_execution::TaskExecutionDto::Restricted;
+            definition.paths.clear();
+            definition.tools.clear();
+        }
         let result = task
             .result
             .as_ref()
@@ -410,7 +463,7 @@ impl Owner {
             origin: None,
             id: task.id.to_string(),
             version: task.version,
-            definition: mapping::definition(&task.definition)?,
+            definition,
             state: match task.state {
                 TaskState::Queued => TaskStateDto::Queued,
                 TaskState::Running => TaskStateDto::Running,
@@ -791,8 +844,12 @@ fn task_summary(workflow: &str, task: &TaskRecord) -> TaskSummaryDto {
         has_result: task.result.is_some(),
     }
 }
-fn workflow_summary(record: &WorkflowRecord) -> Result<WorkflowSummaryDto, PublicFailure> {
+fn workflow_summary(
+    record: &WorkflowRecord,
+    project_id: Option<String>,
+) -> Result<WorkflowSummaryDto, PublicFailure> {
     Ok(WorkflowSummaryDto {
+        project_id,
         id: record.id.to_string(),
         title: record.title.clone(),
         description: record.description.clone(),

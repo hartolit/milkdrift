@@ -16,11 +16,16 @@ use milkdrift_capability::{
 };
 use milkdrift_capability_host::{
     AdapterError, AdapterInvocation, AdapterReporter, CapabilityAdapter, InvocationDataAccess,
-    MaterializationLimits, managed::ManagedError,
+    MaterializationLimits, PreparedAdapterExecution, managed::ManagedError,
 };
+mod lifetime;
+mod project;
+use lifetime::{OwnedTask, register_creator, run_and_remove_task, task_identity};
 use milkdrift_persistence::managed::{
     ApprovedSetup, ManagedResourceStore, QuiescenceEvidence, managed_use_id,
 };
+use project::PinnedProject;
+pub use project::pin::run_project_pin_helper;
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -40,6 +45,7 @@ pub struct ManagedWorkerAdapter {
     setup: ApprovedSetup,
     data: Arc<dyn InvocationDataAccess>,
     active: Arc<Mutex<BTreeSet<String>>>,
+    project_pin_helper: Option<std::path::PathBuf>,
 }
 impl ManagedWorkerAdapter {
     /// Construct only from a verified resource inventory in the daemon composition.
@@ -59,7 +65,16 @@ impl ManagedWorkerAdapter {
             setup,
             data,
             active: Arc::new(Mutex::new(BTreeSet::new())),
+            project_pin_helper: None,
         })
+    }
+
+    /// Supply the daemon executable's internal rootless directory-pin role. Embeddings that do
+    /// not provide this role retain owned-volume execution and refuse project attachments.
+    #[must_use]
+    pub fn with_project_pin_helper(mut self, executable: std::path::PathBuf) -> Self {
+        self.project_pin_helper = Some(executable);
+        self
     }
 }
 
@@ -102,10 +117,20 @@ pub(crate) fn descriptor(setup: &ApprovedSetup) -> Result<CapabilityDescriptor, 
         OperationId::new("workspace.execute").map_err(rejected)?,
         contract,
     )]))
-    .extensions(BTreeMap::from([(
-        ExtensionKey::new(MANAGED_BINDING_EXTENSION).map_err(rejected)?,
-        BoundedJson::new(serde_json::to_value(binding).map_err(rejected)?).map_err(rejected)?,
-    )]))
+    .extensions(BTreeMap::from([
+        (
+            ExtensionKey::new(MANAGED_BINDING_EXTENSION).map_err(rejected)?,
+            BoundedJson::new(serde_json::to_value(binding).map_err(rejected)?).map_err(rejected)?,
+        ),
+        (
+            ExtensionKey::new("milkdrift.managed/project-attachment").map_err(rejected)?,
+            BoundedJson::new(serde_json::json!({
+                "schema_version": 1, "destination": "/project",
+                "read_only": true, "read_write": true
+            }))
+            .map_err(rejected)?,
+        ),
+    ]))
     .build()
     .map_err(rejected)
 }
@@ -168,14 +193,37 @@ pub(crate) fn output_artifact_limit(raw: u64) -> Result<u64, ManagedError> {
 fn execution_duration_ms(task_timeout_ms: u64) -> Option<u64> {
     // run_task performs three inspections (two helpers each), creation and image
     // verification. cleanup_task adds three inspections and removal. Every branch
-    // runs at most these fifteen administrative helpers, including failure cleanup.
+    // runs at most fifteen administrative helpers, plus engine-path inspection and the
+    // bounded rootless directory-pin startup/cleanup when a project is attached.
     let helper_timeout = u64::try_from(command::HELPER_TIMEOUT.as_millis()).ok()?;
     command::attempt_duration_ms(helper_timeout)?
-        .checked_mul(15)?
+        .checked_mul(17)?
         .checked_add(command::attempt_duration_ms(task_timeout_ms)?)
 }
 
 impl CapabilityAdapter for ManagedWorkerAdapter {
+    fn prepare(
+        self: Arc<Self>,
+        invocation: &AdapterInvocation<'_>,
+    ) -> Result<PreparedAdapterExecution, AdapterError> {
+        parse(invocation)?;
+        let envelope = self.admission_envelope(invocation)?;
+        let project = invocation
+            .context()
+            .map(|context| PinnedProject::capture(context, &self.setup))
+            .transpose()
+            .map_err(adapter_failure)?
+            .flatten();
+        Ok(PreparedAdapterExecution::new(
+            envelope,
+            move |invocation, reporter| {
+                if let Some(project) = &project {
+                    project.revalidate().map_err(adapter_failure)?;
+                }
+                self.execute(invocation, reporter)
+            },
+        ))
+    }
     fn accepts_direct_inputs(&self) -> bool {
         true
     }
@@ -183,7 +231,13 @@ impl CapabilityAdapter for ManagedWorkerAdapter {
         &self,
         invocation: &AdapterInvocation<'_>,
     ) -> Result<InvocationAdmissionEnvelope, AdapterError> {
-        let request = parse(invocation)?;
+        // An empty request is the model loop's catalog-bound query. Actual preparation always
+        // parses a command, while this upper bound includes its optional stdout publication.
+        let stdout_artifact = if invocation.request().inputs().is_empty() {
+            true
+        } else {
+            parse(invocation)?.stdout_artifact
+        };
         let d = units::deployment(&self.setup).map_err(adapter_failure)?;
         let duration = execution_duration_ms(d.recipe.task_timeout_ms)
             .ok_or_else(|| AdapterError::rejected("worker attempt duration bound overflow"))?;
@@ -194,7 +248,7 @@ impl CapabilityAdapter for ManagedWorkerAdapter {
             AdmissionBound::Bounded(
                 output_artifact_limit(d.recipe.output_bytes)
                     .map_err(adapter_failure)?
-                    .checked_add(if request.stdout_artifact {
+                    .checked_add(if stdout_artifact {
                         d.recipe.output_bytes
                     } else {
                         0
@@ -229,6 +283,12 @@ impl CapabilityAdapter for ManagedWorkerAdapter {
         reporter: &dyn AdapterReporter,
     ) -> Result<(), AdapterError> {
         let request = parse(invocation)?;
+        let mut project = invocation
+            .context()
+            .map(|context| PinnedProject::capture(context, &self.setup))
+            .transpose()
+            .map_err(adapter_failure)?
+            .flatten();
         let d = self
             .platform
             .check_owner(&self.setup)
@@ -244,14 +304,7 @@ impl CapabilityAdapter for ManagedWorkerAdapter {
             name: format!("mdtask-{id}"),
             active: self.active.clone(),
         };
-        let usage = self
-            .store
-            .managed_use(&id)
-            .map_err(adapter_failure)?
-            .ok_or_else(|| AdapterError::rejected("worker lacks durable generation hold"))?;
-        self.store
-            .enter_managed_use(&id, usage.claim, &task.name)
-            .map_err(adapter_failure)?;
+        let (usage, nested) = self.enter_use(invocation, &id, &task.name)?;
         if cancel.load(Ordering::Acquire) {
             return Err(AdapterError::external_failure(
                 "worker cancelled before platform creation; resource use remains retained",
@@ -261,18 +314,31 @@ impl CapabilityAdapter for ManagedWorkerAdapter {
             .map_err(|_| AdapterError::rejected("worker output bound exceeds this platform"))?;
         let stopped = run_and_remove_task(
             || {
+                if let Some(project) = &mut project {
+                    project.activate(
+                        self.project_pin_helper.as_deref(),
+                        execution_duration_ms(d.recipe.task_timeout_ms)
+                            .ok_or_else(|| rejected("project pin lifetime overflow"))?,
+                    )?;
+                }
                 run_task(
                     &self.setup,
                     &task.name,
                     &request.argv,
+                    project.as_ref(),
                     Some(&cancel),
                     Duration::from_millis(d.recipe.task_timeout_ms),
                     output_limit,
                 )
             },
             || cleanup_task(&self.setup, &task.name),
-        )
-        .map_err(|error| AdapterError::external_failure(error.to_string()))?;
+        );
+        if let Some(project) = &mut project {
+            project
+                .stop_pin()
+                .map_err(|error| AdapterError::external_failure(error.to_string()))?;
+        }
+        let stopped = stopped.map_err(|error| AdapterError::external_failure(error.to_string()))?;
         self.store
             .quiesce_managed_use(
                 &id,
@@ -287,6 +353,13 @@ impl CapabilityAdapter for ManagedWorkerAdapter {
                 },
             )
             .map_err(adapter_failure)?;
+        if nested {
+            // The parent remains the outcome owner. Physical absence is sufficient to end this
+            // child's resource lifetime; a lost output still leaves the parent uncertain.
+            self.store
+                .release_managed_use(&id, usage.claim)
+                .map_err(adapter_failure)?;
+        }
         let context = invocation.context().ok_or_else(|| {
             AdapterError::external_failure("durable publication context is absent")
         })?;
@@ -368,14 +441,20 @@ impl CapabilityAdapter for ManagedWorkerAdapter {
                 if output.success {
                     (TerminalStatus::Success, None)
                 } else {
+                    let attachment_runtime = project.is_some()
+                        && String::from_utf8_lossy(&output.stderr).contains("OCI runtime error");
                     (
                         TerminalStatus::Failure,
                         Some(
                             InvocationFailure::new(
                                 ErrorClass::Provider,
                                 false,
-                                "worker_exit",
-                                "contained worker returned nonzero exit",
+                                if attachment_runtime { "project_attachment_runtime" } else { "worker_exit" },
+                                if attachment_runtime {
+                                    "configured OCI runtime refused the project worker; inspect worker_result and qualify its held-directory bind support"
+                                } else {
+                                    "contained worker returned nonzero exit"
+                                },
                                 None,
                             )
                             .map_err(adapter_failure)?,
@@ -474,91 +553,16 @@ impl CapabilityAdapter for ManagedWorkerAdapter {
     }
 }
 
-struct OwnedTask {
-    platform: Arc<LinuxManagedPlatform>,
-    id: String,
-    name: String,
-    active: Arc<Mutex<BTreeSet<String>>>,
-}
-impl Drop for OwnedTask {
-    fn drop(&mut self) {
-        // This guard proves only that the creator has returned. Durable use remains held
-        // until explicit cleanup or the recovery fence proves physical absence. Recover
-        // poisoned locks solely to remove this creator, so recovery cannot wait forever.
-        let mut active = self
-            .platform
-            .active
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let mut mine = self.active.lock().unwrap_or_else(|e| e.into_inner());
-        active.remove(&self.id);
-        mine.remove(&self.id);
-        self.platform.quiescent.notify_all();
-    }
-}
-
-fn register_creator(
-    platform: &Mutex<BTreeMap<String, Arc<AtomicBool>>>,
-    adapter: &Mutex<BTreeSet<String>>,
-    id: &str,
-    cancel: Arc<AtomicBool>,
-) -> Result<(), AdapterError> {
-    let mut active = platform
-        .lock()
-        .map_err(|_| AdapterError::unavailable("worker ownership unavailable"))?;
-    let mut mine = adapter
-        .lock()
-        .map_err(|_| AdapterError::unavailable("worker ownership unavailable"))?;
-    if active.len() >= milkdrift_capability::managed::MAX_MANAGED_USES
-        || active.contains_key(id)
-        || mine.contains(id)
-    {
-        return Err(AdapterError::rejected("duplicate or excess active worker"));
-    }
-    // Acquire both fallible locks before publishing either view of creator ownership.
-    active.insert(id.to_owned(), cancel);
-    mine.insert(id.to_owned());
-    Ok(())
-}
-
-struct StoppedTask {
-    output: Result<command::CommandOutput, ManagedError>,
-}
-
-fn run_and_remove_task(
-    run: impl FnOnce() -> Result<command::CommandOutput, ManagedError>,
-    remove: impl FnOnce() -> Result<(), ManagedError>,
-) -> Result<StoppedTask, ManagedError> {
-    let output = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run))
-        .unwrap_or_else(|_| Err(platform_error("worker observation panicked")));
-    if let Err(error) = remove() {
-        let original = output
-            .as_ref()
-            .err()
-            .map_or_else(|| "worker completed".to_owned(), ToString::to_string);
-        return Err(platform_error(format!(
-            "worker cleanup unconfirmed: {}; original: {}",
-            milkdrift_contracts::truncate_utf8(&error.to_string(), 220),
-            milkdrift_contracts::truncate_utf8(&original, 220),
-        )));
-    }
-    Ok(StoppedTask { output })
-}
-
 fn task_arguments(
     setup: &ApprovedSetup,
     name: &str,
     argv: &[String],
+    project: Option<&PinnedProject>,
 ) -> Result<Vec<String>, ManagedError> {
     let (executable, arguments) = argv
         .split_first()
         .ok_or_else(|| rejected("empty command"))?;
     let d = units::deployment(setup)?;
-    let volume = setup
-        .resources
-        .iter()
-        .find(|r| r.name.as_str() == "working")
-        .ok_or_else(|| rejected("working volume missing"))?;
     let mut args = vec![
         "create".to_owned(),
         "--name".to_owned(),
@@ -574,7 +578,6 @@ fn task_arguments(
         "--read-only-tmpfs=false".to_owned(),
         "--cap-drop=all".to_owned(),
         "--security-opt=no-new-privileges".to_owned(),
-        format!("--userns=auto:size={}", crate::recipe::PRIVATE_USER_IDS),
         format!("--memory={}", d.recipe.worker_limits.memory_bytes),
         format!("--memory-swap={}", d.recipe.worker_limits.memory_bytes),
         format!("--cpus={}", d.recipe.worker_limits.cpus()),
@@ -585,15 +588,29 @@ fn task_arguments(
             WorkerNetwork::Outbound => "pasta:--no-map-gw",
         }
         .to_owned(),
-        "--volume".to_owned(),
-        format!("{}:/workspace:rw,U", volume.identity),
-        "--workdir=/workspace".to_owned(),
-        "--env=HOME=/workspace/home".to_owned(),
         format!("--tmpfs={}", d.recipe.worker_limits.temporary_mount()),
+    ];
+    if let Some(project) = project {
+        args.extend(project.arguments());
+    } else {
+        let volume = setup
+            .resources
+            .iter()
+            .find(|r| r.name.as_str() == "working")
+            .ok_or_else(|| rejected("working volume missing"))?;
+        args.extend([
+            format!("--userns=auto:size={}", crate::recipe::PRIVATE_USER_IDS),
+            "--volume".to_owned(),
+            format!("{}:/workspace:rw,U", volume.identity),
+            "--workdir=/workspace".to_owned(),
+            "--env=HOME=/workspace/home".to_owned(),
+        ]);
+    }
+    args.extend([
         "--entrypoint".to_owned(),
         executable.clone(),
         d.recipe.worker_image,
-    ];
+    ]);
     args.extend_from_slice(arguments);
     Ok(args)
 }
@@ -601,26 +618,31 @@ fn run_task(
     setup: &ApprovedSetup,
     name: &str,
     argv: &[String],
+    project: Option<&PinnedProject>,
     cancel: Option<&AtomicBool>,
     timeout: Duration,
     output_limit: usize,
 ) -> Result<command::CommandOutput, ManagedError> {
     let d = units::deployment(setup)?;
-    let working = format!("{}-working", d.volume_prefix);
-    let volume = LinuxManagedPlatform::inspect("volume", &working)?.ok_or_else(|| {
-        platform_error("owned working volume is missing; refusing implicit replacement")
-    })?;
-    LinuxManagedPlatform::verify_labels(&volume, setup, None)?;
+    if let Some(project) = project {
+        project.revalidate()?;
+    } else {
+        let working = format!("{}-working", d.volume_prefix);
+        let volume = LinuxManagedPlatform::inspect("volume", &working)?.ok_or_else(|| {
+            platform_error("owned working volume is missing; refusing implicit replacement")
+        })?;
+        LinuxManagedPlatform::verify_labels(&volume, setup, None)?;
+    }
     if LinuxManagedPlatform::inspect("container", name)?.is_some() {
         return Err(platform_error(
             "task identity already exists; recovery must inspect it before reuse",
         ));
     }
-    LinuxManagedPlatform::podman(&task_arguments(setup, name, argv)?)?;
+    LinuxManagedPlatform::podman(&task_arguments(setup, name, argv, project)?)?;
     let value = LinuxManagedPlatform::inspect("container", name)?
         .ok_or_else(|| platform_error("created task identity missing"))?;
     let identity = task_identity(&value, setup, name)?;
-    verify_container(&value, setup, true)?;
+    verify_container_mode(&value, setup, true, project)?;
     command::run(
         Path::new("/usr/bin/podman"),
         &[
@@ -654,30 +676,19 @@ pub(crate) fn cleanup_task(setup: &ApprovedSetup, name: &str) -> Result<(), Mana
     Ok(())
 }
 
-fn task_identity<'a>(
-    value: &'a serde_json::Value,
-    setup: &ApprovedSetup,
-    name: &str,
-) -> Result<&'a str, ManagedError> {
-    LinuxManagedPlatform::verify_labels(value, setup, Some(&setup.recipe.digest))?;
-    let identity = value.get("Id").and_then(|v| v.as_str()).unwrap_or("");
-    if value.get("Name").and_then(|v| v.as_str()) != Some(name)
-        || identity.len() != 64
-        || !identity
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    {
-        return Err(platform_error("task container identity differs"));
-    }
-    // Names can be reused between inspection and an engine command. Address only the inspected
-    // container so another creator's replacement cannot be started or removed by this task.
-    Ok(identity)
-}
-
 pub(crate) fn verify_container(
     value: &serde_json::Value,
     setup: &ApprovedSetup,
     worker: bool,
+) -> Result<(), ManagedError> {
+    verify_container_mode(value, setup, worker, None)
+}
+
+fn verify_container_mode(
+    value: &serde_json::Value,
+    setup: &ApprovedSetup,
+    worker: bool,
+    project: Option<&PinnedProject>,
 ) -> Result<(), ManagedError> {
     let d = units::deployment(setup)?;
     let limits = if worker {
@@ -697,7 +708,25 @@ pub(crate) fn verify_container(
         }
     };
     LinuxManagedPlatform::verify_image(value, image)?;
-    let host = verify_limits(value, limits)?;
+    let host = verify_limits_mode(value, limits, project.is_some())?;
+    if let Some(project) = project {
+        project.verify(value)?;
+        if d.recipe.worker_network == WorkerNetwork::None
+            && host.get("NetworkMode").and_then(|value| value.as_str()) != Some("none")
+        {
+            return Err(platform_error(
+                "offline attached worker has an unexpected network",
+            ));
+        }
+        if host
+            .get("Devices")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|devices| !devices.is_empty())
+        {
+            return Err(platform_error("attached worker has unapproved devices"));
+        }
+        return Ok(());
+    }
     if !worker {
         let crate::ModelService::Owned { port, .. } = d.recipe.model_service else {
             return Err(platform_error("owned service configuration missing"));
@@ -798,6 +827,14 @@ pub(crate) fn verify_limits<'a>(
     value: &'a serde_json::Value,
     limits: &crate::ContainerLimits,
 ) -> Result<&'a serde_json::Value, ManagedError> {
+    verify_limits_mode(value, limits, false)
+}
+
+fn verify_limits_mode<'a>(
+    value: &'a serde_json::Value,
+    limits: &crate::ContainerLimits,
+    project: bool,
+) -> Result<&'a serde_json::Value, ManagedError> {
     let host = value
         .get("HostConfig")
         .ok_or_else(|| platform_error("container enforcement inspection missing"))?;
@@ -831,6 +868,12 @@ pub(crate) fn verify_limits<'a>(
                 Some("no-new-privileges" | "no-new-privileges=true")
             ) && settings.next().is_none()
         });
+    if project && !project::project_id_mappings(host.get("IDMappings")) {
+        return Err(platform_error(format!(
+            "actual project user/group mappings differ from the approved profile: {}",
+            host.get("IDMappings").unwrap_or(&serde_json::Value::Null)
+        )));
+    }
     if host.get("Privileged").and_then(|v| v.as_bool()) != Some(false)
         || host.get("ReadonlyRootfs").and_then(|v| v.as_bool()) != Some(true)
         || host.get("Memory").and_then(|v| v.as_u64()) != Some(limits.memory_bytes)
@@ -850,7 +893,7 @@ pub(crate) fn verify_limits<'a>(
             .get("NetworkMode")
             .and_then(|v| v.as_str())
             .is_none_or(|n| n == "host")
-        || !private_id_mappings(host.get("IDMappings"))
+        || (!project && !private_id_mappings(host.get("IDMappings")))
     {
         return Err(platform_error(
             "actual container namespace/resource enforcement differs from approved profile",
@@ -959,6 +1002,7 @@ pub(crate) fn verify_setup(
         setup,
         &name,
         &["/bin/sh".to_owned(), "-c".to_owned(), script],
+        None,
         None,
         command::HELPER_TIMEOUT,
         command::HELPER_OUTPUT_BYTES,

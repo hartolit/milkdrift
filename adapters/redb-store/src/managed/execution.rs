@@ -10,7 +10,7 @@ use milkdrift_persistence::{
 };
 use redb::ReadableTable;
 
-fn acquire(
+pub(super) fn acquire(
     write: &redb::WriteTransaction,
     snapshot: &ResolvedCapabilitySnapshot,
     execution: ManagedExecution,
@@ -132,7 +132,7 @@ fn acquire(
     put_record(write, &record)
 }
 
-fn entry(write: &redb::WriteTransaction, id: &str) -> Result<(), PersistenceError> {
+pub(super) fn entry(write: &redb::WriteTransaction, id: &str) -> Result<(), PersistenceError> {
     let Some((mut record, i)) = locate(write, id)? else {
         return Ok(());
     };

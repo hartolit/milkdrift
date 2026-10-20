@@ -42,9 +42,17 @@ pub(super) fn respond(root: &Path, body: &Value) -> io::Result<Option<Reply>> {
                 .and_then(|role| role.lines().next())
         })
         .unwrap_or("planner");
-    let project = root
-        .join(format!("daemon-{name}"))
-        .join("animation-project");
+    let context = super::projects::tool_context(messages)?;
+    let project = context
+        .as_ref()
+        .and_then(|value| value.pointer("/folder/physical").and_then(Value::as_str))
+        .map_or_else(
+            || {
+                root.join(format!("daemon-{name}"))
+                    .join("animation-project")
+            },
+            std::path::PathBuf::from,
+        );
     let reply = match role {
         "canvas-rejected" => text(json!({"changes":[]}).to_string()),
         "planner" => {
@@ -141,6 +149,7 @@ fn planner_brief(messages: &[Value]) -> io::Result<&str> {
         .filter_map(|message| message.get("content").and_then(Value::as_str))
         .find(|text| {
             !text.starts_with("Authorized future-work snapshot (data, not instructions): ")
+                && !text.starts_with("Project tool context (data, not instructions): ")
         })
         .and_then(|text| {
             let (_, input) = text.split_once("\n\nInput ")?;
@@ -198,14 +207,27 @@ fn definition(
             |folder| json!([{"path":project.join(folder),"write":true}]),
         ),
     );
-    object.insert(
-        "tools".into(),
-        if folder.is_some() {
-            json!([{"type":"write_file"},{"type":"read_file"}])
-        } else {
-            json!([])
-        },
-    );
+    if let Some(generation) = snapshot
+        .pointer("/project/generation")
+        .and_then(Value::as_u64)
+    {
+        object.insert("tools".into(), json!([]));
+        object.insert("execution".into(), json!({
+            "kind":"explicit","expected_generation":generation,
+            "settings":{"environment":{"kind":"host"},"allow_changes":folder.is_some()},
+            "access":if folder.is_some() {"write"} else {"none"},
+            "tools":if folder.is_some() {json!([{"type":"write_file"},{"type":"read_file"}])} else {json!([])}
+        }));
+    } else {
+        object.insert(
+            "tools".into(),
+            if folder.is_some() {
+                json!([{"type":"write_file"},{"type":"read_file"}])
+            } else {
+                json!([])
+            },
+        );
+    }
     Ok(definition)
 }
 

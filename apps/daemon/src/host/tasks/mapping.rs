@@ -104,6 +104,7 @@ impl Owner {
             })
             .collect::<Result<BTreeMap<_, _>, PublicFailure>>()?;
         Ok(TaskDefinition {
+            execution: super::execution_mapping::domain_execution(definition.execution)?,
             actions: definition
                 .actions
                 .map(|policy| milkdrift_blueprint::TaskActionPolicy {
@@ -231,6 +232,7 @@ pub(super) fn definition(value: &TaskDefinition) -> Result<TaskDefinitionDto, Pu
         })
         .collect::<Result<_, PublicFailure>>()?;
     Ok(TaskDefinitionDto {
+        execution: super::execution_mapping::public_execution(&value.execution)?,
         authoring_generation: None,
         actions: value.actions.as_ref().map(|policy| milkdrift_control_protocol::tasks::TaskActionPolicyDto { automatic_repair:policy.automatic_repair }),
         tools: value.tools.iter().map(|tool| Ok(match tool {

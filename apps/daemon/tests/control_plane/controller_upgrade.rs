@@ -39,7 +39,12 @@ fn previous_controller(config: &ActorBindingConfig) -> TestResult<AuthorityGrant
                     .operations()
                     .iter()
                     .copied()
-                    .filter(|operation| *operation != AuthorityOperation::RenameDaemon)
+                    .filter(|operation| {
+                        !matches!(
+                            operation,
+                            AuthorityOperation::InspectProject | AuthorityOperation::ManageProject
+                        )
+                    })
                     .collect(),
             )
             .resources(current.resources().clone())
@@ -105,11 +110,13 @@ fn save_previous_work(
     let original = request.tasks.first().ok_or("task absent")?;
     let definition = &original.definition;
     let typed = WorkflowCreate {
+        project_id: None,
         title: request.title.clone(),
         description: request.description.clone(),
         tasks: vec![NewTask {
             alias: TaskId::new(&original.alias)?,
             definition: TaskDefinition {
+                execution: milkdrift_blueprint::TaskExecution::Legacy,
                 title: definition.title.clone(),
                 description: definition.description.clone(),
                 instructions: definition.instructions.clone(),
@@ -183,7 +190,12 @@ async fn changed_controller_grants_refuse_old_entry_without_rewriting_claims_or_
             .first_mut()
             .ok_or("controller absent")?
             .grant_revision = revision;
-        let request = create_request("prior-controller-work", true);
+        let mut request = create_request("prior-controller-work", true);
+        request.project_id = None;
+        for task in &mut request.tasks {
+            task.definition.execution =
+                milkdrift_control_protocol::task_execution::TaskExecutionDto::Legacy;
+        }
         let (accepted, original_basis) = save_previous_work(&config, &request)?;
         let daemon = start(config.validate(directory.path())?, CONTROLLER_TOKEN).await?;
         let task = accepted.aliases.get("inspect").ok_or("task alias absent")?;
@@ -217,6 +229,61 @@ async fn changed_controller_grants_refuse_old_entry_without_rewriting_claims_or_
         assert_eq!(
             daemon.client.workflow_receipt(&request.request_id).await?,
             accepted
+        );
+        assert_eq!(daemon.client.create_workflow(&request).await?, accepted);
+        let earlier_folder = directory.path().join("earlier-project");
+        fs::create_dir(&earlier_folder)?;
+        use milkdrift_control_protocol::projects::{
+            ProjectCommandDto, ProjectCommandRequest, ProjectEnvironmentDto, ProjectSettingsDto,
+        };
+        let project = daemon
+            .client
+            .project_command(&ProjectCommandRequest {
+                request_id: "organize-earlier-project".into(),
+                command: ProjectCommandDto::Attach {
+                    name: "Earlier accepted work".into(),
+                    folder: earlier_folder.to_string_lossy().into_owned(),
+                    settings: ProjectSettingsDto {
+                        environment: ProjectEnvironmentDto::Host,
+                        allow_changes: false,
+                    },
+                },
+            })
+            .await?
+            .project
+            .ok_or("project absent")?;
+        daemon
+            .client
+            .project_command(&ProjectCommandRequest {
+                request_id: "associate-earlier".into(),
+                command: ProjectCommandDto::Associate {
+                    project_id: project.id.clone(),
+                    expected_generation: 1,
+                    workflow_id: accepted.workflow_id.clone(),
+                },
+            })
+            .await?;
+        daemon
+            .client
+            .project_command(&ProjectCommandRequest {
+                request_id: "change-earlier-defaults".into(),
+                command: ProjectCommandDto::Settings {
+                    project_id: project.id,
+                    expected_generation: 1,
+                    settings: ProjectSettingsDto {
+                        environment: ProjectEnvironmentDto::Host,
+                        allow_changes: true,
+                    },
+                },
+            })
+            .await?;
+        assert_eq!(
+            daemon
+                .client
+                .task(&accepted.workflow_id, task)
+                .await?
+                .definition,
+            refused.definition
         );
         assert_eq!(daemon.client.create_workflow(&request).await?, accepted);
         // The configured process can enter under a new, explicitly current grant claim.

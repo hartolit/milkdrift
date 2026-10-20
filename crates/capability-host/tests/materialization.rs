@@ -376,6 +376,8 @@ fn seed_invocation(
             .as_str(),
     )?;
     store.commit_workflow(WorkflowCommit {
+        project_guard: None,
+        project_id: None,
         expected_generation: None,
         snapshot: WorkflowSnapshot {
             workflow,

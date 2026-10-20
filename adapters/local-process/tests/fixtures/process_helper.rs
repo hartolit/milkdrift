@@ -101,6 +101,10 @@ fn run() -> Result<u8, Box<dyn std::error::Error>> {
             writeln!(std::io::stderr(), "fixture stderr")?;
             Ok(0)
         }
+        "non-utf8-output" => {
+            std::fs::write("result.txt", [0xff, 0xfe, b'a'])?;
+            Ok(0)
+        }
         "text-output-pair" => {
             let bytes: usize = arguments.next().ok_or("missing byte count")?.parse()?;
             if bytes > 1_048_576 {

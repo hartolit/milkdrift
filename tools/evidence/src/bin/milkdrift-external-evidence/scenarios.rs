@@ -9,6 +9,54 @@ use milkdrift_control_protocol::tasks::{
     WorkflowReadDto,
 };
 
+async fn attach_project(
+    client: &ControlClient,
+    repository: &Path,
+) -> HarnessResult<milkdrift_control_protocol::projects::ProjectDto> {
+    use milkdrift_control_protocol::projects::{
+        ProjectCommandDto, ProjectCommandRequest, ProjectEnvironmentDto, ProjectSettingsDto,
+    };
+    let environments = client.project_environments().await.map_err(client_error)?;
+    if environments.items.iter().any(|item| matches!(item.environment, ProjectEnvironmentDto::Process { generation, .. } if generation != 1)) {
+        return Err("fresh evidence environment did not start at its reviewed initial generation".into());
+    }
+    // The process and model scenarios have independent actors in one installation.
+    // Discovery lets the second actor use the authorized registration without borrowing
+    // the first actor's receipt or inventing another label for the same physical folder.
+    let projects = client.projects(None, 100).await.map_err(client_error)?;
+    let folder = repository
+        .to_str()
+        .ok_or("evidence repository path is not UTF-8")?;
+    if let Some(project) = projects
+        .items
+        .into_iter()
+        .find(|project| project.folder == folder)
+    {
+        return Ok(project);
+    }
+    if projects.next_cursor.is_some() {
+        return Err(
+            "fresh evidence installation exceeded the bounded project discovery page".into(),
+        );
+    }
+    client
+        .project_command(&ProjectCommandRequest {
+            request_id: "external-evidence-project".into(),
+            command: ProjectCommandDto::Attach {
+                name: "Disposable interoperability repository".into(),
+                folder: folder.into(),
+                settings: ProjectSettingsDto {
+                    environment: ProjectEnvironmentDto::Host,
+                    allow_changes: false,
+                },
+            },
+        })
+        .await
+        .map_err(client_error)?
+        .project
+        .ok_or_else(|| "project attachment has no accepted registration".into())
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "Scenario source provenance and the deadline have separate owners."
@@ -23,8 +71,9 @@ pub(super) async fn run_process_scenario(
     fixture: bool,
     timeout: Duration,
 ) -> HarnessResult<ScenarioEvidence> {
-    let request = workflows::process_request(&agent.capability, repository);
     let (mut daemon, client) = config.start(token).await.map_err(|e| e.to_string())?;
+    let project = attach_project(&client, repository).await?;
+    let request = workflows::process_request(&agent.capability, repository, &project);
     let receipt = client
         .create_workflow(&request)
         .await
@@ -76,6 +125,7 @@ pub(super) async fn run_process_scenario(
         "Corrective coding",
         prompt,
         Some(repository),
+        &project,
     );
     correction
         .inputs
@@ -95,6 +145,7 @@ pub(super) async fn run_process_scenario(
         "Corrective verification",
         "Run the real independent Rust checks",
         Some(repository),
+        &project,
     );
     verification.dependencies.push("corrective-coding".into());
     verification.corrective_of = Some(weak.clone());
@@ -269,8 +320,9 @@ pub(super) async fn run_model_scenario(
     fixture: bool,
     timeout: Duration,
 ) -> HarnessResult<ScenarioEvidence> {
-    let request = workflows::model_request(model_capability, repository);
     let (mut daemon, client) = config.start(token).await.map_err(|e| e.to_string())?;
+    let project = attach_project(&client, repository).await?;
+    let request = workflows::model_request(model_capability, repository, &project);
     let receipt = client
         .create_workflow(&request)
         .await

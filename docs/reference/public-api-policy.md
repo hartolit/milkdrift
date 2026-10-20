@@ -26,6 +26,58 @@ serialized in frozen starts. Runtime's task records expose immutable starts/resu
 and authorized daemon projections. Construction and transition ownership remain in runtime;
 clients never write those records directly.
 
+`ProjectSettings`, `TaskExecution` and `TaskProjectBinding` are blueprint contracts shared by
+control, runtime, persistence and execution adapters. Admission resolves a reviewed project
+generation or a complete explicit choice into one immutable binding. The binding carries exact
+native folder identities, permitted scopes, access and tools; an empty explicit tool list remains
+empty. Human and model requests use the same resolver and retain their original canonical request
+for replay. A text edit can preserve its accepted binding without adopting newer project defaults.
+The separate project generation guard belongs to the workflow commit transaction, so a concurrent
+settings change cannot accept newly resolved work against an unchecked generation.
+Automatic feedback retains its source binding; a changed project generation closes that repair
+attempt with a durable refusal instead of silently adopting new permissions.
+`ProjectStore`, registrations, operation states and mutations are workspace storage contracts used
+by the daemon and shared task control owner. Redb alone commits bounded project receipts and
+workflow associations; native folder observations come from the execution host. Creating reserves
+both registration and recovery capacity before its filesystem effect. Explicit reconciliation
+settles that original intent without rewriting accepted task documents or deleting folders.
+`InspectProject` and `ManageProject` express independent current authority over the pinned folder.
+Project DTOs and client methods are external transport projections, including the read-only
+`TaskExecutionDto::Restricted` marker that keeps permitted task inspection available without
+disclosing inaccessible folder bindings or creating a reusable authoring definition.
+`control-protocol::projects` owns exact command and receipt framing, bounded folder choices and
+configured environment projections. Native `ControlClient` project methods use the same public
+routes as Svelte and CLI; `workflows_in_project` adds project/earlier discovery filters without
+changing workflow ownership. A hidden project association may appear as null in an authorized
+workflow read, while the earlier filter uses the actual durable association.
+Runtime's `create_resolved`, `edit_resolved` and typed replay methods preserve the native request's
+storage byte bound while its `*_exact` public entry points retain the smaller transport bound.
+Control is the production caller supplying both the original request and its resolved definition.
+
+`TaskExecutor::pin_project_paths` delegates physical path capture to the execution host.
+`capture_native_project_root` and `verify_project_binding` are workspace adapter contracts used by
+project registration and process preparation; control does not independently interpret filesystem
+identity. Runtime carries the binding through resolution and dispatch, and adapters revalidate it
+before effects. Native claims still own conflicting writer exclusion across workflows and aliases.
+The project-aware process mode pins its working directory to that same accepted root. Its
+test-only context constructor stays behind the existing helper feature.
+`CapabilityAdapter::accepts_project_without_access` captures the configured process isolation
+choice once at registration. The host uses it to admit an explicit no-access task without
+changing old process descriptor digests or trusting a client assertion about isolation.
+`CapabilityAdapter::native_path_claims` declares a configured process working directory to the
+task host. The model loop collects these claims from its authorized process tools before entering
+the model, so earlier fixed-directory task profiles share the same writer exclusion and uncertain
+attempt holds. These implicit claims do not grant native file tools additional readable roots.
+`NativePathScope` is the host's adapter-effect contract. Process adapters use the validated
+`ProjectProcessAccess` view from `AdapterExecutionContext::project_process`, which checks the
+selected generation, whole-folder scope and change policy without exposing task definitions to
+those adapters. The context also revalidates the native identity at entry and supplies the typed
+task workflow identity needed by managed storage.
+`install_native_path_store` accepts the daemon composition's current
+canonical operator paths. The existing native path owner checks these at admission and entry,
+including retained bindings after restart; it does not rewrite their accepted settings or change
+independent process-profile authority.
+
 `MAX_TASK_OUTPUT_BYTES` and `TaskOutputDeclaration::validate_reference` expose the shared finite
 output contract to runtime and daemon projections. `validate_task_set` takes a retained-output
 resolver supplied by runtime so an actual historical publication can satisfy a future connection;
@@ -49,12 +101,30 @@ recover admission, while public DTOs expose a bounded projection. `admit_model_b
 runtime edit transaction as humans. The host's `ModelToolLoopAdapter` consumes provider-neutral model
 messages and the configured adapter's maximum envelope; its loop cannot create workflow tasks.
 Frozen dispatch tool fields carry explicit permissions into that host boundary, never UI state.
+`admit_model_batch_exact` preserves the source batch's canonical bytes when control resolves its
+project choices. `AdapterExecutionContext::model_tool_owner` exposes only the retained parent
+invocation and finite call bound needed by managed execution to acquire a nested tool hold; it
+does not give a model a separate admission path.
+`task_tool_invocation` supplies the shared deterministic child identity to capability-host and
+the managed store. `ManagedResourceStore::reserve_managed_task_tool` commits that child's existing
+generation hold only against an entered task parent and the exact bounded process selection.
+The durable `ManagedExecution::TaskTool` variant retains that parent and request digest for
+integrity and uncertainty recovery; it adds no scheduler or resource table.
+`ManagedWorkerAdapter::with_project_pin_helper` and `run_project_pin_helper` are workspace adapter
+contracts consumed by daemon composition and its early internal helper role. The library does not
+discover an ambient executable. The helper owns only a directory descriptor and finite process
+lifetime; it creates no workflow, manager, credential source or runtime policy.
 
 `WorkflowStore` commits a snapshot and exact receipt atomically with generation and capacity checks.
 Its artifact, entered-invocation and managed-use facts allow the durable owners to enforce holds
 and publication without decoding a second copy of runtime semantics. Native-path claim ports
 coordinate physical path identity and preserve uncertain writers. They are adapter contracts,
 not alternate schedulers.
+`NativePathClaimStore::claim_serving_native_paths` checks the exact current serving dispatch
+claim in the same transaction that acquires paths. The serving record owner releases those paths
+atomically with terminal evidence or pre-entry requeue; cancellation races cannot recreate them,
+and entered uncertainty keeps them protected. Direct and peer invocations therefore share the
+same physical conflict owner as project tasks without introducing another execution registry.
 
 Public task DTOs in `control-protocol::tasks` are transport contracts for CLI, Svelte and independent
 JSON consumers. Rust generates the TypeScript declarations and envelope decoder. Summary/read/result

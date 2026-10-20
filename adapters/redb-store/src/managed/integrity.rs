@@ -90,6 +90,26 @@ pub(crate) fn record(
             return Err(invalid("managed hold missing its index"));
         }
         match &u.execution {
+            ManagedExecution::TaskTool {
+                workflow,
+                parent_invocation,
+                ..
+            } => {
+                let table = read
+                    .open_table(crate::schema::TASK_WORKFLOWS)
+                    .map_err(error::redb)?;
+                let bytes = table
+                    .get(workflow.as_str())
+                    .map_err(error::redb)?
+                    .ok_or_else(|| invalid("managed model tool lost its owning workflow"))?;
+                let snapshot: milkdrift_persistence::WorkflowSnapshot =
+                    json::decode(bytes.value(), "task workflow")?;
+                if !snapshot.entered_invocations.contains(parent_invocation) || !u.entry_committed {
+                    return Err(invalid(
+                        "managed model tool differs from its entered parent",
+                    ));
+                }
+            }
             ManagedExecution::Task {
                 workflow,
                 task,

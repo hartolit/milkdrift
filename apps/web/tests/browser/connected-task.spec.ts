@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { dirname, join, resolve } from 'node:path';
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
@@ -15,6 +17,7 @@ interface BrowserFixture {
   model_expect?: string[];
   planning_capability?: string;
   planning_expect?: string[];
+  planning_project_root: string;
 }
 
 const path = process.env.MILKDRIFT_BROWSER_CONFIG;
@@ -37,7 +40,27 @@ async function connect(page: Page, daemon: DaemonFixture) {
   await page.getByRole('button', { name: 'Add daemon connection' }).click();
   await page.getByLabel('Daemon URL').fill(daemon.url);
   await page.getByLabel('Bearer credential').fill(daemon.token);
+  const projectsLoaded = page.waitForResponse((response) => response.url().includes('/v1/projects?') && response.request().method() === 'GET');
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Your projects', exact: true })).toBeVisible();
+  const initialProjects = (await (await projectsLoaded).json()) as { value: { items: Array<{ name: string }> } };
+  const project = page.getByRole('button', { name: 'Open project Animation project', exact: true });
+  if (!initialProjects.value.items.some((item) => item.name === 'Animation project')) {
+    await page.locator('main').getByRole('button', { name: 'Add project', exact: true }).click();
+    await page.getByRole('button', { name: 'Browse permitted folders', exact: true }).click();
+    await page.locator('.folder-chooser').getByRole('button', { name: /^daemon-[ab]$/ }).click();
+    await page.getByRole('button', { name: 'Use animation-project', exact: true }).click();
+    await page.getByLabel('Project name', { exact: true }).fill('Animation project');
+    await page.getByRole('button', { name: 'Attach project', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Project settings', exact: true })).toBeVisible();
+    await page.getByRole('checkbox', { name: 'Allow project changes', exact: true }).check();
+    await page.getByRole('button', { name: 'Save project settings', exact: true }).click();
+    await expect(page.getByRole('status')).toContainText('Saved on this daemon.');
+    await page.getByRole('button', { name: 'Back to work', exact: true }).click();
+  } else {
+    await openDaemonNavigation(page);
+    await project.click();
+  }
   await expect(page.getByRole('heading', { name: 'Your workflows', exact: true })).toBeVisible();
 }
 
@@ -49,6 +72,16 @@ const apply = (page: Page) => page.locator('.drawing-actions').getByRole('button
 
 async function chooseAgent(page: Page, id = config.model_capability!, operation = 'model.generate') {
   await page.getByRole('combobox', { name: 'Model or agent', exact: true }).selectOption(JSON.stringify([id, operation]));
+  if (operation === 'process.execute') await noProjectAccess(page);
+}
+async function noProjectAccess(page: Page) {
+  const permissions = inspector(page).locator('.task-permissions');
+  if (await permissions.getAttribute('open') === null) {
+    await permissions.locator(':scope > summary').focus();
+    await page.keyboard.press('Enter');
+  }
+  await expect(permissions).toHaveAttribute('open', '');
+  await page.getByRole('combobox', { name: 'Task project access', exact: true }).selectOption('none');
 }
 async function closeDetails(page: Page) {
   const close = page.getByRole('button', { name: 'Close details', exact: true });
@@ -127,7 +160,9 @@ async function discoverWorkflow(page: Page, title: string) {
   await page.getByRole('button', { name: 'All workflows', exact: true }).click();
   await page.getByRole('searchbox').fill(title);
   await page.getByRole('button', { name: 'Search', exact: true }).click();
-  await page.locator('.workflow-list').getByRole('button').filter({ has: page.getByRole('heading', { name: title, exact: true }) }).click();
+  const matching = page.locator('.workflow-list').getByRole('button').filter({ has: page.getByRole('heading', { name: title, exact: true }) });
+  await expect(matching).toHaveCount(1);
+  await matching.click();
 }
 async function createSimpleWorkflow(page: Page, title: string) {
   await newTask(page, title);
@@ -158,6 +193,80 @@ async function connectNodes(page: Page, source: string, destination: string, out
   }
   await inspector(page).getByRole('button', { name: 'Connect', exact: true }).click();
 }
+
+test('project folders, shared environment and identical workflow names survive a daemon restart and fresh client', async ({ browser }, testInfo) => {
+  test.setTimeout(120000);
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const title = `Project coding ${Date.now()}`;
+  const folder = `browser-code-${Date.now()}`;
+  const existing = join(config.planning_project_root, 'existing.rs');
+  const original = readFileSync(existing, 'utf8');
+  const metadata = statSync(config.planning_project_root);
+  let configured = 0;
+  const configureCargo = async (current: Page) => {
+    await openDaemonNavigation(current);
+    await current.locator('.sidebar').getByRole('button', { name: 'Project settings', exact: true }).click();
+    const select = current.getByRole('combobox', { name: 'Execution environment', exact: true });
+    await expect(select).toBeEnabled();
+    const options = await select.locator('option').evaluateAll((items) => items.map((item) => (item as HTMLOptionElement).value));
+    const choice = options.find((value) => { const parsed = JSON.parse(value) as { capability?: string }; return parsed.capability === 'project-cargo'; });
+    expect(choice).toBeTruthy();
+    await select.selectOption(choice!);
+    await current.getByRole('checkbox', { name: 'Allow project changes', exact: true }).check();
+    await current.getByRole('button', { name: 'Save project settings', exact: true }).click();
+    await expect(current.getByRole('button', { name: 'Save project settings', exact: true })).toBeEnabled();
+    await current.screenshot({ path: testInfo.outputPath(`project-settings-${++configured}.png`), fullPage: true });
+    await current.getByRole('button', { name: 'Back to work', exact: true }).click();
+  };
+  await page.goto('/'); await connect(page, config.a); await configureCargo(page);
+  await newTask(page, title);
+  await instructions(page).fill('Project fixture: Rust code\nCreate, edit and test a small Rust library in this project.');
+  await apply(page).click();
+  await expect(await result(page, title)).toContainText('Rust project created');
+  await createSimpleWorkflow(page, `${title} follow-up`);
+  await openDaemonNavigation(page);
+  await page.locator('.sidebar').getByRole('button', { name: 'Add project', exact: true }).click();
+  await page.getByRole('button', { name: 'Create folder', exact: true }).click();
+  await page.getByRole('button', { name: 'Browse permitted folders', exact: true }).click();
+  await page.getByRole('button', { name: 'Use daemon-a', exact: true }).click();
+  await page.getByLabel('New folder name', { exact: true }).fill(folder);
+  await page.screenshot({ path: testInfo.outputPath('create-project-folder.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Create project folder', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Project settings', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Back to work', exact: true }).click();
+  await configureCargo(page);
+  await newTask(page, title);
+  await instructions(page).fill('Project fixture: Rust code\nCreate, edit and test a small Rust library in this separate project.');
+  await apply(page).click();
+  await expect(await result(page, title)).toContainText('Rust project created');
+  const second = join(dirname(config.planning_project_root), folder);
+  for (const directory of [config.planning_project_root, second]) {
+    expect(readFileSync(join(directory, 'lib.rs'), 'utf8')).toContain('a + b');
+    expect(statSync(join(directory, 'target/debug/deps')).isDirectory()).toBe(true);
+  }
+  expect(readFileSync(existing, 'utf8')).toBe(original);
+  const after = statSync(config.planning_project_root);
+  expect([after.uid, after.gid, after.mode]).toEqual([metadata.uid, metadata.gid, metadata.mode]);
+  await page.screenshot({ path: testInfo.outputPath('project-coding-result.png'), fullPage: true });
+  await context.close();
+  const root = dirname(resolve(path!));
+  execFileSync(join(root, 'tools/cargo-report'), ['control', '--root', root, 'restart-a'], { timeout: 20000, stdio: 'pipe' });
+  const fresh = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  try {
+    const reopened = await fresh.newPage();
+    await reopened.goto('/'); await connect(reopened, config.a); await discoverWorkflow(reopened, title);
+    await expect(reopened.locator('.workspace-context')).toContainText('Animation project');
+    await openDaemonNavigation(reopened);
+    await reopened.getByRole('button', { name: `Open project ${folder}`, exact: true }).click();
+    await expect(reopened.locator('.workflow-list')).toContainText(title);
+    await expect(reopened.locator('.workflow-list')).not.toContainText(`${title} follow-up`);
+    await reopened.locator('.workflow-list').getByRole('button').filter({ has: reopened.getByRole('heading', { name: title, exact: true }) }).click();
+    await expect(await result(reopened, title)).toContainText('Rust project created');
+    expect(await reopened.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await reopened.screenshot({ path: testInfo.outputPath('project-reconnected-phone.png'), fullPage: true });
+  } finally { await fresh.close(); }
+});
 
 test('a real uploaded project produces discoverable input-dependent results after the browser closes', async ({ browser }, testInfo) => {
   const title = `Cargo analysis ${Date.now()}`;
@@ -407,7 +516,7 @@ test('ordinary additions isolate context and files while a human wait and missin
   await page.goto('/'); await connect(page, config.a); await submit(page, title, config.input_a, true); await waitMissing(page, title);
   await workflowDecision(page, 'wait', question);
   for (const [task, text, file] of [[second, 'Only second context B.', config.input_b], [third, 'Only third context C.', config.input_a]]) {
-    await addTask(page, task); await addText(page, text); await selectTask(page, task); await attach(page, file); await apply(page).click();
+    await addTask(page, task); await noProjectAccess(page); await addText(page, text); await selectTask(page, task); await attach(page, file); await apply(page).click();
     await page.getByRole('button', { name: 'Workflow', exact: true }).click(); await expect(inspector(page)).toContainText(question);
   }
   await expect(page.locator('.graph-node.task .node-state.queued')).toHaveCount(3);
@@ -545,7 +654,10 @@ test('the branded workspace keeps empty discovery, connection and settings usabl
   await page.getByLabel('Daemon URL').fill(config.b.url);
   await page.getByLabel('Bearer credential').fill(config.b.token);
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Your first workflow starts with a task', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Your projects', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Add project', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'No accessible workflows', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath('empty-discovery-phone.png'), fullPage: true });
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.screenshot({ path: testInfo.outputPath('empty-discovery-desktop.png'), fullPage: true });
@@ -664,7 +776,8 @@ test('independent clients share a recovered rename and distinguish duplicate nam
     await second.getByRole('button', { name: /^Studio B/ }).click();
     await second.getByLabel('Bearer credential').fill(config.a.token);
     await second.getByRole('button', { name: 'Connect', exact: true }).click();
-    await expect(second.getByRole('heading', { name: 'Your workflows' })).toBeVisible();
+    await expect(second.getByRole('heading', { name: 'Your workflows', exact: true })).toBeVisible();
+    await expect(second.getByRole('button', { name: 'Open project Animation project', exact: true })).toHaveAttribute('aria-current', 'true');
     await openSavedConnections(second);
     await expect(second.getByRole('button', { name: /^Studio B/ })).toContainText('Connected');
     const fresh = await browser.newContext();
@@ -726,7 +839,7 @@ test('a bad credential cannot install a saved profile or expose daemon work', as
   expect(await page.evaluate(() => window.localStorage.getItem('milkdrift.connections.v1'))).toBeNull();
   await page.getByLabel('Bearer credential').fill(config.a.token);
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Your workflows' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Your projects' })).toBeVisible();
 });
 
 test('touch alternatives distinguish duplicate task titles and preserve assignment while opening Models and agents', async ({ browser }) => {
@@ -841,6 +954,10 @@ test('replacing a shared input visibly affects future starts while an earlier ta
   await addText(page, 'Hold the future task');
   await page.getByLabel('Supply this input later', { exact: true }).check();
   await apply(page).click(); await waitState(page, title, 'queued');
+  // Queued is already true at creation. Wait for the scheduler's recorded input reasons so
+  // the first edit reviews that generation, rather than racing those two durable observations.
+  await expect(taskNode(page, title)).toContainText('Waiting for a required input');
+  await expect(taskNode(page, future)).toContainText('Waiting for a required input');
   await expect(page.getByRole('button', { name: '+ Add task', exact: true })).toBeEnabled();
   await closeDetails(page); await page.getByRole('button', { name: 'Fit', exact: true }).click();
   await page.locator('.graph-node.source .node-content').first().click();

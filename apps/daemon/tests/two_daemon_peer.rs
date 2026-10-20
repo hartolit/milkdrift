@@ -276,6 +276,17 @@ async fn start_plan(
     config: DaemonPlan,
     listener: tokio::net::TcpListener,
 ) -> TestResult<RunningDaemon> {
+    let document: toml::Value = toml::from_str(config.redacted_toml())?;
+    let grouping_folder = std::path::Path::new(
+        document
+            .get("data_root")
+            .and_then(toml::Value::as_str)
+            .ok_or("data root absent")?,
+    )
+    .parent()
+    .ok_or("data parent absent")?
+    .join("peer-grouping-project");
+    fs::create_dir_all(&grouping_folder)?;
     let host = DaemonHost::start(config)?;
     let endpoint = Url::parse(&format!("http://{}/", listener.local_addr()?))?;
     let (stop, stopped) = oneshot::channel();
@@ -290,6 +301,22 @@ async fn start_plan(
         BearerCredential::new(OPERATOR_TOKEN)?,
     )?;
     client.readiness().await?;
+    client
+        .project_command(
+            &milkdrift_control_protocol::projects::ProjectCommandRequest {
+                request_id: "peer-fixture-project".into(),
+                command: milkdrift_control_protocol::projects::ProjectCommandDto::Attach {
+                    name: "Peer execution grouping".into(),
+                    folder: grouping_folder.to_string_lossy().into_owned(),
+                    settings: milkdrift_control_protocol::projects::ProjectSettingsDto {
+                        environment:
+                            milkdrift_control_protocol::projects::ProjectEnvironmentDto::Host,
+                        allow_changes: false,
+                    },
+                },
+            },
+        )
+        .await?;
     Ok(RunningDaemon { client, stop, task })
 }
 
@@ -456,17 +483,25 @@ async fn submit_remote(
     key: &str,
     hosts: &[&str],
 ) -> TestResult<WorkflowReceipt> {
+    let project = client
+        .projects(None, 1)
+        .await?
+        .items
+        .into_iter()
+        .next()
+        .ok_or("grouping project absent")?;
     let capabilities = client.capabilities().await?;
     let tasks=hosts.iter().enumerate().map(|(index,host)| {
         let selected=capabilities.iter().find(|candidate|candidate.peer_id.as_deref()==Some(*host) && candidate.current && !candidate.draining && candidate.operations.iter().any(|operation|operation=="process.execute")).ok_or("requested peer has no authorized configured process")?;
         Ok(serde_json::json!({"alias":format!("repository-{index}"),"definition":{
             "title":format!("Inspect repository on {host}"),"description":"Physical placement fixture","instructions":"Inspect the repository assigned to this exact host",
             "capability":{"id":selected.capability_id,"operation":"process.execute"},"inputs":{},"outputs":{},
+            "execution":{"kind":"explicit","expected_generation":project.generation,"settings":{"environment":{"kind":"host"},"allow_changes":false},"access":"none","tools":[]},
             "dependencies":if index==0 {Vec::<String>::new()} else {vec![format!("repository-{}",index-1)]},"required":true,"corrective_of":null,"paths":[]
         }}))
     }).collect::<TestResult<Vec<_>>>()?;
     let request: CreateWorkflowRequest = serde_json::from_value(
-        serde_json::json!({"request_id":key,"title":key,"description":"Authenticated peer execution", "tasks":tasks,"inputs":{},"finish_when_settled":true,"limits":null}),
+        serde_json::json!({"request_id":key,"project_id":project.id,"title":key,"description":"Authenticated peer execution", "tasks":tasks,"inputs":{},"finish_when_settled":true,"limits":null}),
     )?;
     Ok(client.create_workflow(&request).await?)
 }

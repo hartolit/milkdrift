@@ -27,13 +27,15 @@ fn request(
     capability: &str,
     operation: &str,
     input: &str,
+    project: &milkdrift_control_protocol::projects::ProjectDto,
 ) -> EvidenceResult<CreateWorkflowRequest> {
     Ok(serde_json::from_value(json!({
-        "request_id":key,"title":key,"description":"Finite production task evidence",
+        "request_id":key,"project_id":project.id,"title":key,"description":"Finite production task evidence",
         "tasks":[{"alias":"analysis","definition":{
             "title":key,"description":"Inspect the supplied Cargo manifest",
             "instructions":"Read only the captured Cargo manifest and report the package and declared dependencies.",
             "capability":{"id":capability,"operation":operation},
+            "execution":{"kind":"explicit","expected_generation":project.generation,"settings":{"environment":{"kind":"host"},"allow_changes":false},"access":"none","tools":[]},
             "inputs":{"brief":{"kind":"supplied","name":"brief","optional":false},"file":{"kind":"supplied","name":"file","optional":false}},
             "dependencies":[],"required":true,"corrective_of":null,"paths":[]
         }}],
@@ -84,7 +86,67 @@ pub(super) async fn run(
         "ci-upload",
     ])?;
     let input = required_text(&upload, &["value", "input_id"])?;
-    let create = request("ci-cli-process", "cargo-report", "process.execute", &input)?;
+    let project = super::projects::attach(
+        &client(instance)?,
+        &root.join("daemon-a/animation-project"),
+        "ci-attach-animation",
+    )
+    .await?;
+    let cli_project = runner.success(&["project", "show", &project.id])?;
+    ensure(
+        required_text(&cli_project, &["value", "folder"])? == project.folder,
+        "CLI project read changed its daemon folder",
+    )?;
+    let project_parent = root.join("daemon-a");
+    let command = [
+        "--command-id",
+        "ci-cli-project-create",
+        "project",
+        "create",
+        "CLI folder",
+        path_text(&project_parent)?,
+        "cli-project-folder",
+    ];
+    let created = runner.success(&command)?;
+    ensure(
+        runner.success(&command)? == created,
+        "CLI project create exact replay changed its receipt",
+    )?;
+    let cli_project_id = required_text(&created, &["value", "project", "id"])?;
+    let renamed = runner.success(&[
+        "--command-id",
+        "ci-cli-project-rename",
+        "project",
+        "rename",
+        &cli_project_id,
+        "CLI renamed",
+        "--expected-generation",
+        "1",
+    ])?;
+    ensure(
+        required_text(&renamed, &["value", "project", "name"])? == "CLI renamed",
+        "CLI project rename missing",
+    )?;
+    runner.success(&[
+        "--command-id",
+        "ci-cli-project-remove",
+        "project",
+        "remove",
+        &cli_project_id,
+        "--expected-generation",
+        "2",
+    ])?;
+    ensure(
+        root.join("daemon-a/cli-project-folder").is_dir(),
+        "removing registration deleted its project folder",
+    )?;
+    let create = request(
+        "ci-cli-process",
+        "cargo-report",
+        "process.execute",
+        &input,
+        &project,
+    )?;
     let bytes = serde_json::to_vec(&create)?;
     let receipt = accepted(&runner.success_with_input(&["workflow", "create", "-"], &bytes)?)?;
     ensure(
@@ -188,6 +250,7 @@ pub(super) async fn run(
         "controlled-model",
         "model.generate",
         &input,
+        &project,
     )?;
     let model_receipt = recovered.create_workflow(&model).await?;
     wait_for_workflow(
@@ -232,12 +295,17 @@ pub(super) async fn run(
         instances.first_mut().ok_or("daemon A absent")?,
     )
     .await?;
+    let coding = super::projects::coding(
+        &client(instances.first().ok_or("daemon A absent")?)?,
+        &root.join("daemon-a"),
+    )
+    .await?;
     let report = json!({
         "schema_version":1,"outcome":"passed","fixture_mode":true,"qualifying":false,
-        "cli_submission":true,"public_client_discovery":true,"exact_replay_after_restart":true,
+        "cli_submission":true,"cli_project_operations":true,"public_client_discovery":true,"exact_replay_after_restart":true,
         "changed_reuse":"conflict","captured_input_survives_local_edit":true,
         "process_task":receipt.workflow_id,"controlled_model_task":model_receipt.workflow_id,
-        "isolated_daemons":2,"model_requests":1,"animation":animation,"shutdown":"confirmed before report publication"
+        "isolated_daemons":2,"model_requests":1,"animation":animation,"projects":coding,"shutdown":"confirmed before report publication"
     });
     let text = report.to_string();
     ensure(

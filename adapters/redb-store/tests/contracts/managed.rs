@@ -53,6 +53,9 @@ fn authority(
     )?)
 }
 fn setup(store: &RedbStore) -> TestResult<CapabilityDescriptor> {
+    setup_kind(store, "model")
+}
+fn setup_kind(store: &RedbStore, category: &str) -> TestResult<CapabilityDescriptor> {
     let binding = ManagedBinding {
         installation: name("installation")?,
         generation: 1,
@@ -68,6 +71,9 @@ fn setup(store: &RedbStore) -> TestResult<CapabilityDescriptor> {
     *value
         .pointer_mut("/descriptor/descriptor_revision")
         .ok_or("missing descriptor revision")? = json!(1);
+    *value
+        .pointer_mut("/descriptor/category")
+        .ok_or("category missing")? = json!({"type":category});
     value
         .pointer_mut("/descriptor/extensions")
         .and_then(serde_json::Value::as_object_mut)
@@ -217,10 +223,103 @@ fn commit(store: &RedbStore, mut snapshot: WorkflowSnapshot) -> TestResult {
     let expected_generation = (snapshot.generation > 0).then_some(snapshot.generation);
     snapshot.generation += 1;
     store.commit_workflow(WorkflowCommit {
+        project_guard: None,
+        project_id: None,
         expected_generation,
         snapshot,
         command: None,
     })?;
+    Ok(())
+}
+
+#[test]
+fn nested_managed_tool_requires_entered_parent_and_retains_uncertain_generation() -> TestResult {
+    let root = TempDir::new()?;
+    let store = RedbStore::open(root.path())?;
+    let descriptor = setup_kind(&store, "process")?;
+    let selection = ResolvedCapabilitySnapshot::from_descriptor(
+        &descriptor,
+        &OperationId::new("model.generate")?,
+    )?;
+    let workflow = WorkflowId::new("model-parent")?;
+    let parent = InvocationId::new("model-parent-invocation")?;
+    let invocation = task_tool_invocation(&parent, 1)?;
+    let request = milkdrift_capability::InvocationRequest::new(
+        invocation,
+        selection.capability().clone(),
+        selection.operation().clone(),
+        selection.provider_profile().cloned(),
+        None,
+        Vec::new(),
+        std::collections::BTreeMap::new(),
+    )?;
+    let mut next = snapshot(&store, &workflow)?;
+    commit(&store, next.clone())?;
+    assert!(
+        store
+            .reserve_managed_task_tool(&workflow, &parent, &request, &selection)
+            .is_err()
+    );
+    next = snapshot(&store, &workflow)?;
+    next.entered_invocations.push(parent.clone());
+    commit(&store, next)?;
+    let usage = store.reserve_managed_task_tool(&workflow, &parent, &request, &selection)?;
+    assert!(usage.entry_committed);
+    assert!(
+        store
+            .reserve_managed_task_tool(&workflow, &parent, &request, &selection)
+            .is_err()
+    );
+    store.enter_managed_use(&usage.id, usage.claim, &format!("mdtask-{}", usage.id))?;
+    assert!(store.release_managed_use(&usage.id, usage.claim).is_err());
+    let other = milkdrift_capability::InvocationRequest::new(
+        task_tool_invocation(&parent, 2)?,
+        selection.capability().clone(),
+        selection.operation().clone(),
+        selection.provider_profile().cloned(),
+        None,
+        Vec::new(),
+        std::collections::BTreeMap::new(),
+    )?;
+    assert!(
+        store
+            .reserve_managed_task_tool(&workflow, &parent, &other, &selection)
+            .is_err()
+    );
+    drop(store);
+    let store = RedbStore::open(root.path())?;
+    store.verify_managed_integrity()?;
+    assert!(matches!(
+        store
+            .managed_use(&usage.id)?
+            .ok_or("tool hold missing")?
+            .phase,
+        ManagedUsePhase::Entered { .. }
+    ));
+    assert!(
+        store
+            .reserve_managed_task_tool(&workflow, &parent, &other, &selection)
+            .is_err()
+    );
+    let resolution = command(
+        &store,
+        "resolve-model-tool",
+        ManagedAction::Resolve {
+            use_id: usage.id.clone(),
+            expected_claim: usage.claim,
+        },
+    )?;
+    store.begin_managed_resolution(
+        &resolution,
+        &authority(&resolution, AuthorityOperation::AdministerCapabilities)?,
+    )?;
+    store.quiesce_managed_use(&usage.id, usage.claim + 1, &stopped(&usage.id))?;
+    store.release_managed_use(&usage.id, usage.claim + 1)?;
+    let next = store.reserve_managed_task_tool(&workflow, &parent, &other, &selection)?;
+    store.enter_managed_use(&next.id, next.claim, &format!("mdtask-{}", next.id))?;
+    store.quiesce_managed_use(&next.id, next.claim, &stopped(&next.id))?;
+    store.release_managed_use(&next.id, next.claim)?;
+    store.verify_managed_integrity()?;
     Ok(())
 }
 fn schedule(

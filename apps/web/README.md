@@ -19,7 +19,15 @@ If a saved address points to a different daemon, reconnect stops before loading 
 address, deliberately forget the saved connection, then connect afresh. **Connection details**
 explains the stable identity; it identifies the daemon, not a device, and is not a setup field.
 
-Choose **New workflow** for an unsaved canvas. **Add task** adds a draft card and opens its compact
+Choose **Add project**, then attach an existing folder or create one child in a permitted parent.
+The chooser reads directories on the named daemon, including when the browser is on a phone.
+Attaching preserves files and Git state. New projects initially grant no write tools. In **Project
+settings**, choose a configured execution environment and deliberately enable **Allow project
+changes** when coding work needs it. The selected environment governs file/process tools; **Model
+or agent** remains a separate choice for inference. Unavailable environments explain their setup
+requirements without silently choosing host execution.
+
+Within a project, choose **New workflow** for an unsaved canvas. **Add task** adds a draft card and opens its compact
 left inspector. Write **What should this task do?**; its editable title is suggested from your
 instructions. Select another task to change the inspector while keeping the canvas and camera.
 **Start workflow** accepts the first task or connected group together. An empty canvas creates no
@@ -59,6 +67,12 @@ affected future consumers before replacement. Started tasks keep their frozen ve
 restricted, expired and outside-page sources are distinct; the client never substitutes empty text
 for unavailable content. Workflow and task discovery are paged, with explicit bounded loading.
 
+The rail groups projects beneath their daemon and workflows beneath their project. Identical labels
+do not merge registrations or drafts. **Earlier workflows** lists retained work without an
+association; explicitly selecting a project changes only later submissions. Accepted definitions
+and original receipts stay unchanged. **All accessible workflows** also discovers work whose
+project settings this connection cannot inspect.
+
 The rail keeps the daemon switcher, workflow creation, recent workflows and **All workflows**
 discovery. Browser Back/Forward restores location without submitting work. Each authenticated
 connection retains up to eight canvas drafts in memory. A canvas bounds its staged changes to 32,
@@ -71,6 +85,13 @@ At the eight-draft limit, other workflows remain available as a clean view. **Cl
 releases loaded detail without discarding drafts or accepted connections; select a task to load it
 again.
 
+Project setup separately retains at most eight drafts per authenticated connection, one for each
+project or new-project form. Back/Forward restores the matching draft, including an exact request
+whose reply is unconfirmed. **Discard project draft** frees unsent changes; pending requests require
+receipt recovery. Actor changes clear these drafts and invalidate old reads and mutation replies.
+Removing an unused registration preserves unrelated drafts. Unsent drawings for the removed project
+remain available for inspection or discard, with submission blocked. Start new work in a registered project.
+
 Pan, zoom, fit and the accessible list operate on the same graph. A closable left inspector stays
 compact at narrow widths. Layout is presentation; the secondary timeline uses actual starts and
 settlements to show overlap. Queued tasks have no invented start time. Results have bounded previews
@@ -81,9 +102,22 @@ Access restrictions and uncertainty remain visible.
 **Remove unstarted task** are contextual actions. Workflow actions expose wait, resume, completion
 and prospective limits. Rejected model proposals can be reviewed and dismissed with repaired work
 in the same atomic change; dismissal does not resume a separate human wait. Model continuation,
-automatic repair and tools remain deliberate permissions. File tools select permitted project roots
-and access modes supplied by the daemon, with an optional relative subfolder. Ordinary input
-connections require no file-tool permission. Rust rechecks authority and native paths before entry.
+automatic repair and tools remain deliberate permissions. New tasks inherit reviewed project
+settings or select an explicit restriction in **Tools & autonomy**. Accepted tasks display their
+recorded execution environment and access; changing project defaults does not change them. A stale
+settings draft requires review. Native file tools use host paths while a Podman process uses
+`/project`. Trusted host tools are not sandboxed by file claims. Ordinary input connections require
+no file-tool permission. Rust rechecks authority and native paths before entry.
+Corrections keep the source task's environment, tools and access as an explicit new selection,
+reviewed against the current project generation. New defaults cannot silently widen the correction.
+If the original environment is no longer available, submission refuses until the user reviews a
+different selection. Hidden execution selections cannot be copied into a correction.
+
+Project settings show the actual folder and availability. Rename changes its label, and removing
+an unused registration preserves the directory. If a creation reply is lost, recover the exact
+receipt or replay the same request. An unresolved creation offers explicit attachment after
+inspection or abandonment; neither deletes files. Moved or replaced folders become unavailable
+instead of being silently recreated.
 
 Concurrent changes or a task starting can refuse a prospective edit. The drawing remains for a
 new explicit decision after refresh. A lost response instead preserves the exact target, payload

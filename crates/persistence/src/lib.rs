@@ -9,9 +9,14 @@ mod error;
 mod identity;
 mod native_paths;
 mod peer;
+mod project;
 mod security;
 mod task;
 pub use native_paths::{NativePathClaim, NativePathClaimStore, NativePathRoot};
+pub use project::{
+    MAX_PROJECT_OPERATION_BYTES, MAX_PROJECT_OPERATIONS, MAX_PROJECTS, ProjectMutation,
+    ProjectOperation, ProjectOperationState, ProjectRecord, ProjectStore,
+};
 
 pub use task::{
     MAX_WORKFLOW_DOCUMENT_BYTES, MAX_WORKFLOW_REQUEST_BYTES, WorkflowCommandAcceptance,

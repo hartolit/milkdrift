@@ -170,5 +170,8 @@ pub(super) fn prepare_working_directory(
             }
             Ok(current)
         }
+        WorkingDirectoryMode::Project => {
+            Err("project mode requires an accepted project binding".to_owned())
+        }
     }
 }

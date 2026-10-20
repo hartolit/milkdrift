@@ -21,12 +21,19 @@ pub(super) async fn run(
     instance: &mut Daemon,
 ) -> EvidenceResult<Value> {
     let client = super::check::client(instance)?;
+    let project = super::projects::attach(
+        &client,
+        &root.join("daemon-a/animation-project"),
+        "ci-attach-animation",
+    )
+    .await?;
     let request: CreateWorkflowRequest = serde_json::from_value(json!({
-        "request_id":"ci-animation","title":"Animation task evolution","description":"One planner produces all parallel and corrective future work",
+        "request_id":"ci-animation","project_id":project.id,"title":"Animation task evolution","description":"One planner produces all parallel and corrective future work",
         "tasks":[{"alias":"planner","definition":{
             "title":"Plan animation research","description":"Plan research from the separately supplied animation brief",
             "instructions":"Plan a Rust learned-animation investigation using explicit research and composition dependencies.",
             "capability":{"id":"controlled-planner","operation":"model.generate"},
+            "execution":{"kind":"explicit","expected_generation":project.generation,"settings":{"environment":{"kind":"host"},"allow_changes":false},"access":"none","tools":[]},
             "inputs":{"brief":{"kind":"supplied","name":"brief","optional":false}},
             "outputs":{"model_response":{"required":true,"media_type":"application/vnd.milkdrift.model-response.v1+json","max_bytes":2097152}},
             "dependencies":[],"required":true,"corrective_of":null,"paths":[],"tools":[],
