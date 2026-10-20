@@ -35,7 +35,7 @@ functional evidence for 02c and do not overrule this rejection or validate the p
 
 ## Prompt 02e projects and execution environments verification
 
-The assigned project correction adds daemon-owned folder registrations, durable directory-creation
+Implementation checkpoint `bbae7a6` contains the assigned project correction: daemon-owned folder registrations, durable directory-creation
 recovery, current-store adoption, project-scoped workflow discovery and frozen execution bindings.
 Browser, native client, CLI and model-authored future work share the public daemon admission path.
 These are focused Linux checks under the sprint's explicit prompt-07 full-gate schedule. They do
@@ -127,6 +127,9 @@ Public CLI inspection confirmed both tasks remained queued and no supply had bee
 The test now waits for the two visible reasons before staging. Both corrected cases pass on the
 same populated fixture and unchanged production assets, covering all 37 scenarios across the full
 run and focused rerun. This is not a single 37/37 invocation.
+After those fixture binaries were copied, the only production Rust edit narrowed the protocol's
+serde helper to crate visibility. Full protocol/client suites, scoped Clippy/rustdoc, API inventory
+and the default production build were rerun; the wire format and execution behavior are unchanged.
 
 The full and focused logs are `target/prompt02e/milkdrift-02e-browser-final.log` and
 `target/prompt02e/milkdrift-02e-browser-repair.log`; HTML and screenshots are in

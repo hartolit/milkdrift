@@ -148,7 +148,7 @@ this partial feedback is not user acceptance of the journey or the proposed corr
 
 ## Tested checkpoints and evidence
 
-The assigned 02e implementation and focused verification are complete, with positive physical Podman
+Implementation checkpoint `bbae7a6` completes assigned 02e and its focused verification, with positive physical Podman
 attachment qualification explicitly open under its host-prerequisite clause. The
 [02e evidence](../../verification-evidence.md#prompt-02e-projects-and-execution-environments-verification)
 records complete affected owner suites, 106 frontend unit cases, scoped Clippy/rustdoc, API review,
