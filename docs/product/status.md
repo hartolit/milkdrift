@@ -117,9 +117,9 @@ host/runtime prerequisites. The local rootless OCI runtime has refused the fd-ba
 before workload entry; successful physical attached-project execution remains unqualified. See
 [verification evidence](../development/verification-evidence.md) for the measured boundary and gap.
 
-The user rejected the earlier compact form layout. Canvas behavior and model assignment have
-focused verification; the actual user has not rechecked the replacement. Naming and visual
-preference acceptance also remain unreported. Adding a new model or process still requires a qualified
+The user rejects the current screen and navigation as too complex and bloated. Canvas behavior and
+model assignment have focused verification, but the usability review and substantive task journey
+remain open. No redesign has been accepted. Adding a new model or process still requires a qualified
 operator profile, appropriate grants and daemon restart; the browser now exposes that setup path
 rather than implying that a connection can be installed from a task's selector.
 Drafts are memory-only and are lost on reload

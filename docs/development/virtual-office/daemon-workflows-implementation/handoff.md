@@ -115,6 +115,13 @@ create/edit/build/reconnect journey. The later method, remote and final-review p
 dependencies without changing their numbers. This planning correction changes no production code,
 stores, running services or environment configuration.
 
+On October 22, the user reported, “I'm not really sure what I'm looking at... It's all too complex
+for a user and bloated...” and clarified that the concern is “The whole screen and navigation”.
+No completed task journey or acceptance of a redesign was reported. A subsequent agent review of
+source and existing screenshots identified competing navigation groups, two left panels crowding
+the canvas and too many equally prominent controls as possible causes; these are agent diagnoses,
+not additional user observations. Early review remains open, with no new production phase assigned.
+
 | Finding | Owner and acceptance |
 | --- | --- |
 | Setup requires users to invent a local name and supply a technical identity. | [02a](02a-daemon-connection-identity.md) implemented address/credential setup, learned identity pin, durable shared name and authorized rename across clients/restart; the user's recheck is pending. |
