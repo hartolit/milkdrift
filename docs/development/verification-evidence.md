@@ -64,10 +64,13 @@ full-gate or repaired-runtime claim.
 
 ## Side S01 pause, recovery and project contention
 
-The October 24 S01 implementation repairs the three diagnostic sequences above through the existing
+The October 24 S01 implementation at `1225fa0e` repairs the three diagnostic sequences above through the existing
 runtime, host and public command owners. The [side handoff](virtual-office/canvas-experience/handoff.md)
 records its tested checkpoint and the next unassigned phase. This is focused evidence under the
 explicit S05 full-gate schedule, not completion of the main sprint or actual user acceptance.
+Checks ran on Linux with Rust 1.95.0, Node 25.2.1 and npm 11.19.1. The subsequent handoff/checkpoint
+update changes documentation only; all eight final documentation contracts and formatting/diff
+checks pass. Temporary evidence daemons were stopped after their checks.
 
 The six maintained `tasks::lifecycle` regressions cover input supply during a human wait, old Continue
 replay against a later wait, pause before and during preparation, Stop races, repeated reopen and a

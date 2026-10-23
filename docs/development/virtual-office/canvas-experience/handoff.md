@@ -7,6 +7,10 @@ public-client/browser evidence are finished. S02–S05 and the remaining main sp
 unassigned. The completed planning is preserved at `851d216d`. No full-system pass or actual user
 acceptance is claimed by this record.
 
+Implementation checkpoint: `1225fa0e` (`Preserve paused and busy task starts through the shared daemon
+lifecycle`). Verification below ran on that source before commit; this subsequent checkpoint update
+changes documentation only. The final documentation contracts and formatting/diff checks pass.
+
 S01 repairs explicit waits, frozen starts paused before entry, restart recovery and temporary
 native project contention. Runtime owns scheduling and semantic control guards; the host releases
 prepared resources and known-unentered claims; existing public clients expose the same facts.
