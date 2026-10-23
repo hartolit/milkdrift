@@ -1,14 +1,37 @@
 # Code-change map
 
 This map assigns the source changes needed for the [implementation sprint](README.md). The
-[task-workflow decision](../../../decisions/0051-daemon-task-workflows.md) owns the selected
-semantics and reasons. These are proposed changes, not a claim that the current code implements
-them. The map uses current source and the preserved v3 observations; it does not repeat that
+[task-workflow decision](../../../decisions/0051-daemon-task-workflows.md) and
+[canvas/method decision](../../../decisions/0052-canvas-authoring-and-method-experience.md) own the
+selected semantics and reasons. The original cutover rows below retain their source context;
+[status](../../../product/status.md) and the handoff distinguish completed work from remaining work.
+They are not instructions to recreate retired paths. The map does not repeat the preserved v3
 investigation or carry its superseded architecture into this sprint.
+
+## Current responsibility transfer
+
+The [canvas experience side sprint](../canvas-experience/README.md) owns the redesigned frontend and
+its required daemon changes, including the complete method responsibility formerly assigned to the
+prepared main 04. There is no second method implementation after side acceptance. Its own prompts
+map current source and consumers; the following crosswalk avoids duplicating that inventory.
+
+| Responsibility | Current owner |
+| --- | --- |
+| Explicit waits, preserved unentered starts, restart recovery and temporary native contention | [Side S01](../canvas-experience/S01-preserve-future-work.md). |
+| Saved workflow authoring, tree/right inspector/direct ports, shared connection meaning, edit guards and contextual reads/errors | [Side S02](../canvas-experience/S02-saved-canvas-authoring.md). |
+| Outstanding actual early-user review and repair | [Side S03](../canvas-experience/S03-early-user-review.md), satisfying main 02 only on the required actual evidence. |
+| Daemon-wide library, shared save/use/import/export, activation and recovery, local copies and method UI | [Side S04](../canvas-experience/S04-reusable-methods.md), absorbing main 04 end to end. |
+| Side acceptance, method review and full gate | [Side S05](../canvas-experience/S05-final-review-and-gate.md). |
+| Persistent remote administration, remote effect recovery and rolling retention/search | Main 05, including the side's authoring and method reference protections. |
+| Actual combined user review and final integrated full gate after main 05 | Main 06 and 07 respectively; a side gate cannot qualify later changes. |
+
+Side and main phases fix known in-scope defects in their owning boundary. Their separate named final
+gates schedule integrated verification, not deferred defect repair. Main 04 is superseded before
+implementation, not already completed; all implementation remains subject to its explicit assignment.
 
 The October 17 partial user review adds the prepared
 [02a connection](02a-daemon-connection-identity.md) and
-[02b visual](02b-visual-design-and-brand.md) corrections before 04. Their current owners are:
+[02b visual](02b-visual-design-and-brand.md) corrections before method work. Their current owners are:
 
 | Boundary | Correction and affected consumers |
 | --- | --- |
@@ -42,7 +65,7 @@ The following paths own its implementation and consumers. Qualified evidence rem
 The native process and managed worker test suites retain their own enforcement claims. No host-folder
 mount is qualified merely because Podman can represent one; only the explicit verified project
 attachment is admitted, and this host's OCI runtime still refuses its held-directory mount.
-Phase 04 adopts these project bindings at expansion, phase 05 distinguishes remote locations and
+Side S04 adopts these project bindings at expansion, main 05 distinguishes remote locations and
 protects project files from retention, and 06/07 review and verify the integrated experience.
 
 ## One representation and one scheduler
@@ -61,8 +84,10 @@ external-operation responsibilities. Keeping these crate names does not require 
 public types or preserving their old wire shapes.
 
 Phase 01 introduces the general task/dependency/input representation, version guards and workflow
-limits, even though its first visible journey begins with a single task. Phases 03 and 04 extend
-that production path with model-produced changes and methods. They do not replace the first slice.
+limits, even though its first visible journey begins with a single task. Phase 03 and side S04 extend
+that production path with model-produced changes and methods. Side S02 adopts ADR 0052's distinct
+independent order conditions and data-derived readiness without rewriting accepted historical meaning.
+These changes do not introduce a second scheduler.
 
 ## First slice and cutover cost
 
@@ -94,20 +119,20 @@ phase. The list is a responsibility map, not a restriction against correcting an
 
 | Owner and source | Selected change and consumers | Phase |
 | --- | --- | --- |
-| `crates/blueprint/src/model/node.rs`, `model/structured.rs`, `revision.rs`, `mutation.rs`, `validation.rs` and `validation/` | Replace `NodeKind`, structured control ports, pinned child references and revision-mutation authoring with task definitions, explicit dependencies, input bindings and versioned future edits. Reuse bounded validation and content identity mechanics where their meaning fits. Update authority, runtime, persistence, protocol, daemon and CLI consumers. | 01; template definitions in 04 |
+| `crates/blueprint/src/model/node.rs`, `model/structured.rs`, `revision.rs`, `mutation.rs`, `validation.rs` and `validation/` | Replace `NodeKind`, structured control ports, pinned child references and revision-mutation authoring with task definitions, explicit dependencies, input bindings and versioned future edits. Reuse bounded validation and content identity mechanics where their meaning fits. Update authority, runtime, persistence, protocol, daemon and CLI consumers. | 01; template definitions transferred to side S04 |
 | `crates/runtime/src/engine/dispatch.rs`, `engine/scheduling.rs`, `scheduler.rs`, `projection/` | Make task readiness and attempt state the canonical scheduler/projection model. Preserve bounded admission and fair discovery. Freeze actual instructions and resolved inputs at start. Remove dependence on screen order, identifiers or prose for scheduling. | 01; multiple tasks and failure-input behavior in 03 |
 | `crates/runtime/src/engine/structured/`, `engine/reconciliation.rs`, `reconciliation.rs` | Remove pinned child runs, graph fork/join/reducer/repeat machinery and graph reconciliation adoption from the production task path. Prospective task edits use explicit task versions and lifecycle checks. No lowering layer remains. | 01 |
 | `crates/runtime/src/executor.rs`, `engine/effects/entry.rs`, `engine/effects/reporter.rs`, `engine/recovery.rs` | Port the existing preparation, final authority check, durable entry intent, exact reports, cancellation and uncertain-outcome rules to task/attempt identities. Preserve selected generation and accepted request after interruption; do not replay an entered effect merely because its response is absent. | 01; remote continuation exercised in 05 |
 | `crates/control/src/command.rs`, `service.rs`, `controller/`, `adapter/`, `policy.rs`; `apps/daemon/src/host/commands/control.rs` | Replace graph proposal/controller lifecycle with the ordinary typed task-change path shared by people and model responses. Retain scoped authorization and cumulative allowance enforcement. Remove the requirement to install an old controller lifecycle before workflow accounting can govern entry. Model output remains proposed data until this owner accepts it. | 01 and 03 |
-| `crates/authority/src/model/resource.rs`, `model/grant.rs`, `model/execution.rs`; `apps/daemon/src/host/authorization.rs` | Carry workflow/task scope and frozen execution provenance through the current evaluator. Add the narrow method-use, template-owner-edit and connection-administration operations when their clients arrive. Actor claims in model text grant no authority. | 01, 04 and 05 |
-| `crates/persistence/src/journal/commit.rs`, `event/`, `snapshot.rs`, `revision.rs`, `controller_account/`; `adapters/redb-store/src/schema.rs`, `store/open.rs`, `journal/`, `snapshot.rs`, `revision.rs` | Replace old graph records and readers with fresh-format task storage. Reuse guarded atomic commit, exact receipt, accounting, artifact and clock mechanisms. Definition edits, accepted task state and their discoverability commit together. Replace controller-specific naming/ownership where needed so cumulative workflow limits survive retries and corrections. | 01; expansion transaction in 04; expiry in 05 |
+| `crates/authority/src/model/resource.rs`, `model/grant.rs`, `model/execution.rs`; `apps/daemon/src/host/authorization.rs` | Carry workflow/task scope and frozen execution provenance through the current evaluator. Add the narrow method-use, template-owner-edit and connection-administration operations when their clients arrive. Actor claims in model text grant no authority. | 01, side S04 and main 05 |
+| `crates/persistence/src/journal/commit.rs`, `event/`, `snapshot.rs`, `revision.rs`, `controller_account/`; `adapters/redb-store/src/schema.rs`, `store/open.rs`, `journal/`, `snapshot.rs`, `revision.rs` | Replace old graph records and readers with fresh-format task storage. Reuse guarded atomic commit, exact receipt, accounting, artifact and clock mechanisms. Definition edits, accepted task state and their discoverability commit together. Replace controller-specific naming/ownership where needed so cumulative workflow limits survive retries and corrections. | 01; authoring in side S02; expansion in side S04; expiry in main 05 |
 | `crates/control-protocol/src/{command,authoring,read,result}.rs`; `crates/control-client/src/` | Introduce the public task commands, reads and failure responses used equally by CLI, Svelte and agents. Retain bounded documents, authenticated cursors and exact replay/conflict behavior. Replace ordinary `SavedRunRequest` prerequisites with daemon discovery and request-result recovery. | 01 onward |
 | `apps/daemon/src/host/commands/`, `host/runs.rs`, `host/attempts/`, `host/results.rs`, `http/reads.rs`, `http/streams.rs` | Replace ordinary blueprint/run/proposal routing with workflows and tasks. Provide authorized lists and result inspection without known IDs, then title/description/time search, origins and follow-up links. Actual start/end times come from execution facts; queued work has no invented time. | 01; advanced discovery in 05 |
 | `apps/daemon/src/http.rs`, `auth/`, `config/{wire,compile}.rs` | Add the configured browser-origin, authentication and streaming behavior required by the standalone client. Existing router code deliberately omits CORS. Integrate preflight and rejected-origin behavior with supported HTTPS deployment rather than relying on native HTTP tests. | 01 |
 | Proposed `apps/web/` | Build a standalone Svelte client over public operations. Keep connection profiles, workflow views, settings and permissions separated by selected daemon. Production submission/result/reconnect comes first; later phases add editing, automatic work, methods and environments. No CLI execution, store access or client scheduling. | 01 through 06 |
-| `apps/cli/src/command/{workflow,blueprint,sequence,run,proposal,controller,method}.rs`, `workflow_args.rs`, `session.rs`; `crates/prompt-sequence/` | Replace the obsolete workflow command families and draft/recovery-file requirements with thin task operations. Remove the prompt-sequence compiler when its old consumers are removed. Keep exact request recovery useful without making a local file the discovery authority. Update machine output and documented examples with the supported path. | 01; additions match 03–05 |
+| `apps/cli/src/command/{workflow,blueprint,sequence,run,proposal,controller,method}.rs`, `workflow_args.rs`, `session.rs`; `crates/prompt-sequence/` | Replace the obsolete workflow command families and draft/recovery-file requirements with thin task operations. Remove the prompt-sequence compiler when its old consumers are removed. Keep exact request recovery useful without making a local file the discovery authority. Update machine output and documented examples with the supported path. | 01; additions follow main 03, side owners above and main 05 |
 | `crates/model/src/task.rs`; `crates/capability-host/src/adapter/context.rs`, `materialization/`; `adapters/model-provider/` | Reuse provider-neutral instructions, responses and tool-call data. Materialize authorized text-file inputs through the owning host into bounded model content; preserve frozen byte identity. Current provider mappings refuse generic artifact/file content despite representing those variants. A DTO alone cannot satisfy file input. | 01 and 03 |
-| Proposed method modules in `crates/blueprint`, `crates/control`, `crates/persistence`, `adapters/redb-store`; daemon/client method operations | Implement the daemon-wide template library, owner edits and queued references. Activation atomically records the selected saved template content, instantiated task identities, inserted tasks and released reference. Interrupted replay cannot select newer content or insert twice. Ordinary future-task edits then apply to materialized copies. | 04 |
+| Proposed method modules in `crates/blueprint`, `crates/control`, `crates/persistence`, `adapters/redb-store`; daemon/client method operations | Implement the daemon-wide template library, owner edits and queued references. Activation atomically records the selected saved template content, instantiated task identities, inserted tasks and released reference. Interrupted replay cannot select newer content or insert twice. Ordinary future-task edits then apply to materialized copies. | Transferred in full to side S04 |
 | `apps/daemon/src/host/peers.rs`, `http/peers.rs`, `config/`; `adapters/peer-http/`, `crates/peer-protocol/` | Add durable daemon-owned connection CRUD and credential-reference administration. Existing endpoints only connect/drain configured peers; they do not create persistent configuration. Keep local administrative rights separate from remote execution credentials. Clients inspect redacted host state through their selected daemon. | 05 |
 | `crates/capability-host/src/serving/`, `registry/`, `worker.rs`; `apps/daemon/src/host/peer_store.rs` | Preserve independent direct/delegated execution, exact accepted request identity, generation ownership, remote cancellation and artifact transfer. Change workflow-origin provenance consumers to the task model without moving remote workflow ownership to the host. | 01 compatibility of retained owners; 05 connected journey |
 | `crates/capability-host/src/managed.rs`, `managed/`; `crates/persistence/src/managed/`; `adapters/managed-linux/` | Preserve generic approved setup, generation checks, resource limits, editing claims, lifetime holds, prepare/apply/reopen/remove and uncertainty. Remove only workflow-publication/evaluated-learning hooks whose product callers retire. Keep ordinary files and tools responsible for project procedures and documentation. | 01 removal boundary; 05 use and regression |
@@ -163,10 +188,12 @@ them or recover their storage on behalf of the daemon.
 Phase 02 and phase 06 are actual user-review-and-repair checkpoints for the early and combined
 journeys. Their feedback may change behavior within the selected account; they are not cosmetic
 acceptance screens. Phase 03 owns automatic additions, parallel research, corrective work and limits.
-Phase 04 owns methods. Phase 05 owns persistent remote administration, retention and advanced
-inspection. Phase 07 runs the full gate and the combined product journey, fixes findings and verifies
-the resulting code. Earlier phases compile changed packages and callers and run focused checks;
-they do not claim full-system acceptance or leave known in-scope defects for phase 07.
+Side S04 owns methods, S03 supplies the outstanding main 02 review and S05 runs the side's full gate.
+Main 05 owns persistent remote administration, retention and advanced inspection, preserving the
+side's authoring and method references. Main 07 runs a new full gate and combined product journey
+after main 05/06, fixes findings and verifies the resulting code. Earlier phases compile changed
+packages and callers and run focused checks; they do not claim final acceptance or leave known
+in-scope defects for either final gate.
 
 ## Disposition of former findings
 
@@ -179,7 +206,7 @@ changes their disposition; it does not rewrite their historical results.
 | Nested Any cancellation produced a scheduler/projection ownership disagreement; crossed All could stall. See the [runtime diagnostic](../milkdrift-remedial-planning-v3/working/compatibility-runtime-evidence.md). | These are real defects in the archived graph implementation. Phase 01 removes that graph machinery; it must not claim to have repaired old runs. Port final-entry/cancellation invariants to the new task path and test them independently. Do not reproduce the old branch-scope algorithm in methods. |
 | Branch choice changed with port spelling in the [priority diagnostic](../milkdrift-remedial-planning-v3/working/priority-runtime-evidence.md). | The old branch primitive retires. Explicit dependencies and accepted model changes determine task meaning. Add variation in task IDs and display order so neither becomes an undeclared condition or dependency. |
 | Existing inputs can be declared before their values exist. | Reuse this demonstrated separation. The defect to avoid is changing it into authoring-time input evaluation or model-text scheduling. |
-| Existing pinned child execution and independent copy differ from deferred local method expansion. | Replace both for the new method use; phase 04 supplies one atomic activation contract and local origin evidence. |
+| Existing pinned child execution and independent copy differ from deferred local method expansion. | Replace both for the new method use; side S04 supplies one atomic activation contract and local origin evidence under ADRs 0051/0052. |
 | Browser evidence was negative; independent JSON clients worked. | Phase 01 supplies real browser transport/authentication behavior and preserves the independent-client boundary. A Rust client result is not browser proof. |
 | A local cancellation fence cannot prove a remote effect stopped. | Keep remote acceptance/status/cancellation ownership and unresolved holds. Exercise interrupted remote command recovery in phase 05 and the combined journey. |
 | Earlier proposal/program acceptance and compatibility conclusions concerned superseded representations. | They are not migration requirements or user validation. Preserve their evidence; remove obsolete contracts only with their callers and record the new fresh-store boundary clearly. |

@@ -1,8 +1,11 @@
 # 07 — Final full-system test and repair
 
-**Prepared, not assigned.** Prerequisites: 01–06 and corrective prompts 02a/02b/02c/02d/02e complete, both actual
-user checkpoints recorded, focused checks passing, no known deferred in-scope defects. This is the
-named final acceptance owner
+**Prepared, not assigned.** Prerequisites: accepted
+[canvas experience side sprint](../canvas-experience/README.md), including the outstanding main 02
+review and the transferred full main 04 responsibility; completed main 01/03/05/06 and corrective
+02a–02e work; both main actual-user checkpoints recorded; focused checks passing; no known deferred
+in-scope defects. The side's S05 full gate qualifies its own resulting code. This is the separate
+named final main-sprint acceptance owner after remote tools, retention and combined review,
 under the [sprint schedule](README.md) and [verification policy](../../workflow.md).
 It is a test-and-repair assignment: fix findings, then verify the resulting code. A report of failures
 or a gate run on a superseded commit is not acceptance.
@@ -10,6 +13,7 @@ or a gate run on a superseded commit is not acceptance.
 Read [AGENTS](../../../../AGENTS.md), all canonical docs, [implementation](../../practices/implementation.md),
 [documentation](../../practices/documentation.md), [cohesive review](../../practices/cohesive-review.md),
 [workflow](../../workflow.md), [ADR 0051](../../../decisions/0051-daemon-task-workflows.md),
+[ADR 0052](../../../decisions/0052-canvas-authoring-and-method-experience.md), the side sprint handoff,
 [code-change map](code-change-map.md), [journey](journey.md) and the tested handoff. Inspect current
 source/manifests/callers and implementation evidence; do not assume early phase passes remain valid
 across later changes. Inventory only actual acceptance gaps, not another broad investigation.
@@ -42,9 +46,11 @@ mobile claims require recorded device/browser evidence beyond viewport dimension
 navigation, accessible labels and readable parallel/blocked/uncertain states in rendered UI.
 Include [02a's](02a-daemon-connection-identity.md) shared-name/reconnect/replay and identity-replacement
 regressions, and [02b's](02b-visual-design-and-brand.md) real-logo, responsive inspector and visual
-review evidence. Include [02d's](02d-canvas-and-direct-authoring.md) direct source/result wiring,
-canvas/left-panel navigation, accessible connection actions, bounded partial graphs, retained-output
-validation and exact draft/batch recovery. Later method/host surfaces must use the same design. Passing automation does not
+review evidence. Include the side sprint's tree, blank placement, right inspector, direct named ports,
+accessible connection actions, bounded partial graphs, retained-output validation, conditional draft
+checkpoint recovery and exact Run/Apply recovery. Exercise inherited model choice, explicit run scope
+with an unrelated blank idea, stable output ceilings and removal of data-only versus independent order.
+Method/host surfaces must use the same design. Passing automation does not
 replace the user's recorded response to these corrections.
 
 Include [02e's](02e-projects-and-execution-environments.md) project discovery/adoption and exact
@@ -55,11 +61,15 @@ deterministic mechanism checks alone do not close it. Method expansion and remot
 project context without inheriting unavailable roots or treating local paths as remote paths.
 
 Exercise retention with controlled time, enough turnover to cross configured count/byte/page bounds,
-reference changes racing collection, accepted expansion holds, pending results, unresolved remote
-operations, absent content, exact archived replay/conflict and capacity refusal. Confirm project
-files remain untouched. Reopen stores after fault boundaries. Verify old stores refuse before mutation
-and preserved refs/data remain. The new engine's own prompt-01 stores must still open correctly after
-later phases; fresh adoption is not permission to discard data produced during this sprint.
+reference changes racing collection, saved workflow and method-editing documents, current methods,
+accepted expansion holds, pending results, unresolved remote operations, absent content, exact archived
+replay/conflict and capacity refusal. Confirm project files remain untouched. Reopen stores after
+fault boundaries. Preserve actual current supported stores, accepted task definitions, exact receipts,
+project bindings and protected artifacts through the side sprint and later checked adoption. Unsupported
+historical formats must refuse before mutation; preserve their data and matching readers. Existing
+development-format gaps documented in [status](../../../product/status.md#limitations-now) mean that
+not every prompt-01-era store is readable by today's binary. Record the exact tested source/schema
+transition rather than promise universal compatibility or reset retained data to make the tests pass.
 
 Real-model evidence is separate: record configured model/provider/profile, supplied brief, actual
 results, failure/quality judgments, authority and spend. Deterministic fixtures establish plumbing,
@@ -69,9 +79,13 @@ user review keeps acceptance open unless the user explicitly changes that eviden
 ## Run the complete current gate
 
 Include the transfer-review regressions: ordinary capacity fills without stranding stop/settlement;
-native path overlap and uncertain-writer claims; required-task correction adoption; stop/remove races
+explicit waits survive unrelated input updates; pause after frozen start and paused-start restart both
+resume without failure or orphaned work; temporary native contention waits and resumes while uncertain
+writer claims remain protected; required-task correction adoption; stop/remove races
 during accepted expansion; empty nested-reference traversal overflow; secret-import replay/conflict;
-and remote catalog selection without private registry setup. At least one early user-reviewed task
+and remote catalog selection without private registry setup. Retain authoring conflict/recovery and
+method live-interface, release-condition, library-draft and current-at-activation regressions from the
+side sprint. Its previously passing tests must run against the newly integrated owners. At least one early user-reviewed task
 must have produced useful input-dependent output, not only canned controlled-model content.
 
 Use [workflow](../../workflow.md#full-local-gate) as the current command owner. At this planning

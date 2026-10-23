@@ -2,14 +2,19 @@
 
 ## Assignment and prerequisites
 
-Execute this prompt only after the user has authorized this implementation sprint and phases 01–04
-are complete. The production Svelte client, early user review and its repairs, evolving task path,
-and local method expansion must already work. Read their handoffs and preserve their production
+Execute this prompt only after explicit assignment, completed main phases 01/03 and acceptance of the
+[canvas experience side sprint](../canvas-experience/README.md). Its S03 completes the outstanding
+main 02 review only through actual user evidence; its S04 absorbs the full method responsibility of
+the superseded main 04, and its S05 owns a separate full gate. The production canvas, saved authoring,
+early user review and local methods must already work. Read both handoffs and preserve their production
 path. This is implementation of the selected design, not another investigation or a new transport.
 Carry forward the [02a connection](02a-daemon-connection-identity.md) and
 [02b visual](02b-visual-design-and-brand.md) corrections in all new host/retention surfaces. This
 phase's shared execution-host connections are different from browser onboarding and daemon naming;
 do not restore local aliases as the daemon's name or weaken the independent expected-host check.
+Extend the tree, contextual settings, right inspector and direct connections selected in
+[ADR 0052](../../../decisions/0052-canvas-authoring-and-method-experience.md). Remote administration
+and retention belong in those contexts, not a second navigation shell or protocol editor.
 
 Preserve [02e's](02e-projects-and-execution-environments.md) daemon/project/workflow organization and
 accepted execution bindings. Remote tool selection must identify the actual execution host and its
@@ -24,6 +29,7 @@ Read `AGENTS.md`, the canonical product documents in their required order, the r
 [documentation](../../practices/documentation.md) practices, and the
 [workflow](../../workflow.md). Then read the [sprint README](README.md),
 [task-workflow decision](../../../decisions/0051-daemon-task-workflows.md),
+[canvas and method decision](../../../decisions/0052-canvas-authoring-and-method-experience.md),
 [code-change map](code-change-map.md), current peer/daemon operation guides and the changed source,
 callers, fixtures and tests. Inspect Git before editing and preserve unrelated work and the
 pre-reset references. Current source may have moved during earlier phases; follow its real owner.
@@ -33,8 +39,9 @@ connections, truthful remote-operation recovery, and rolling retention with prot
 state. An authorized fresh client sees the selected daemon's shared environments and retained work.
 No client must recreate the topology, know a workflow ID in advance or hold a recovery file.
 
-The full gate and combined acceptance belong to
-[07 — final test and repair](07-final-test-and-repair.md). This phase compiles affected callers,
+The next full gate and combined main-sprint acceptance belong to
+[07 — final test and repair](07-final-test-and-repair.md). The side sprint's earlier gate does not
+qualify these later changes. This phase compiles affected callers,
 runs its focused checks and fixes every known in-scope defect before handoff. Do not postpone a
 failure to phase 07, weaken CI or count a native HTTP test as browser evidence.
 
@@ -147,8 +154,12 @@ Use validated configurable values, checked accounting and the existing durable c
 No second daemon collector or client-side retention engine is needed.
 
 Before collection, compute the transitive protected reference closure for unfinished tasks, pending
-bindings, current templates, accepted model-action admissions and method expansions, unresolved local
-or remote operations, and exact command recovery. Protection and reference changes share guarded
+bindings, saved workflow authoring, incomplete method editing documents, current templates, accepted
+model-action admissions and method expansions, unresolved local or remote operations, and exact
+command recovery. Include saved source cards, queued method interfaces/exports and accepted expansion
+snapshots under the side sprint's reference ownership. An unfinished authoring document does not expire
+as completed history; explicit removal releases only its no-longer-needed references. Protection and
+reference changes share guarded
 transactional ownership: a concurrent bind, task start or accepted expansion either obtains a valid
 hold or receives a typed expired/unavailable refusal. Cleanup cannot remove data after a reference
 has been accepted. A method snapshot remains available while its copied unfinished tasks need it.
@@ -165,6 +176,10 @@ receipts; an old command replays its original result reference even if fetching 
 content now reports expiration. Never forget an accepted key, treat it as new, reset the generation
 automatically or keep a hidden permanent full event archive. Bound compact receipts and unresolved
 operational records, reserve capacity before acceptance and refuse admission truthfully when full.
+Authoring checkpoints retain ADR 0052's conditional current-content semantics; they do not acquire
+historical command receipts through this phase. Preserve the latest saved content and version while
+accounting for replacement and collection. Run, method Update and other receipt-bearing commands
+retain their separate exact replay guarantees.
 Hot-tier compaction alone does not establish rolling storage bounds. Reconcile physical artifact,
 record and index accounting so the reported allowance describes what its owner actually retains.
 
@@ -233,8 +248,9 @@ Required cases include:
   real adapter entries so a duplicate unsafe command cannot hide behind matching final text.
 - Independent execution-only/direct operations and affected Podman resource lifecycle/reopen/refusal
   cases after the connection changes; no workflow runtime dependency on B.
-- Old completed result expiration, pending input protection, current-template and accepted-expansion
-  protection, unresolved-operation protection, bind-versus-collection and start-versus-collection
+- Old completed result expiration, pending input protection, saved workflow/method-editing draft
+  protection, current-template and accepted-expansion protection, unresolved-operation protection,
+  checkpoint-versus-collection, bind-versus-collection and start-versus-collection
   races, interrupted collection/reopen, smaller configured bounds and clock rollback refusal.
 - Exact command replay and conflict after detail expiry, explicit expired-content response, receipt
   byte/count exhaustion, protected-capacity exhaustion, incremental cleanup accounting and bounded
@@ -284,7 +300,7 @@ and open a fresh client session. Discover the same workflow, remote uncertainty/
 origin and earlier result through search. Confirm another client sees A's persisted topology without
 receiving B credentials. Exercise retention through a controlled clock and find the truthful expired
 result and protected pending input. Repeat remote-tool selection and retained search with the
-different project brief used by phases 03/04; no animation-specific scheduler or environment logic.
+different project brief used by main 03 and side S04; no animation-specific scheduler or environment logic.
 Record screenshots/traces and exact binary/configuration identities without secrets. These are
 plumbing and browser claims, not proof that a real model produced good research.
 
@@ -306,6 +322,7 @@ the final edits.
 
 The handoff names the resulting commits, actual commands/counts, browser traces, supported connection
 flow, retention capacity behavior, preserved host protections and any precise evidence limitation.
-State that the full gate is still pending in phase 07. Leave the production advanced journey ready
+State that the main sprint's current full gate is still pending in phase 07; do not reuse the side
+sprint's earlier pass as acceptance of this code. Leave the production advanced journey ready
 for the actual user review in phase 06. Stop there; do not substitute agent approval for that review
 or automatically begin the next assignment.

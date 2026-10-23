@@ -16,13 +16,23 @@ simpler setup. Assigned 02b applies the supplied visual direction and real logo.
 rejects its interaction design; subsequently assigned 02c implements compact authoring and workflow
 navigation. Its user recheck rejects the remaining page/form model. Assigned 02d replaces it with a
 workflow canvas, compact left selection panel and direct source connections; its focused verification
-is complete. The October 19 project/environment discussion produces prepared
-[02e](daemon-workflows-implementation/02e-projects-and-execution-environments.md): daemon-owned projects,
-user-controlled folders and project-level host/Podman execution settings.
-Prompts 02e and 04–07 remain unassigned. Acceptance of the corrections, naming and the substantive early
+is complete. Subsequently assigned
+[02e](daemon-workflows-implementation/02e-projects-and-execution-environments.md) implements daemon-owned
+projects, user-controlled folders and project-level host/Podman execution settings. Its focused
+checks are complete; positive physical Podman attachment qualification remains open on this host.
+The latest discussion is consolidated in [ADR 0052](../../decisions/0052-canvas-authoring-and-method-experience.md)
+and the prepared [canvas experience side sprint](canvas-experience/README.md). The side owns the
+next correction, actual early review and the complete method responsibility transferred from main 04.
+Main 04 is superseded before implementation; main 05–07 remain unassigned. Acceptance of the corrections, naming and the substantive early
 journey remain open.
 Its [handoff](daemon-workflows-implementation/handoff.md) records tested checkpoints,
 actual review observations and how to resume; the sprint README owns the next assignment.
+
+[Canvas experience](canvas-experience/README.md) is prepared, not assigned. Its selected design
+combines the tree/right-inspector canvas, bounded saved authoring, meaningful connections, daemon
+lifecycle repairs and complete method reuse. S03 must establish outstanding main-02 user evidence;
+S05 owns the side's full gate. Its accepted handoff leads to main 05 → 06 → 07, not another method
+implementation or a claim that the main sprint is complete.
 
 [Remedial planning v3](milkdrift-remedial-planning-v3/README.md) is retained as the superseded
 investigation/reset archive. Preserve its source evidence, disagreements and Git checkpoints.
@@ -33,8 +43,9 @@ The [roadmap](../../product/roadmap.md) owns unfinished work; unrelated whiteboa
 
 ## Prepared assignments
 
-Use the ordered [sprint prompts](daemon-workflows-implementation/README.md#ordered-assignments),
-including the early-review corrections.
+The next prepared work is [side S01](canvas-experience/S01-preserve-future-work.md), under its
+explicit schedule. The [main prompts](daemon-workflows-implementation/README.md#ordered-assignments)
+retain remaining remote/retention and integrated review responsibilities.
 The v3 [previous program](milkdrift-remedial-planning-v3/deliverables/proposed-implementation/README.md)
 remains superseded history. No implementation starts without the user's next instruction.
 

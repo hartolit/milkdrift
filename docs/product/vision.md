@@ -38,8 +38,8 @@ permissions and managed volumes from the project experience still to be implemen
 ## Work starts with tasks and can grow
 
 A task combines instructions with named input bindings. Instructions can be written before their
-inputs exist. Inputs may be text, files or earlier task results; explicit dependencies determine
-when the daemon may start. A configured external model and permitted tools supply capabilities.
+inputs exist. Inputs may be text, files or earlier task results; their availability and deliberately
+authored ordering determine when the daemon may start. A configured external model and permitted tools supply capabilities.
 Research, splitting assignments, criticism and composition are ordinary uses of this task model.
 
 For example, a person asks for a Rust approach to learned animation. A planning task proposes three
@@ -70,6 +70,13 @@ references protect a template from deletion until they are deliberately removed 
 Sharing templates between daemons means copying content under explicit authority, not executing a
 remote workflow or keeping a permanent live link to another owner.
 
+People define methods through the same canvas, either from a useful selection or from scratch.
+Visible boundary inputs and results express what a use supplies and receives; the system constructs
+bindings. Editing a reusable method is a deliberate context, distinct from changing local future
+work. Incomplete edits never silently replace the usable template. A method captures a repeatable
+segment; further adaptive work belongs to its workflow unless a separate behavior is selected.
+Completed execution or review alone does not certify result quality.
+
 ## Environments supply tools
 
 An execution host offers commands, model endpoints and managed environments, including the existing
@@ -98,9 +105,9 @@ and credential. The client learns and remembers the daemon's stable identity, ex
 replacement, and keeps technical identity details out of ordinary setup. A display name is not an
 identity or a permission.
 
-The main workspace is a canvas for the selected workflow, beside persistent navigation. Task and
-input cards show work and its connections; selecting one opens compact details on the left without
-replacing the canvas. Text, captured files and task results connect directly to the work that uses
+The main workspace is a canvas beside one expandable daemon → project → workflow tree. Place an
+empty task without opening an editor; selecting it opens compact details on the right without
+replacing or recentering the canvas. Text, captured files and task results connect directly to the work that uses
 them. People select recognizable sources and destinations instead of typing binding names or IDs.
 Keyboard and touch actions provide the same connection choices as dragging.
 
@@ -121,6 +128,14 @@ staging a batch or interpreting JSON. Connections, corrections and resource choi
 actions when work becomes more complex; they must not reveal a protocol form as the price of using
 those capabilities. Draft tasks and connections are submitted deliberately before they can execute.
 Simpler presentation never silently changes the destination, executor, failure handling or permissions.
+
+Unfinished authoring is work worth preserving. Saved sketches remain distinct from admitted tasks;
+Run or Apply deliberately accepts a visible scope while unrelated ideas may remain unfinished.
+Selecting a card to inspect it never changes that execution scope. A visibly chosen usual model
+reduces repeated setup, and unfinished connections preserve intent without pretending to be runnable.
+The daemon handles semantic construction and recovery while the client preserves the person's place.
+[ADR 0052](../decisions/0052-canvas-authoring-and-method-experience.md) owns these selected interaction,
+authoring and method rules; [status](status.md) distinguishes them from the current implementation.
 
 ## Keep the useful history, protect the necessary state
 

@@ -14,6 +14,10 @@ status record the accepted activation scope rather than inferring it from a deci
 the former workflow hierarchy, publication and evaluated-learning requirements for that replacement.
 It does not change current readers or erase the evidence behind earlier decisions.
 
+[0052](0052-canvas-authoring-and-method-experience.md) refines the selected client and method
+experience with saved authoring, direct semantic connections and a coherent side-sprint design.
+It is selected planning, not an implementation or actual-user acceptance claim.
+
 ADRs 0038–0041 adopt the adaptive-host direction. Their stated assignment owners must implement and
 verify it; these decisions do not change current readers, configuration options or support claims.
 
@@ -65,3 +69,4 @@ verify it; these decisions do not change current readers, configuration options 
 - [0049 — Discover revisions within the authorized workflow collection](0049-authorized-workflow-discovery.md)
 - [0050 — Framed editor edge identities and retained connections](0050-editor-edge-identities.md)
 - [0051 — Daemon-owned tasks and locally expanded methods](0051-daemon-task-workflows.md)
+- [0052 — Saved canvas authoring and understandable method reuse](0052-canvas-authoring-and-method-experience.md)

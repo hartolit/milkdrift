@@ -19,8 +19,10 @@ verification is complete; actual user acceptance remains open. The October 19 di
 daemon-owned projects, ordinary host folders and project-level execution settings. The resulting
 [02e correction](../development/virtual-office/daemon-workflows-implementation/02e-projects-and-execution-environments.md)
 implements the project boundary and has completed its focused checks, with the physical Podman
-qualification gap below. Prompt 04 waits for completed early review and its own assignment.
-Prompt 07 retains the final integrated gate. Hosted quality run 227
+qualification gap below. The prepared [canvas experience side sprint](../development/virtual-office/canvas-experience/README.md)
+now owns the next correction and takes over unimplemented main prompt 04's method responsibility.
+Its early user gate must fulfill outstanding prompt 02; none of its production phases is assigned.
+Side S05 owns its planned full gate; main prompt 07 retains the later final integrated gate. Hosted quality run 227
 failed on the earlier `e720bb9`; no later hosted pass is claimed.
 
 ## Implemented now
@@ -109,6 +111,14 @@ stop requests, uncertainty and restart cannot refund unresolved work.
 
 ## Limitations now
 
+Pause diagnostics reproduce two runtime defects before external entry: accepting Wait after a
+start freezes can settle it as Failed, and reopening while paused can leave it Running without
+redispatch after Continue. Supplying an unrelated input also clears an explicit decision question
+and allows scheduling. The [diagnostic evidence](../development/verification-evidence.md#daemon-lifecycle-design-diagnostics)
+records the controlled runtime/store cases and their limits. These behaviors remain unresolved;
+the [daemon/frontend discussion](../development/virtual-office/whiteboard/discussions/architecture/daemon-frontend-contract.md)
+separates observed defects from proposed contract changes.
+
 Host tools remain trusted processes; native claims do not sandbox them or lock out external
 editors. Project-aware process profiles are configured by the operator. Fixed-directory and isolated
 profiles retain their separate meanings and are not silently retargeted. Selecting a model does not
@@ -119,7 +129,10 @@ before workload entry; successful physical attached-project execution remains un
 
 The user rejects the current screen and navigation as too complex and bloated. Canvas behavior and
 model assignment have focused verification, but the usability review and substantive task journey
-remain open. No redesign has been accepted. Adding a new model or process still requires a qualified
+remain open. The requested tree, blank placement, direct ports and right inspector are developed in
+the [selected design](../decisions/0052-canvas-authoring-and-method-experience.md) and prepared side sprint.
+Saved authoring and the redesigned interaction are not implemented or accepted through actual user review.
+Adding a new model or process still requires a qualified
 operator profile, appropriate grants and daemon restart; the browser now exposes that setup path
 rather than implying that a connection can be installed from a task's selector.
 Drafts are memory-only and are lost on reload

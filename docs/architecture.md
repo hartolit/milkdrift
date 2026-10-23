@@ -11,6 +11,14 @@ from the later methods and retention assignments. The ordinary graph, revision,
 proposal, controller and published-workflow engines have been retired. Existing stores are not
 converted into task workflows. Their readers remain in the preservation checkpoints.
 
+[ADR 0052](decisions/0052-canvas-authoring-and-method-experience.md) selects the next saved-authoring
+and method experience. Its [side sprint](development/virtual-office/canvas-experience/README.md) is
+prepared, not implemented. Mutable non-executable authoring uses bounded conditional snapshots;
+deliberate admission retains exact command receipts. Existing workflow/control/persistence owners
+own that distinction, while the client owns the tree, gestures and right inspector. Planned changes
+also separate data-derived readiness from independent ordering and clarify method activation and
+export release. The current implementation facts below remain qualified by status until adoption.
+
 ## Terminology
 
 A **workflow** is the daemon-owned collection of task obligations, supplied inputs and cumulative

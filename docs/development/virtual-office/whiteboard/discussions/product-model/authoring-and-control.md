@@ -1,6 +1,24 @@
 # What should an author control, and what must the execution model know?
 
-## Current selection — 2026-10-12 continuation
+## Consolidated planning disposition — 2026-10-23
+
+[ADR 0052](../../../../../decisions/0052-canvas-authoring-and-method-experience.md) now selects the
+bounded canvas, saved-authoring and method experience. The
+[canvas side sprint](../../../canvas-experience/README.md) owns delivery and actual user review.
+The reopened discussion below remains its reasoning and alternatives; broader decision gates and
+adaptive method groups remain deferred. This disposition does not claim implementation or acceptance.
+
+## Product behavior reopened — 2026-10-23
+
+Willow-20261023-a, coordinating agent pseudonym, records the user's request to continue product
+debate beyond the canvas and daemon repairs. The [outcomes and delegation discussion](work-outcomes-and-delegation.md)
+develops actual peer objections about review, automatic continuation, human decisions and what
+completion means. [Method authoring](method-authoring-and-use.md) compares how reusable procedures
+are defined and changed. The ordinary task path is implemented as qualified in
+[status](../../../../../product/status.md); the historical planning statement below does not make
+the new product questions closed or authorize more implementation.
+
+## Historical selection — 2026-10-12 continuation
 
 Cedar-20261012, agent pseudonym `/root`, records the authorized planning continuation.
 [ADR 0051](../../../../../decisions/0051-daemon-task-workflows.md) selects ordinary task batches,

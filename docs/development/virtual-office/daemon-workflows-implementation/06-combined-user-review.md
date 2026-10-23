@@ -1,11 +1,16 @@
 # 06 — Combined user journey and repair
 
-**Prepared, not assigned.** Prerequisite: complete 05 with focused checks. Require actual user
+**Prepared, not assigned.** Prerequisite: accepted
+[canvas experience side sprint](../canvas-experience/README.md), including actual early review and
+the replacement for main 04, followed by complete 05 with focused checks. Require actual user
 participation. Own the entire advanced experience and its repairs, not a demonstration assembled from
 separate subsystem successes. Stop before 07 after the user-reviewed behavior is ready for final tests.
+The side sprint's S03/S05 reviews supply earlier evidence; they cannot establish that the subsequently
+integrated remote tools and retention are understandable in this combined journey.
 
 Read [AGENTS](../../../../AGENTS.md), canonical docs, [README](README.md),
 [ADR 0051](../../../decisions/0051-daemon-task-workflows.md), [journey](journey.md), the current handoff,
+[ADR 0052](../../../decisions/0052-canvas-authoring-and-method-experience.md), the side sprint handoff,
 [cohesive review](../../practices/cohesive-review.md), [implementation](../../practices/implementation.md),
 [documentation](../../practices/documentation.md) and [workflow](../../workflow.md).
 Use existing evidence to prepare the review; do not repeat the whole product investigation.
@@ -13,9 +18,12 @@ Recheck the early [02a connection](02a-daemon-connection-identity.md) and
 [02b visual](02b-visual-design-and-brand.md) findings across the added method/host/retention screens:
 simple setup, shared names across clients, real logo, visual fit, readable work and accessible
 navigation. Use the retained reference for appearance without reinstating its obsolete features.
-Recheck [02d's](02d-canvas-and-direct-authoring.md) canvas and direct-authoring correction across
-method-derived tasks and remote results: sources connect without protocol fields, selection keeps
-the workflow visible, and neither a new feature nor an error restores a long schema editor.
+Recheck the side sprint's replacement canvas across method-derived tasks and remote results:
+daemon/project/workflow tree, empty placement, direct ports, right inspector, saved unfinished work
+and deliberate run scope. Sources connect without protocol fields, selection keeps the workflow
+visible, and neither a new feature nor an error restores a long schema editor. Recover a saved sketch
+after reconnect and verify that an unrelated unfinished idea does not need to be deleted to run an
+explicitly chosen useful chain.
 Recheck [02e's](02e-projects-and-execution-environments.md) project hierarchy and execution explanation.
 Have the user attach/create a daemon-local project, find its workflows from a fresh client and locate
 actual files created by its tools. They should distinguish the selected model from the tool environment
@@ -34,7 +42,12 @@ all authorized review work and record the exact needed input rather than claimin
 Have the user submit the Rust learned-animation brief and inspect how planning creates three research
 tasks, how parallel execution and a failed research input are represented, and how composition adds
 corrective work and project setup. Let the user edit the shared setup template before activation,
-then inspect and adapt a materialized future task. A review should add a linked correction and
+then inspect and adapt an eligible materialized future task. Hold an earlier copied task at a
+controlled external response to keep the selected dependent genuinely queued; do not promise an
+editing window after ordinary activation. Observe whether
+the user distinguishes a live method reference, its read-only preview, shared library editing and
+local copied work. Show producer content before its default reviewed export is released, without
+equating reviewer execution success with approval. A review should add a linked correction and
 continue automatically under granted limits. Ask the user to explain what they expect to happen next
 and use that comparison to find behavioral confusion.
 
@@ -47,7 +60,9 @@ stage a fault; fixtures/new roots supply controlled faults.
 
 Close the phone/client, use a fresh authenticated session with no saved workflow ID or recovery file,
 find the same work and an earlier result, then switch daemons. Show retention settings, explain
-expired versus protected content, and inspect why unresolved work survives. A real device observation
+expired versus protected content, and inspect why unresolved work and unfinished authoring survive.
+Method editing drafts must not silently update queued uses; completed library updates retain the
+selected live-use behavior. A real device observation
 and a phone-sized desktop viewport are recorded differently.
 
 Run the timetable CLI brief with the same method: different folders, inputs and purpose must work

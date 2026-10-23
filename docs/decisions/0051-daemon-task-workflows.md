@@ -5,8 +5,10 @@ below selected after partial user review. Implementation through prompt 03 and t
 connection and visual corrections is recorded in status. The subsequent workspace interaction
 correction was implemented in assigned 02c and rejected in the October 18 user recheck. The canvas
 replacement below is implemented and passes 02d's focused checks; it is not user-accepted. Later phases
-require their own assignments. The October 19 project/environment correction below is selected for
-the prepared 02e assignment; its implementation has not been assigned.
+require their own assignments. The October 19 project/environment correction below was subsequently
+implemented in assigned 02e, as qualified in status. [ADR 0052](0052-canvas-authoring-and-method-experience.md)
+now supersedes the in-memory-only authoring and left inspector below and refines connection semantics,
+method eligibility, release and reviewed execution choices. Its side sprint is prepared, not assigned.
 [Vision](../product/vision.md) owns the requirements;
 [status](../product/status.md) owns implemented facts. The
 [implementation sprint](../development/virtual-office/daemon-workflows-implementation/README.md)
@@ -227,6 +229,11 @@ Restart never treats a missing worker as proof of non-entry. Pending consumers a
 when a correction replaces their expected result.
 
 ## Methods and activation
+
+[ADR 0052](0052-canvas-authoring-and-method-experience.md#activation-changes-and-results) now specifies
+eligibility, live interface/execution changes and export release. The snapshot/recovery, owner rights,
+bounds and explicit sharing rules here remain the baseline; main 04's responsibility transfers to
+the side sprint rather than a second method implementation.
 
 Use a daemon-wide library, independent of project/workflow, with opaque method IDs, mutable names,
 owner ACLs, save generation and canonical content digest. A save installs a complete validated

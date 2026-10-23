@@ -33,6 +33,35 @@ the user has not yet rechecked them.
 The exact browser asset load and click sequence were not captured. Earlier passing tests remain
 functional evidence for 02c and do not overrule this rejection or validate the proposed canvas.
 
+## Daemon lifecycle design diagnostics
+
+On October 23, three isolated Rust diagnostic cases reproduced pause behavior in the production
+`TaskControlService`, `TaskRuntime` and `RedbStore` at source checkpoint `a19b5f0c`. These assertions
+describe observed behavior, not desired acceptance criteria. The design assessment and proposed
+corrections are in the [daemon/frontend debate](virtual-office/whiteboard/discussions/architecture/daemon-frontend-contract.md).
+
+| Diagnostic sequence | Observed result |
+| --- | --- |
+| Create a ready task, Wait for explicit approval, then BindInput with an unrelated name not referenced by that task. | The question clears and the next tick returns one dispatch. The executor still has zero entries; this establishes resumed scheduling, not external execution. |
+| Freeze a dispatch, accept Wait, then execute that dispatch. | The task becomes Failed with its frozen start unentered and zero executor entries. Continue followed by tick does not dispatch it. |
+| Freeze a dispatch, accept Wait, drop all owners, reopen the same store, recover, Continue, then tick. | Recovery and tick return no dispatch. The task remains Running with its frozen start unentered and zero executor entries. |
+
+The standalone scratch crate is retained locally under ignored
+`target/daemon-design-probe-20261023/`. The executed command was:
+
+```sh
+cargo test --manifest-path target/daemon-design-probe-20261023/Cargo.toml \
+  --offline --target-dir target -- --nocapture
+```
+
+All three diagnostic assertions passed. The fixture uses the existing deterministic executor,
+a permissive authority evaluator, a fixed clock and a legacy task without a project. The restart
+case closes and reopens redb cleanly; it does not inject a crash or kill a daemon process. No HTTP,
+real worker loop, browser, project admission, concurrent resource allocation or prepared-resource
+cleanup journey was exercised. Those limits do not establish behavior for every production path.
+The scratch harness adds no maintained executable or acceptance test; this investigation makes no
+full-gate or repaired-runtime claim.
+
 ## Prompt 02e projects and execution environments verification
 
 Implementation checkpoint `bbae7a6` contains the assigned project correction: daemon-owned folder registrations, durable directory-creation

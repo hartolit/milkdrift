@@ -1,7 +1,9 @@
 # 02 — Early user review and repair
 
 **In progress; partial user feedback recorded.** Prerequisite: prompt 01's real production slice and
-focused evidence.
+focused evidence. The [canvas side sprint](../canvas-experience/README.md) now owns the next
+correction; its [S03](../canvas-experience/S03-early-user-review.md) must satisfy this checkpoint's
+actual-user requirements. This remains pending until that evidence exists.
 This assignment requires actual user participation. It is a functional review and repair boundary,
 not a design presentation or permission to replace working screens with a mock.
 
@@ -13,12 +15,14 @@ The next feedback rejects the forms/navigation and cannot discover multiple-work
 Subsequently assigned [02c](02c-workspace-and-task-creation.md) implements compact creation and
 navigation; the user then rejected its remaining page/form model. Subsequently assigned
 [02d](02d-canvas-and-direct-authoring.md) replaces that model with a canvas, compact left selection
-and direct input/result connections; focused checks are complete. Prepared
+and direct input/result connections; focused checks are complete. Subsequently assigned
 [02e](02e-projects-and-execution-environments.md) addresses the subsequent confusion about project
-folders and execution environments. Implement it when assigned before completing the substantive
-journey. Include selecting/creating a project and locating the actual files its tools changed.
+folders and execution environments; its focused implementation is complete. ADR 0052's selected
+replacement now proceeds through side S01–S03 before completing the substantive journey. Include
+selecting/creating a project and locating the actual files its tools changed.
 Connection success alone does not complete this checkpoint. Keep
-03's completed work; the next feature assignment after successful review is 04.
+03's completed work; the next feature assignment after successful side S03 review is side S04,
+which takes over the old main 04 method responsibility.
 
 Read [AGENTS](../../../../AGENTS.md), canonical docs, [sprint README](README.md),
 [ADR 0051](../../../decisions/0051-daemon-task-workflows.md), [journey](journey.md), the current

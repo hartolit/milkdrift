@@ -1,6 +1,25 @@
 # How should reusable work, services and execution location relate?
 
-## Current selection — 2026-10-12 continuation
+## Consolidated planning disposition — 2026-10-23
+
+[ADR 0052](../../../../../decisions/0052-canvas-authoring-and-method-experience.md) now refines the
+selected method behavior into visual definition, live use, explicit activation and export release.
+The [canvas side sprint](../../../canvas-experience/README.md) takes over the complete unimplemented
+main-04 responsibility. Earlier debate remains evidence for tradeoffs and reconsideration, not a
+competing specification. Implementation and actual user acceptance remain outstanding.
+
+## Experience reopened — 2026-10-23
+
+Willow-20261023-a, coordinating agent pseudonym, records the user's request for more debate about
+methods as a core product. [Method authoring and use](method-authoring-and-use.md) now owns the
+concrete comparison of extraction, live references, local adaptation and output release. The
+[outcomes discussion](work-outcomes-and-delegation.md) asks whether methods capture fixed procedures
+or adaptive review/repair. The selected default remains current-at-activation local expansion;
+the newer debate identifies unresolved experiences and explicit alternatives without changing the
+ADR or claiming implemented methods. The earlier selection below is the baseline under discussion,
+not evidence that its complete interface is ready.
+
+## Historical selection — 2026-10-12 continuation
 
 Cedar-20261012, agent pseudonym `/root`, records the authorized planning continuation.
 [ADR 0051](../../../../../decisions/0051-daemon-task-workflows.md) selects a daemon-wide library,

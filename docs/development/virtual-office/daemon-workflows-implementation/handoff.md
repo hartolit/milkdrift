@@ -18,9 +18,10 @@ implements the replacement and its necessary daemon support; its focused verific
 and the substantive task journey remain open. The October 19 project/environment discussion produces
 prepared [02e](02e-projects-and-execution-environments.md), subsequently explicitly assigned for
 implementation. It adds daemon-owned project registration, guarded execution bindings and the shared
-browser/CLI/public-client path. Prompts 04–07 remain unassigned.
-Prompt 07 owns the integrated full-system gate. No push, history rewrite, external service change or
-paid model use occurred.
+browser/CLI/public-client path. Main 04 is now superseded by the prepared canvas side sprint;
+side S01–S05 and main 05–07 remain unassigned. Side S05 owns its full-system gate; prompt 07 owns
+the later integrated main gate. No push, history rewrite, external service change or paid model use
+occurred.
 
 ## Actual user review and corrections
 
@@ -122,14 +123,54 @@ source and existing screenshots identified competing navigation groups, two left
 the canvas and too many equally prominent controls as possible causes; these are agent diagnoses,
 not additional user observations. Early review remains open, with no new production phase assigned.
 
+On October 23, the user requested an expandable daemon → project → workflow hierarchy, empty task
+placement before definition, physical input/output connections and a right-hand inspector opened
+by clicking a task. They rejected repeated manual schema entry and navigation away from the work,
+and asked for a design discussion, including possible daemon changes. The right-side direction
+supersedes their October 18 left-side preference for the proposed replacement. The
+[canvas authoring discussion](../whiteboard/discussions/product-model/canvas-authoring.md) develops
+that interaction and a proposed distinction between saved unfinished authoring and executable tasks.
+Durable unfinished work is a recommendation for debate; this request assigns no production changes.
+The user then requested agent debate grounded in reducing manual labor and preserving an intuitive
+flow. The [UX debate](../whiteboard/discussions/product-model/canvas-authoring-debate.md) records
+three actual reviewers' initial arguments, peer objections and revised positions. It challenges
+repeated model selection, whole-canvas readiness and protocol-shaped recovery without claiming
+actual-user validation or assigning implementation.
+
+The user then asked for further debate that challenges the daemon itself, including faulty or
+unhelpful behavior that a frontend cannot reasonably hide. Three additional reviewers traced
+lifecycle, command and connection owners and exchanged objections in the
+[daemon/frontend discussion](../whiteboard/discussions/architecture/daemon-frontend-contract.md).
+The coordinator executed three Rust runtime/store diagnostics; the
+[evidence record](../../verification-evidence.md#daemon-lifecycle-design-diagnostics) owns their
+observations and limits. This investigation identifies pause defects and debates narrower contract
+changes; it changes no production behavior and assigns no implementation phase.
+
+The user then emphasized that product design remains unfinished and requested further debates,
+specifically about workflow methods and how people define and use them. Two new reviewers and
+the lifecycle reviewer exchanged concrete authoring, activation and outcome cases. The
+[method experience](../whiteboard/discussions/product-model/method-authoring-and-use.md) and
+[outcomes discussion](../whiteboard/discussions/product-model/work-outcomes-and-delegation.md)
+retain their proposals, revisions and unresolved alternatives. Prompt 04 is marked for reconciliation
+before assignment; no method implementation, usability observation or new behavioral test was
+performed in this round. The selected latest-at-activation default remains unchanged.
+
+The user's next instruction requested a readiness judgment, consolidated design and a separate side
+sprint. [ADR 0052](../../../decisions/0052-canvas-authoring-and-method-experience.md) selects the bounded
+experience and [canvas experience](../canvas-experience/README.md) prepares its delivery. The debate
+is sufficient for that scope; actual usability and execution evidence remain pending. Side S03 must
+fulfill this sprint's outstanding 02 review; side S04 takes over all unimplemented 04 methods. Side
+S05 has its own full gate, then main 05/06/07 remain. No side phase is assigned or implemented by
+this planning action. Use the side schedule for the next correction, not the superseded main 04.
+
 | Finding | Owner and acceptance |
 | --- | --- |
 | Setup requires users to invent a local name and supply a technical identity. | [02a](02a-daemon-connection-identity.md) implemented address/credential setup, learned identity pin, durable shared name and authorized rename across clients/restart; the user's recheck is pending. |
 | Original appearance is rejected and the supplied brand is absent. | [02b](02b-visual-design-and-brand.md) implements the supplied visual direction and real logo. The subsequent feedback rejects interaction usability; visual preference acceptance is not reported. |
 | Too many authoring forms, disruptive navigation and unclear creation of multiple workflows. | Assigned [02c](02c-workspace-and-task-creation.md) implemented explicit New workflow/Add task actions and bounded navigation. Its subsequent user recheck rejects the remaining forms and page layout. |
-| The workspace remains bloated; input/output relationships require protocol knowledge. | Assigned [02d](02d-canvas-and-direct-authoring.md) replaces the product authoring forms with a canvas, compact left selection and direct source/result connections, including the required daemon contracts. Implementation and focused checks are complete; the actual user's recheck remains open. |
+| The workspace remains bloated; input/output relationships require protocol knowledge. | Assigned [02d](02d-canvas-and-direct-authoring.md) implemented the canvas and connection contracts with focused checks. ADR 0052 now selects its replacement; prepared side S02/S03 owns delivery and actual review. Usability acceptance remains open. |
 | Project location, daemon execution and Podman's role are unclear; related workflows need project grouping. | Assigned [02e](02e-projects-and-execution-environments.md) adds daemon-owned project registrations around user folders and consistent project-level environments. Physical Podman attachment qualification and actual user review remain open. |
-| No successful substantive journey has been reported. | Resume [02](02-early-user-review.md) after assigned 02e: select a project, locate real output files, create two workflows, connect useful inputs/results, add to one, closure/reconnect, switching, missing-input repair, failure and stop understanding remain open. |
+| No successful substantive journey has been reported. | [Side S03](../canvas-experience/S03-early-user-review.md) fulfills outstanding main 02 after S01/S02 implementation: project/files, two workflows, useful inputs/results, saved unfinished work, deliberate Run scope, reconnect, switching, missing-input repair, failure and stop understanding remain open. |
 
 The [retained mockup](assets/milkdrift-ui-sample.png) is byte-identical to the user's
 `/home/hartolit/Desktop/milkdrift-ui-sample.png`; SHA-256 is
@@ -147,11 +188,12 @@ attachment from `/tmp/codex-clipboard-6fa7640f-9192-45da-8023-b97f21a915b6.png`,
 `e480cbd34fc683a7ae06b75856435f29595bf6657f34e145ec247fc2f8fb64b3`. It illustrates grouping only;
 its app controls and behavior are not Milkdrift requirements or implemented-product evidence.
 
-Next sequence: finish the actual 02 review including project/files/environment,
-naming, interaction and model-assignment rechecks, then separately assign 04. The 02c checkpoint and 02d implementation preserve existing
-stores and tested checkpoints. Its automated checks do not settle the actual user's rejection.
-Preserve the completed 03 work and 04–07 numbering. Prompt 07 remains the sole integrated gate;
-this partial feedback is not user acceptance of the journey or the proposed corrections.
+The current sequence is side S01–S05, then main 05–07 when separately assigned. Side S03 fulfills
+the actual 02 review, including project/files/environment, naming, interaction and model-assignment
+rechecks; side S04 owns all former main 04 work. Preserve completed 03 and the existing numbered
+history. The 02c checkpoint and 02d implementation preserve existing stores and tested checkpoints;
+their automated checks do not settle the user's rejection. Side S05 owns its full gate and main 07
+the later integrated gate. This partial feedback is not acceptance of the journey or its corrections.
 
 ## Tested checkpoints and evidence
 
@@ -380,25 +422,28 @@ leaves prompt 02 open and stops before prompt 04.
 ## Resume the visual and task review
 
 The 02c client is a rejected baseline. The rebuilt 02e client implements the selected project model
-and retains the 02d canvas. Use the current fixture above to assess project setup and execution
-location. Earlier fixtures retain their historical stores and matching client requirements.
-Preserve fixture roots and check readiness; a four-hour endpoint is not an indefinitely running service.
+and retains the 02d canvas; it does not implement the selected ADR 0052 experience. Actual acceptance
+resumes through [side S03](../canvas-experience/S03-early-user-review.md), after S01/S02 are assigned
+and implemented. Prepare a working fixture for that source. The fixtures above remain evidence for
+their historical stores and matching clients, not proof of the new design. Preserve their roots
+and check readiness; a four-hour endpoint is not an indefinitely running service.
 
-After 02e, first attach/create a folder on the named daemon, choose its environment and locate the
+In the S03 review, first attach/create a folder on the named daemon, choose its environment and locate the
 real files from a useful coding task. Reconnect from a fresh client and find the same project and
 workflows. Verify that the user can explain the distinction between model selection and tool location.
 Then create two workflows, add another task to the first, switch between
 them and inspect a result without a protocol tutorial. Connect a Cargo manifest to the process task,
-then connect its real result to a model task. Selecting cards should change only the compact left
-panel; closing it should return focus to the same canvas. Include the visible **Model or agent**
-selector and **Models & agents** setup guidance in this review. Record whether the distinction
+then connect its real result to a model task. Empty placement should keep focus on the canvas;
+selecting a card opens the right inspector without moving the canvas. Include saved unfinished
+authoring, deliberate Run scope and the usual-model action for unassigned tasks. Retain **Model or
+agent** selection and contextual setup guidance. Record whether the distinction
 between selecting a configured connection and asking the daemon operator to add one is clear.
 
-Close the client while another task runs, reconnect and find that work again. Switch to Studio B
-and back. Use a task's **Wait for a required input** action to create queued work, then supply its
-input from the source card. Check whether failed, uncertain and stop-requested work communicate
-what happened. On narrow screens, **Navigate** opens the rail; the closable panel, accessible list
-and **Connect to…** provide alternatives to precise dragging.
+Close the client while another task runs, reconnect and find saved ideas and accepted work again.
+Switch to Studio B and back. Exercise real missing-input readiness and explicit Pause/Continue as
+distinct conditions; unrelated input must not answer an explicit wait. Check whether failed,
+uncertain and stop-requested work communicate what happened. Verify the narrow-screen drawer,
+accessible list and equivalent connection actions without requiring precise dragging.
 
 Review the supplied logo, dark rail, warm text and compact canvas controls against the visual
 direction. The mockup's retired revision/controller controls are not product requirements. The

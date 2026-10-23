@@ -1,8 +1,13 @@
 # Connected product acceptance
 
 This is the executable acceptance account for the [implementation sprint](README.md), not evidence
-that the behavior exists. [ADR 0051](../../../decisions/0051-daemon-task-workflows.md) owns the selected
-semantics and defaults. Exercise the same growing workflow throughout phases 01–07; fixtures may
+that the behavior exists. [ADR 0051](../../../decisions/0051-daemon-task-workflows.md) and
+[ADR 0052](../../../decisions/0052-canvas-authoring-and-method-experience.md) own the selected
+semantics and defaults. The [canvas experience side sprint](../canvas-experience/README.md) replaces
+the remaining canvas interaction and absorbs main 04's methods. Its S03 can complete main 02 only
+with actual user evidence; its S05 runs its own full gate. Main 05/06/07 then add remote tools and
+retention, review the combined experience and run the final integrated gate. Exercise the same growing
+workflow across these boundaries; fixtures may
 control external models, tools, clocks and interruption points, but the production daemon must own
 admission, scheduling, expansion, authority, persistence and recovery.
 
@@ -69,11 +74,21 @@ rename in another client and after reconnect. Exercise wrong-installation refusa
 Recheck the real logo and the supplied visual direction in the working task/timeline/inspector,
 including a narrow layout. The implemented [02c](02c-workspace-and-task-creation.md) correction also requires
 the user to create two workflows, switch between them and add a second task to the first without
-coaching through technical fields. Its recheck rejected the remaining forms; assigned
-[02d](02d-canvas-and-direct-authoring.md) replaces that interaction and adds direct file/result
-connections with compact left-side selection. Its focused checks are complete; finish
-the substantive journey above. These remain acceptance
+coaching through technical fields. Its recheck rejected the remaining forms; the implemented
+[02d](02d-canvas-and-direct-authoring.md) introduced direct file/result connections with compact
+left-side selection. That is the earlier interaction being replaced by the side sprint below.
+Its focused checks are complete; the substantive actual-user journey remains open. These remain acceptance
 requirements; the initial connection report and mockup are not evidence that the corrections work.
+
+The subsequent side sprint implements the latest direction. In its S03 review, have the user find a
+workflow through the daemon/project/workflow tree, place empty tasks without opening the inspector,
+select them for right-side editing and connect real ports without a binding form. Keep an unrelated
+blank idea while deliberately choosing a useful chain to run. Confirm the named scope, inherited
+model and visible execution settings, then reconnect to saved unfinished work from another authorized
+client. Recover a lost Run reply without asking the person to choose a receipt operation. These
+observations extend, rather than replace, the useful result, failure, stop and client-independence
+requirements above. Record the early actual review once in the main handoff and link it from the side
+handoff; neither agent browser checks nor the side's later method review silently completes main 02.
 
 ## Give the work a project home: correction 02e
 
@@ -109,11 +124,12 @@ Record whether the daemon/project/workflow navigation and model-versus-environme
 understandable. These observations join the still-open early review; they do not replace its useful
 result, reconnect, failure and stop cases. Carry the accepted project binding into the following phases.
 
-## Growing the same workflow: phases 03–05
+## Growing the same workflow: phase 03, side methods and phase 05
 
-Phase 03 extends the retained production task/client path with model-produced actions. Phases 04 and
-05 add method and remote/retention behavior to it. For combined acceptance, create a fresh instance of
-the same animation workflow and run the following graph without manually launching each next step.
+Phase 03 extends the retained production task/client path with model-produced actions. Side S04 owns
+the transferred method behavior; main 05 adds remote tools and retention. For combined acceptance,
+create a fresh instance of the same animation workflow and run the following graph without manually
+launching each next step.
 
 | Task/use | Declared inputs and readiness | Required output and purpose |
 | --- | --- | --- |
@@ -135,8 +151,9 @@ tool failure makes the third fail. Composition starts only once all three outcom
 the failure explicitly. A separate required-success consumer of the failed output remains blocked
 until the editor rebinds it to an accepted correction; it must never receive empty text as success.
 Declare the research tasks' read/write roots and prove sibling-directory concurrency alongside
-overlapping native-path serialization. Test path aliases, an ancestor-root writer and an uncertain
-writer across restart; the production claim owner must prevent conflicting entry until settlement
+bounded pre-entry waiting and resumption for overlapping native claims. A temporary busy claim must
+not manufacture a failed task or require an artificial ordering edge. Test path aliases, an
+ancestor-root writer and an uncertain writer across restart; the production claim owner must prevent conflicting entry until settlement
 or authorized reconciliation. These claims coordinate declared work, not out-of-band native writes.
 
 The compositor's batch names explicit dependencies and input references. The daemon checks the
@@ -145,8 +162,9 @@ its reply: it returns the original result and creates no additional tasks. Inter
 the model response/pending admission and processing its batch: recovery processes that same record.
 A response whose actions are rejected remains inspectable with the rejection reason.
 
-Challenge a simultaneous human/model edit. Both begin from the same edit generation; one wins and
-the other receives the current generation and affected IDs. No changes from the rejected batch apply.
+Challenge a simultaneous human/model edit whose semantic preconditions conflict; one wins and
+the other receives the relevant current facts and affected IDs. Unrelated progress or layout updates
+must not invalidate an otherwise unchanged edit. No changes from the rejected batch apply.
 An authorized actor refreshes and submits a reviewed replacement with a new exact request identity.
 Also race a future-task edit against start: either the edit governs the durable start snapshot or it
 is refused because that task has started. Inspect the frozen instructions, bytes/digests, capability
@@ -162,8 +180,16 @@ A final finish request may be accepted while required work remains, but the work
 completion until the required results, remote operation and all pending admissions are settled under
 ADR 0051. Rejected/no-progress responses, repeated correction failures and exhausted limits exercise
 the selected stop/wait policy with visible reasons and authorized continuation actions.
+Also return negative findings from a successfully executed review: its completed status must not be
+presented as approval. Improve a successful-but-inadequate result through future work without changing
+its historical status. Repairing a refused model action batch is distinct from this substantive
+review/repair procedure. Explicit workflow Wait survives unrelated input changes; pause after freeze
+and restart before entry retain work that can resume, without re-entering uncertain effects.
 
-## Method edit and interrupted activation: phase 04
+## Method edit and interrupted activation: side S04
+
+This segment is owned by [side S04](../canvas-experience/S04-reusable-methods.md), replacing main 04.
+Its local acceptance and side S05 gate do not replace the later combined remote/retention journey.
 
 Create a daemon-wide `project-setup` method through the library owner's public path. Its parameters
 are `project_name`, `brief` and `approach`; ordinary tasks create `Cargo.toml`, `src/main.rs`,
@@ -182,7 +208,11 @@ root body that adds a documented parser error case and saves a new nested docume
 Rename the method without changing its identity. The queued use still refers to that identity.
 Release the external response and let the daemon make `setup` eligible.
 
-At activation, assert that the consistent current root and all reachable nested bodies are selected.
+Activation requires available required root inputs and satisfied explicit ordering conditions under
+ADR 0052; optional future-result inputs wait for settlement. Assert that the consistent current root
+and all reachable nested bodies are selected at acceptance. Stable interface identities preserve
+wires through renaming; removed or incompatible endpoints block locally without erasing connections.
+Changed models/generations or wider access/location require the selected contextual refresh.
 Interrupt after the accepted expansion record is durable but before the flattened tasks/exports/
 expanded marker commit. Reopen A and recover through its production startup path. The expansion
 uses the recorded bodies and deterministic mapping, inserts each child once, and exposes no runnable
@@ -195,10 +225,24 @@ materialization but no child entry. An accepted stop survives restart and materi
 stopped before entry, releasing unused reservations only after the commit. No test helper supplies
 the stop state or releases the production reference holds.
 
-Inspection must explain the selected root/nested origins and each copied task. Local edits to
-unstarted copied tasks leave the library body unchanged and preserve valid exports/dependencies.
+Inspection must explain the selected root/nested origins and each copied task. A live reference's
+current preview is read-only; shared Edit method and local copied-task editing remain distinct.
+Local edits to unstarted copied tasks leave the library body unchanged and preserve valid exports/dependencies.
 A forbidden edit to a started copy is refused. The group has no separate child workflow, execution
-account or scheduling engine. Dependents of `project_manifest` wait for its actual producer.
+account or scheduling engine. For the local-edit observation, hold an earlier copied task at its
+controlled external response so the selected dependent remains genuinely queued; do not create an
+artificial frontend delay or promise an editing window after activation. Dependents of
+`project_manifest` wait for its actual producer and the default completion conditions for all required
+copied work. Compare an explicitly exposed early result: inspecting available content is different
+from releasing it to downstream execution. Reviewer completion is not an approval verdict.
+
+Create a method from a clean selected procedure and from the method-editing canvas. Incomplete editing
+checkpoints survive reconnect without updating the usable library body. A deliberate Update installs
+the complete validated method and retains exact command recovery. Verify that extraction derives
+input/output boundaries without copying execution states, accidental correction history or private
+artifacts by default. A copied planner may create ordinary workflow follow-ups; those descendants do
+not silently join the method's completion group or change its exports. No adaptive-method capsule or
+advance snapshot customization is claimed by this segment.
 
 Exercise an incompatible owner edit that adds a required parameter while a use is queued. Saving
 reports affected uses; activation blocks with expected/supplied bindings, and the user can rebind,
@@ -263,10 +307,12 @@ content. An unavailable trusted route is an explicit evidence gap, not a browser
 a fresh authorized browser without known IDs, search by the retained term “Rust runtime,” and open
 the earlier findings. Search, list, inspector and stream must enforce the same daemon/actor scope.
 
-The selected [02d canvas](02d-canvas-and-direct-authoring.md) keeps tasks, sources and connections
-visible while compact details appear on the left. Connect a captured file to its configured input
+The selected [side-sprint canvas](../canvas-experience/README.md) keeps tasks, sources and connections
+visible while compact details appear on the right. Connect a captured file to its configured input
 and a genuine named result to a future task, without entering protocol fields. Reconstruct those
-sources after reconnect; distinguish unsaved drawing from accepted work. Its secondary timeline
+sources after reconnect; distinguish unsaved local changes, saved unfinished authoring and admitted
+work. Resolve stale conditional saves without overwriting another author's content, and recover Run
+through its original receipt rather than resubmitting changed intent. Its secondary timeline
 shows titles, descriptions, actual start/end times, dependency links, parallel lanes,
 queued/running/completed/failed/stopped states, stop requests and uncertainty. Queued work has no
 invented execution timestamps. Method-derived copies retain origin links; corrective work links to
@@ -274,8 +320,11 @@ the exact findings it addresses. Search excludes inaccessible results and report
 expiry without revealing hidden record counts.
 
 Advance a controlled durable clock across the configured completed-history window. Unneeded old
-details and artifacts expire; unfinished work, unresolved remote operations, pending inputs and
-their transitive protected references survive. Expired result fetches report expiry. Ordinary
+details and artifacts expire; unfinished work, saved workflow/method-editing documents, current
+templates, accepted expansions, unresolved remote operations, pending inputs and their transitive
+protected references survive. Race authoring checkpoint replacement and explicit draft removal against
+collection; latest content and still-required references must remain intact. Conditional saves do not
+become historical receipt-bearing commands. Expired result fetches report expiry. Ordinary
 Markdown/Git project files remain untouched. Clock rollback must not force premature collection.
 Exercise a small artifact capacity with all contents protected: new admission/upload refuses rather
 than deleting required data. Exercise the compact receipt limit independently: exact accepted keys
@@ -299,14 +348,16 @@ writes `design/approach.md`. Supply a different project name and content to the 
 Its copied tasks create an ordinary Rust CLI project, and review asks for a missing malformed-row
 case. No animation title, path, task ID, model answer or accepted output is hardcoded into production.
 
-Phase 06 is the second actual user review. The user performs the combined animation journey in the
-production client, observes the failed research and automatic repair, edits a queued template, inspects
+Phase 06 is the main sprint's combined actual-user review after side acceptance and main 05. Earlier
+side reviews establish only their observed local journeys. The user performs the combined animation
+journey in the production client, observes the failed research and automatic repair, edits a queued template, inspects
 the expansion origin and remote uncertainty, and reconnects/finds an earlier result. Record behavior
 problems, repair them across the daemon and relevant clients, and rerun affected cases. Review covers
 understandability and control as well as visual presentation. The second brief challenges reuse; it
 does not establish general model quality.
 
-Phase 07 owns the full gate and final combined test-and-repair. Keep evidence separated into:
+Side S05 owns its local full gate; main 07 owns the later full gate and final combined test-and-repair
+on the code after remote tools, retention and main 06 repairs. Keep evidence separated into:
 
 - Repeatable controlled-model/tool tests proving daemon decisions, browser behavior and failure recovery.
 - Actual user observations and repairs proving the reviewed product journey was usable in that setting.

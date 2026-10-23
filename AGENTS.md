@@ -73,7 +73,8 @@ implementation evidence for current versions.
 - Follow the finite authorization in [the roadmap](docs/product/roadmap.md); completing a sprint
   does not authorize its successor. Keep ordinary workflow operations on the shared daemon path.
   The selected task-workflow replacement may retire obsolete workflow publication/evaluation paths
-  under [ADR 0051](docs/decisions/0051-daemon-task-workflows.md), preserving independent host and
+  under [ADR 0051](docs/decisions/0051-daemon-task-workflows.md), refined by the prepared canvas side
+  sprint in [ADR 0052](docs/decisions/0052-canvas-authoring-and-method-experience.md), preserving independent host and
   managed-resource protections. Its Svelte implementation requires the explicit next assignment;
   planning completion alone authorizes no production work. Inference, new provider families and
   unrelated workflow primitives remain excluded.
