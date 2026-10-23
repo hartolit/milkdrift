@@ -657,7 +657,8 @@ fn acknowledged_cancel_and_restart_do_not_refund_unknown_execution() -> TestResu
     drop(fixture);
     clock.advance(3_000)?;
     let restarted = Fixture::open(root.path(), clock.clone(), 1_000)?;
-    assert!(restarted.runtime.recover()?.is_empty());
+    restarted.runtime.recover()?;
+    assert!(restarted.runtime.tick(1)?.is_empty());
     let recovered = restarted.record(&id)?;
     assert_eq!(recovered.active_execution_ms, 5_000);
     assert_eq!(

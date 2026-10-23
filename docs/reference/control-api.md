@@ -1,4 +1,4 @@
-# Local control API 3.4
+# Local control API 3.5
 
 Use this API to submit ordinary tasks, discover permitted workflows and inspect retained results.
 All clients use the daemon's owner queue. The standalone [Svelte client](../../apps/web/README.md),
@@ -13,7 +13,7 @@ maps that credential to an immutable actor/grant revision. JSON cannot choose an
 negotiates the exact version before use; older graph clients are refused:
 
 ```json
-{"protocol":{"major":3,"minor":4}}
+{"protocol":{"major":3,"minor":5}}
 ```
 
 Send this to `POST /v1/version`. `GET /v1/session` returns `daemon_id`, `daemon_name`,
@@ -47,13 +47,13 @@ collection sizes before dispatch.
 Success bodies use the common envelope:
 
 ```json
-{"protocol":{"major":3,"minor":4},"request_id":"req-1","value":{}}
+{"protocol":{"major":3,"minor":5},"request_id":"req-1","value":{}}
 ```
 
 Errors use a stable code and redacted explanation. They never include credentials or task content:
 
 ```json
-{"protocol":{"major":3,"minor":4},"request_id":"req-1","code":"conflict","message":"workflow generation changed","retryable":false,"details":{}}
+{"protocol":{"major":3,"minor":5},"request_id":"req-1","code":"conflict","message":"workflow generation changed","retryable":false,"details":{}}
 ```
 
 `unauthenticated` means the credential failed, `unauthorized` means the current grant does not
@@ -247,6 +247,21 @@ Changes include `add`, `revise`, `remove`, `bind_input`, `stop`, `wait`, `contin
 generation. An already frozen start refuses revision. New definitions never rewrite retained
 history. Required producer output and settled producer outcome are different input bindings;
 missing required output keeps consumers queued. Definitions default to required.
+
+`wait` pauses new external entry until an authorized `continue` command. Supplying inputs does not
+answer that decision. A singleton `wait`, `continue` or `stop` accepts an observed generation at or
+after the last edit, new start or wait decision, up to the current generation. Progress and retries
+therefore do not obstruct those controls. Ordinary authoring still requires the exact generation.
+A request predating a new decision refuses; replay of an earlier accepted Continue returns its exact
+receipt without clearing a later question.
+The browser submits Pause, Continue and Stop independently of unfinished authoring changes.
+
+A queued task can retain its frozen start when paused or waiting for project access. Its definition,
+inputs and capability selection remain fixed. `started_at` records that acceptance, not physical
+adapter entry. Task summaries expose `entered`, matching selected-task `frozen.entered`; it denotes
+durable entry intent and is not terminal effect evidence. Known native-path overlap reports
+**Project is in use** without naming another actor's work. The daemon retries within its bounded
+scheduler, preserving the same start and rechecking authority, generation and folder identity.
 
 Stop uses the task's returned `stop_request_id` with one exact `stop` change. Its reserved capacity
 remains available when ordinary admission is full. A cancellation request alone does not establish

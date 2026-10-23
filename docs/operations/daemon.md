@@ -37,6 +37,12 @@ Startup validates the compiled plan, acquires the store lock, checks the exact
 execution state and registers configured adapters. An interrupted task with durable entry intent
 and no terminal evidence becomes uncertain; it is not blindly sent again. Claims and reservations
 remain owned until durable settlement or an authorized prospective decision resolves them.
+An unentered frozen start paused by a person returns to the ordinary queue with its same inputs,
+capability and invocation identity. Continue permits scheduling; execution rechecks current authority
+and physical identity before entry. It never repeats an entered or uncertain invocation. Known overlapping native
+project claims make ordinary tasks wait with **Project is in use**. Independent direct/peer serving
+retains its separate pre-entry refusal policy. Native claims coordinate Milkdrift operations, not
+external editors or a filesystem sandbox.
 Physical schema 21 atomically adopts exact physical schemas 19 or 20 with internal format 22 by
 adding the project tables; schema 19 also receives its missing daemon metadata tables. Existing
 workflow and receipt encodings remain unchanged; interruption leaves either the original table set

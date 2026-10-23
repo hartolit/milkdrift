@@ -35,6 +35,10 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 #[path = "effect_worker/native_capture.rs"]
 mod native_capture;
 
+#[cfg(unix)]
+#[path = "effect_worker/deferral.rs"]
+mod deferral;
+
 #[test]
 fn maximum_shutdown_duration_does_not_overflow_the_clock() -> TestResult {
     let directory = tempfile::tempdir()?;
@@ -517,6 +521,14 @@ impl StoreClock for FixtureClock {
 }
 
 fn create_and_start(runtime: &TaskRuntime, index: usize) -> TestResult {
+    create_with_paths(runtime, index, Vec::new())
+}
+
+fn create_with_paths(
+    runtime: &TaskRuntime,
+    index: usize,
+    paths: Vec<milkdrift_blueprint::TaskPathAccess>,
+) -> TestResult {
     use milkdrift_authority::{
         AuthorityExecutionProvenance, AuthorityOperation, AuthorityRequest, BoundaryTimeMillis,
         DecisionId, RequestedResourceFacts,
@@ -560,7 +572,7 @@ fn create_and_start(runtime: &TaskRuntime, index: usize) -> TestResult {
                     outputs: BTreeMap::new(),
                     required: true,
                     corrective_of: None,
-                    paths: Vec::new(),
+                    paths,
                     tools: Vec::new(),
                     actions: None,
                 },

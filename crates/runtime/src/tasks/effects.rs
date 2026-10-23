@@ -15,6 +15,32 @@ impl TaskRuntime {
     /// durable entry leaves uncertainty and never authorizes automatic re-entry.
     pub fn execute(&self, dispatch: ExecutionDispatch) -> Result<(), RuntimeError> {
         let mut execution = self.claim_execution(dispatch.request().invocation())?;
+        let mut non_entry_proven = true;
+        let mut recovery_required = true;
+        let outcome = self.execute_owned(
+            dispatch.clone(),
+            &mut execution,
+            &mut non_entry_proven,
+            &mut recovery_required,
+        );
+        if outcome.is_err()
+            && recovery_required
+            && self
+                .reconcile_execution_failure(&dispatch, &mut execution, &mut non_entry_proven)
+                .is_err()
+        {
+            self.retain_failed_execution(dispatch, non_entry_proven, &mut execution)?;
+        }
+        outcome
+    }
+
+    fn execute_owned(
+        &self,
+        dispatch: ExecutionDispatch,
+        execution: &mut ExecutionClaim<'_>,
+        non_entry_proven: &mut bool,
+        recovery_required: &mut bool,
+    ) -> Result<(), RuntimeError> {
         let workflow_id = WorkflowId::new(dispatch.run().as_str()).map_err(invalid)?;
         let task_id = TaskId::new(dispatch.node().as_str()).map_err(invalid)?;
         {
@@ -31,7 +57,14 @@ impl TaskRuntime {
                 .frozen
                 .as_ref()
                 .ok_or_else(|| invalid("dispatch has no frozen start"))?;
-            if frozen.dispatch != dispatch || frozen.entered || task.state != TaskState::Running {
+            if frozen.dispatch != dispatch
+                || frozen.entered
+                || frozen.execution_duration.is_some()
+                || task.state != TaskState::Running
+            {
+                // An already entered, settled or superseded dispatch is a caller refusal, not
+                // an interrupted worker. It acquired no preparation resources to reconcile.
+                *recovery_required = false;
                 return Err(invalid("dispatch no longer owns the exact unentered task"));
             }
             if task.stop_requested {
@@ -43,16 +76,44 @@ impl TaskRuntime {
                     "stopped before external entry",
                 );
             }
-        }
-        let prepared = match self.executor.prepare_exact_entry(&dispatch) {
-            Ok(prepared) => prepared,
-            Err(ExecutorError::CapacityUnavailable(reason)) => {
+            if workflow.wait_question.is_some() {
+                drop(_guard);
                 return self.defer_before_entry(
                     &workflow_id,
                     &task_id,
                     &dispatch,
-                    &reason,
-                    &mut execution,
+                    "Workflow is paused",
+                    execution,
+                    non_entry_proven,
+                );
+            }
+        }
+        *non_entry_proven = false;
+        let prepared = match self.executor.prepare_exact_entry(&dispatch) {
+            Ok(prepared) => {
+                *non_entry_proven = true;
+                prepared
+            }
+            Err(ExecutorError::CapacityUnavailable(reason)) => {
+                *non_entry_proven = true;
+                return self.defer_before_entry(
+                    &workflow_id,
+                    &task_id,
+                    &dispatch,
+                    &format!("waiting for capability capacity: {reason}"),
+                    execution,
+                    non_entry_proven,
+                );
+            }
+            Err(ExecutorError::NativePathBusy) => {
+                *non_entry_proven = true;
+                return self.defer_before_entry(
+                    &workflow_id,
+                    &task_id,
+                    &dispatch,
+                    "Project is in use",
+                    execution,
+                    non_entry_proven,
                 );
             }
             Err(
@@ -64,6 +125,7 @@ impl TaskRuntime {
                 | ExecutorError::Contract(_)
                 | ExecutorError::AdapterPanicked { after_entry: false }),
             ) => {
+                *non_entry_proven = true;
                 return self.finish_without_entry(
                     &workflow_id,
                     &task_id,
@@ -99,14 +161,16 @@ impl TaskRuntime {
                 self.executor.settle(&dispatch)?;
                 return Ok(());
             }
-            if let Some(reason) = &workflow.wait_question {
-                let reason = format!("workflow paused before external entry: {reason}");
+            if workflow.wait_question.is_some() {
                 drop(_guard);
-                return self.finish_without_entry(
+                drop(prepared);
+                return self.defer_before_entry(
                     &workflow_id,
                     &task_id,
-                    TaskState::Failed,
-                    &reason,
+                    &dispatch,
+                    "Workflow is paused",
+                    execution,
+                    non_entry_proven,
                 );
             }
             let reservation = super::duration::reserve(&workflow, prepared.admission_envelope())
@@ -123,6 +187,7 @@ impl TaskRuntime {
                 Ok(value) => value,
                 Err(error) => {
                     drop(_guard);
+                    drop(prepared);
                     return self.finish_without_entry_policy(
                         &workflow_id,
                         &task_id,
@@ -145,6 +210,7 @@ impl TaskRuntime {
             }
             if task.stop_requested {
                 drop(_guard);
+                drop(prepared);
                 return self.finish_without_entry(
                     &workflow_id,
                     &task_id,
@@ -162,6 +228,7 @@ impl TaskRuntime {
             let decision = self.authority.evaluate(&request)?;
             if !decision.is_allowed() {
                 drop(_guard);
+                drop(prepared);
                 return self.finish_without_entry(
                     &workflow_id,
                     &task_id,
@@ -169,16 +236,10 @@ impl TaskRuntime {
                     "authority was revoked before external entry",
                 );
             }
-            if now >= dispatch.lease_expires_at() {
-                drop(_guard);
-                return self.finish_without_entry(
-                    &workflow_id,
-                    &task_id,
-                    TaskState::Failed,
-                    "task execution allowance expired before entry",
-                );
-            }
+            // Ordinary tasks charge duration at entry. The frozen dispatch's legacy lease
+            // deadline cannot consume that allowance while this start is paused or busy.
             let exact = dispatch.with_entry_authorization(decision)?;
+            task.reason = None;
             frozen.dispatch = exact.clone();
             frozen.entered = true;
             frozen.execution_duration = Some(super::TaskExecutionDuration {
@@ -198,6 +259,7 @@ impl TaskRuntime {
             task: task_id.clone(),
             dispatch: final_dispatch.clone(),
         };
+        *non_entry_proven = false;
         let outcome = prepared.enter(&final_dispatch, &reporter);
         let workflow = self.require_workflow(&workflow_id)?;
         let state = workflow
@@ -223,40 +285,51 @@ impl TaskRuntime {
         &self,
         invocation: &milkdrift_capability::InvocationId,
     ) -> Result<ExecutionClaim<'_>, RuntimeError> {
+        self.try_claim_execution(invocation)?
+            .ok_or_else(|| invalid("exact task invocation is already owned by an active worker"))
+    }
+
+    fn try_claim_execution(
+        &self,
+        invocation: &milkdrift_capability::InvocationId,
+    ) -> Result<Option<ExecutionClaim<'_>>, RuntimeError> {
         let mut executing = self
             .executing
             .lock()
             .map_err(|_| invalid("task worker ownership unavailable"))?;
-        if executing.len() >= 65_536 || !executing.insert(invocation.clone()) {
-            return Err(invalid(
-                "exact task invocation is already owned by an active worker",
-            ));
+        if executing.contains(invocation) {
+            return Ok(None);
         }
-        Ok(ExecutionClaim {
+        if executing.len() >= 65_536 {
+            return Err(invalid("task worker ownership capacity exhausted"));
+        }
+        executing.insert(invocation.clone());
+        Ok(Some(ExecutionClaim {
             runtime: self,
             invocation: invocation.clone(),
             active: true,
-        })
+        }))
     }
 
-    fn defer_before_entry(
+    pub(super) fn defer_before_entry(
         &self,
         workflow_id: &WorkflowId,
         task_id: &TaskId,
         dispatch: &ExecutionDispatch,
         reason: &str,
         execution: &mut ExecutionClaim<'_>,
+        non_entry_proven: &mut bool,
     ) -> Result<(), RuntimeError> {
         let guard = self
             .gate
             .lock()
-            .map_err(|_| invalid("task capacity lock unavailable"))?;
+            .map_err(|_| invalid("task deferral lock unavailable"))?;
         let mut workflow = self.require_workflow(workflow_id)?;
         super::duration::accrue(&mut workflow, self.clock.now()?)?;
         let task = workflow
             .tasks
             .get_mut(task_id)
-            .ok_or_else(|| invalid("capacity-deferred task is absent"))?;
+            .ok_or_else(|| invalid("deferred task is absent"))?;
         if task.state.is_settled() {
             drop(guard);
             self.executor.settle(dispatch)?;
@@ -265,11 +338,24 @@ impl TaskRuntime {
         let frozen = task
             .frozen
             .as_ref()
-            .ok_or_else(|| invalid("capacity refusal lost its accepted start"))?;
-        if frozen.dispatch != *dispatch || frozen.entered || task.state != TaskState::Running {
-            return Err(invalid(
-                "capacity refusal does not own the exact unentered task",
-            ));
+            .ok_or_else(|| invalid("deferral lost its accepted start"))?;
+        if frozen.dispatch != *dispatch
+            || frozen.entered
+            || frozen.execution_duration.is_some()
+            || task.state != TaskState::Running
+        {
+            return Err(invalid("deferral does not own the exact unentered task"));
+        }
+        // The caller has dropped any prepared token. Keep scheduling and this exact worker
+        // excluded until the host has released only this proven-unentered attempt's claims.
+        if let Err(error) = self.executor.defer_before_entry(dispatch) {
+            *non_entry_proven = false;
+            drop(guard);
+            return self.mark_uncertain(
+                workflow_id,
+                task_id,
+                &format!("pre-entry cleanup remains unresolved: {error}"),
+            );
         }
         if task.stop_requested {
             drop(guard);
@@ -277,17 +363,11 @@ impl TaskRuntime {
                 workflow_id,
                 task_id,
                 TaskState::Stopped,
-                "stopped while awaiting capability capacity",
+                "stopped before deferred external entry",
             );
         }
         task.state = TaskState::Queued;
-        task.reason = Some(
-            milkdrift_contracts::truncate_utf8(
-                &format!("waiting for capability capacity: {reason}"),
-                4096,
-            )
-            .to_owned(),
-        );
+        task.reason = Some(milkdrift_contracts::truncate_utf8(reason, 4096).to_owned());
         let expected = self.advance(&mut workflow)?;
         self.save(&workflow, Some(expected), None)?;
         // Release the old worker while scheduling is still excluded. Otherwise a new exact
@@ -351,13 +431,14 @@ impl TaskRuntime {
         let dispatch = task.frozen.as_ref().map(|start| start.dispatch.clone());
         let expected = self.advance(&mut workflow)?;
         self.save(&workflow, Some(expected), None)?;
+        drop(_guard);
         if let Some(dispatch) = dispatch {
             self.executor.settle(&dispatch)?;
         }
         Ok(())
     }
 
-    fn mark_uncertain(
+    pub(super) fn mark_uncertain(
         &self,
         workflow_id: &WorkflowId,
         task_id: &TaskId,
@@ -399,13 +480,13 @@ impl TaskRuntime {
     }
 
     /// Missing workers after restart never establish absence of an entered external effect.
-    /// Unentered frozen starts return unchanged for bounded dispatch by the worker owner.
+    /// Proven-unentered frozen starts return to the ordinary queue with their identity intact.
+    /// Call before starting workers; live failures retain their own bounded reconciliation owner.
     ///
     /// # Errors
-    /// Returns storage/integrity failures or a recovery page exceeding the bounded startup queue.
-    pub fn recover(&self) -> Result<Vec<ExecutionDispatch>, RuntimeError> {
+    /// Returns storage, integrity or cleanup failures. Unresolved starts are never redispatched.
+    pub fn recover(&self) -> Result<(), RuntimeError> {
         let mut cursor = None;
-        let mut ready = Vec::new();
         loop {
             let page = self.store.workflows(cursor.as_deref(), 200)?;
             for snapshot in page.items {
@@ -432,29 +513,20 @@ impl TaskRuntime {
                         .frozen
                         .as_ref()
                         .ok_or_else(|| invalid("running task lost its frozen start"))?;
-                    if frozen.entered {
+                    if frozen.entered || frozen.execution_duration.is_some() {
                         self.mark_uncertain(&workflow.id, id, "daemon restarted after durable external entry; no terminal evidence is available")?;
                     } else {
-                        if ready.len() >= 200 {
-                            let _guard = self
-                                .gate
-                                .lock()
-                                .map_err(|_| invalid("task recovery lock unavailable"))?;
-                            let mut current = self.require_workflow(&workflow.id)?;
-                            let retained = current
-                                .tasks
-                                .get_mut(id)
-                                .ok_or_else(|| invalid("recoverable task disappeared"))?;
-                            retained.state = TaskState::Queued;
-                            retained.reason =
-                                Some("accepted start retained for bounded worker recovery".into());
-                            let expected = self.advance(&mut current)?;
-                            self.save(&current, Some(expected), None)?;
-                            continue;
-                        }
-                        if !task.stop_requested && workflow.wait_question.is_none() {
-                            ready.push(frozen.dispatch.clone());
-                        }
+                        let mut execution =
+                            self.claim_execution(frozen.dispatch.request().invocation())?;
+                        let mut non_entry_proven = true;
+                        self.defer_before_entry(
+                            &workflow.id,
+                            id,
+                            &frozen.dispatch,
+                            "Accepted start is awaiting redispatch after restart",
+                            &mut execution,
+                            &mut non_entry_proven,
+                        )?;
                     }
                 }
             }
@@ -463,7 +535,7 @@ impl TaskRuntime {
                 break;
             }
         }
-        Ok(ready)
+        Ok(())
     }
 
     /// Dispatches exact cancellation requests independently of occupied execution workers.
@@ -489,6 +561,13 @@ impl TaskRuntime {
                 continue;
             }
             if !frozen.entered && frozen.execution_duration.is_none() {
+                // A preparing worker may own native claims or a prepared handle. It observes
+                // stop before entry and settles only after dropping that handle itself.
+                let Some(_execution) =
+                    self.try_claim_execution(frozen.dispatch.request().invocation())?
+                else {
+                    continue;
+                };
                 self.finish_without_entry(
                     &workflow.id,
                     id,
@@ -593,14 +672,14 @@ struct TaskReporter<'a> {
     dispatch: ExecutionDispatch,
 }
 
-struct ExecutionClaim<'a> {
-    runtime: &'a TaskRuntime,
-    invocation: milkdrift_capability::InvocationId,
-    active: bool,
+pub(super) struct ExecutionClaim<'a> {
+    pub(super) runtime: &'a TaskRuntime,
+    pub(super) invocation: milkdrift_capability::InvocationId,
+    pub(super) active: bool,
 }
 
 impl ExecutionClaim<'_> {
-    fn release(&mut self) -> Result<(), RuntimeError> {
+    pub(super) fn release(&mut self) -> Result<(), RuntimeError> {
         let mut executing = self
             .runtime
             .executing
@@ -657,10 +736,7 @@ impl TaskReporter<'_> {
                 "heartbeat differs from an unsettled entered execution",
             ));
         }
-        if task.stop_requested
-            || super::duration::remaining(&workflow) == 0
-            || now >= self.dispatch.lease_expires_at()
-        {
+        if task.stop_requested || super::duration::remaining(&workflow) == 0 {
             return Err(invalid(
                 "task continuation refused by its stop or cumulative execution allowance",
             ));

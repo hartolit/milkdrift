@@ -31,6 +31,11 @@ pub enum StorageFailureClass {
 /// explains how to recover a result when an error may have arrived after commit.
 #[derive(Debug, Error)]
 pub enum PersistenceError {
+    /// A validated native-directory claim overlaps an existing reader or writer.
+    /// No part of the requested claim was accepted. The existing owner stays protected;
+    /// the caller may retry this same pre-entry claim after contention clears.
+    #[error("native project paths are in use")]
+    NativePathContention,
     /// Project settings changed before the guarded registration or task acceptance.
     #[error("project generation conflict: expected {expected}, actual {actual}")]
     ProjectGenerationConflict {

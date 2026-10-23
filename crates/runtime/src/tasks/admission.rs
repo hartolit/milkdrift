@@ -361,11 +361,22 @@ impl TaskRuntime {
         let mut record = self.require_workflow(workflow)?;
         if let Some((source, repair)) = model_source {
             super::model_actions::check_admission(&record, source, &batch, repair)?;
-        } else if batch.expected_generation != record.generation {
-            return Err(RuntimeError::InvalidTransition(format!(
-                "stale workflow generation: expected {}, actual {}",
-                batch.expected_generation, record.generation
-            )));
+        } else {
+            // Progress and redispatch do not change the human's decision. These three controls
+            // may use that observed decision, while any intervening edit/start/control refuses.
+            let control_only = matches!(
+                batch.changes.as_slice(),
+                [TaskChange::Wait { .. } | TaskChange::Continue | TaskChange::Stop { .. }]
+            );
+            if batch.expected_generation > record.generation
+                || batch.expected_generation < record.decision_generation
+                || !control_only && batch.expected_generation != record.generation
+            {
+                return Err(RuntimeError::InvalidTransition(format!(
+                    "stale workflow generation: expected {}, actual {}",
+                    batch.expected_generation, record.generation
+                )));
+            }
         }
         if batch.changes.is_empty() || batch.changes.len() > MAX_TASK_BATCH_ACTIONS {
             return Err(invalid("task batch must contain 1..=32 changes"));
@@ -491,8 +502,6 @@ impl TaskRuntime {
                         return Err(invalid("workflow input name or count exceeds its bound"));
                     }
                     record.inputs.insert(name, value);
-                    record.wait_question = None;
-                    record.model_admission_wait = None;
                 }
                 TaskChange::Stop { task } => {
                     let task = record

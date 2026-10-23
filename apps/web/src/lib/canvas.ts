@@ -1,4 +1,4 @@
-import { readableReason } from './presentation';
+import { readableReason, stateLabel } from './presentation';
 import type { ChangeWorkflowRequest, CreateWorkflowRequest, InputBinding, InputValue, ProjectDto, TaskCapability, TaskChangeDto, TaskDefinitionDto, TaskReadDto, TaskSessionDto, TaskUploadRequest, WorkflowLimitsDto, WorkflowReadDto } from './protocol.generated';
 
 export const canvasBounds = { changes: 32, tasks: 200, sources: 400, edges: 1024, draftBytes: 2 * 1024 * 1024, cacheBytes: 8 * 1024 * 1024 } as const;
@@ -24,12 +24,12 @@ export interface CanvasState {
   details: TaskReadDto[]; positions: Record<string, Point>; bindings: Record<string, string>; camera: Point & { zoom: number };
   selected: string; inspector: boolean; presentation: 'canvas' | 'list' | 'timeline';
   finishWhenSettled: boolean; limits: WorkflowLimitsDto | null;
-  pending: { path: string; request: CreateWorkflowRequest | ChangeWorkflowRequest } | null;
+  pending: { path: string; request: CreateWorkflowRequest | ChangeWorkflowRequest; control?: boolean } | null;
   pendingUpload: { request: TaskUploadRequest; target: string } | null;
   busy: boolean; error: string; conflict: boolean; notice: string;
 }
 
-export interface GraphNode { id: string; kind: 'task' | 'source' | 'boundary'; label: string; detail: string; state: string; draft: boolean; position: Point }
+export interface GraphNode { id: string; kind: 'task' | 'source' | 'boundary'; label: string; detail: string; state: string; status?: string; draft: boolean; position: Point }
 export interface GraphEdge { id: string; source: string; target: string; label: string; input: string | null; binding: InputBinding | null; draft: boolean }
 
 export function createCanvas(session: TaskSessionDto, target: CanvasTarget, project: ProjectDto | null = null): CanvasState {
@@ -232,7 +232,7 @@ export function projectGraph(canvas: CanvasState, workflow: WorkflowReadDto | nu
   for (const { summary, draft, detail } of definitions) {
     const column = columns.get(summary.id) ?? 1, row = rowByColumn.get(column) ?? 0;
     rowByColumn.set(column, row + 1);
-    nodes.push({ id: summary.id, kind: 'task', label: draft?.definition.title || summary.title, detail: readableReason(summary.reason) || (summary.started_at === null ? 'Ready when inputs arrive' : detail?.result?.text?.slice(0, 100) || summary.description || 'Inspect task'), state: summary.state, draft: !!draft, position: position(canvas, summary.id, { x: column * 310, y: row * 195 + 80 }) });
+    nodes.push({ id: summary.id, kind: 'task', label: draft?.definition.title || summary.title, detail: workflow?.wait_question && summary.state === 'queued' ? 'Workflow paused' : readableReason(summary.reason) || (summary.started_at === null ? 'Ready when inputs arrive' : detail?.result?.text?.slice(0, 100) || summary.description || 'Inspect task'), state: summary.state, status: stateLabel(summary).toLowerCase(), draft: !!draft, position: position(canvas, summary.id, { x: column * 310, y: row * 195 + 80 }) });
   }
   for (const task of canvas.tasks.filter((item) => item.version === null)) nodes.push({ id: task.id, kind: 'task', label: task.definition.title || 'New task', detail: task.definition.instructions.slice(0, 100) || 'Describe the work', state: 'draft', draft: true, position: position(canvas, task.id, { x: 340, y: nodes.length * 195 + 80 }) });
   for (const source of canvas.sources) nodes.push({ id: source.id, kind: 'source', label: source.label, detail: source.deferred ? 'Waiting for input' : source.value?.kind === 'uploaded' ? 'Captured file' : source.text.slice(0, 100) || 'Add text', state: source.deferred ? 'waiting' : 'source', draft: true, position: position(canvas, source.id, { x: 0, y: nodes.length * 150 }) });

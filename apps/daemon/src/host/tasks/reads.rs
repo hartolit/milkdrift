@@ -836,6 +836,7 @@ fn task_summary(workflow: &str, task: &TaskRecord) -> TaskSummaryDto {
             .map(ToString::to_string)
             .collect(),
         state: state(task),
+        entered: task.frozen.as_ref().is_some_and(|start| start.entered),
         reason: task.reason.clone(),
         started_at: task.started_at.map(|t| t.get()),
         ended_at: task.ended_at.map(|t| t.get()),

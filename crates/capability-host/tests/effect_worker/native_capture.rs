@@ -371,17 +371,19 @@ fn native_capture_cannot_read_live_writer_and_publishes_exact_settled_bytes() ->
     let active = std::thread::spawn(move || runtime.execute(dispatch));
     fixture.entered.recv_timeout(Duration::from_secs(5))?;
     assert_eq!(fixture.state(&writer)?, TaskState::Running);
-    let rejected = fixture.create("capture-live", false)?;
-    fixture.runtime.execute(fixture.dispatch()?)?;
-    assert_eq!(fixture.state(&rejected)?, TaskState::Failed);
+    let captured = fixture.create("capture-live", false)?;
+    let waiting_dispatch = fixture.dispatch()?;
+    fixture.runtime.execute(waiting_dispatch.clone())?;
+    assert_eq!(fixture.state(&captured)?, TaskState::Queued);
     assert_eq!(fixture.adapter.captures.load(Ordering::SeqCst), 0);
     assert!(fixture.store.native_path_claim(&owner)?.is_some());
     fixture.release.send(true)?;
     active.join().map_err(|_| "writer thread panicked")??;
     assert_eq!(fixture.state(&writer)?, TaskState::Completed);
     assert!(fixture.store.native_path_claim(&owner)?.is_none());
-    let captured = fixture.create("capture-settled", false)?;
-    fixture.runtime.execute(fixture.dispatch()?)?;
+    let resumed = fixture.dispatch()?;
+    assert_eq!(resumed, waiting_dispatch);
+    fixture.runtime.execute(resumed)?;
     assert_eq!(fixture.state(&captured)?, TaskState::Completed);
     assert_eq!(fixture.adapter.captures.load(Ordering::SeqCst), 1);
     let record = fixture
@@ -418,12 +420,12 @@ fn uncertain_native_writer_survives_reopen_and_keeps_capture_outside_entry() -> 
         assert_eq!(fixture.state(&writer)?, TaskState::Uncertain);
     }
     let fixture = Fixture::open(root.path(), project.path(), "native-after")?;
-    assert!(fixture.runtime.recover()?.is_empty());
+    fixture.runtime.recover()?;
     assert_eq!(fixture.state(&writer)?, TaskState::Uncertain);
     assert!(fixture.store.native_path_claim(&owner)?.is_some());
     let captured = fixture.create("capture-after-restart", false)?;
     fixture.runtime.execute(fixture.dispatch()?)?;
-    assert_eq!(fixture.state(&captured)?, TaskState::Failed);
+    assert_eq!(fixture.state(&captured)?, TaskState::Queued);
     assert_eq!(fixture.adapter.captures.load(Ordering::SeqCst), 0);
     assert!(fixture.store.native_path_claim(&owner)?.is_some());
     assert_eq!(

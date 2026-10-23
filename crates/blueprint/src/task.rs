@@ -624,7 +624,8 @@ pub enum TaskChange {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskBatch {
-    /// Exact workflow generation the author inspected.
+    /// Workflow generation the author inspected. Authoring requires an exact match; a singleton
+    /// wait, continue or stop may cross progress-only changes since the last workflow decision.
     pub expected_generation: u64,
     /// Changes admitted together or refused together.
     pub changes: Vec<TaskChange>,

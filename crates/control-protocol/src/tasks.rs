@@ -427,7 +427,7 @@ pub struct WorkflowReceipt {
 #[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStateDto {
-    /// Inputs or dependencies have not become ready.
+    /// Waiting for inputs, dependencies or safe retry before external entry.
     Queued,
     /// Durable start accepted; external work may be running.
     Running,
@@ -515,7 +515,7 @@ pub struct TaskReadDto {
     pub state: TaskStateDto,
     /// Missing input, failure, or uncertainty explanation.
     pub reason: Option<String>,
-    /// Recorded start; queued tasks have none.
+    /// Frozen start acceptance; retained while a pre-entry start waits again.
     #[cfg_attr(feature = "web-codegen", ts(type = "number | null"))]
     pub started_at: Option<u64>,
     /// Recorded settlement time; uncertainty has none.
@@ -593,9 +593,11 @@ pub struct TaskSummaryDto {
     pub dependencies: Vec<String>,
     /// Durable lifecycle state.
     pub state: TaskStateDto,
+    /// Durable external-entry intent, independent of frozen start acceptance.
+    pub entered: bool,
     /// Missing input or settlement explanation.
     pub reason: Option<String>,
-    /// Recorded start, absent for queued tasks.
+    /// Frozen start acceptance; a deferred queued task may retain this timestamp.
     #[cfg_attr(feature = "web-codegen", ts(type = "number | null"))]
     pub started_at: Option<u64>,
     /// Proven settlement time.

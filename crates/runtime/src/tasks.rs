@@ -8,6 +8,7 @@ mod effects;
 mod inputs;
 mod model_actions;
 mod policy;
+mod recovery;
 mod scheduling;
 
 pub use model_actions::{ModelAdmission, ModelAdmissionStatus};
@@ -22,7 +23,7 @@ use milkdrift_persistence::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     sync::{Arc, Mutex},
 };
 
@@ -30,7 +31,7 @@ use std::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskState {
-    /// The task has no accepted start; missing inputs or dependencies may keep it here.
+    /// The task awaits readiness or redispatch of its exact, proven-unentered frozen start.
     Queued,
     /// An exact start is frozen and owned by the external execution boundary.
     Running,
@@ -80,7 +81,7 @@ pub struct FrozenTaskStart {
     pub inputs: BTreeMap<String, TaskInputValue>,
     /// Exact capability generation, authority basis, and invocation identity.
     pub dispatch: ExecutionDispatch,
-    /// Durable final-entry intent; absence is the only local recovery evidence of non-entry.
+    /// Durable final-entry intent; absence alone does not resolve uncertain preparation.
     pub entered: bool,
     /// Time and enforceable duration reserved at final external entry.
     /// Unresolved work keeps this reservation until terminal evidence proves settlement.
@@ -134,7 +135,7 @@ pub struct TaskRecord {
     pub reason: Option<String>,
     /// Original task admission time.
     pub created_at: TimestampMillis,
-    /// Actual accepted start time; queued work has none.
+    /// Original accepted start time, retained when a proven-unentered start returns to the queue.
     pub started_at: Option<TimestampMillis>,
     /// Time durable terminal evidence settled the task; uncertainty has none.
     pub ended_at: Option<TimestampMillis>,
@@ -159,7 +160,7 @@ pub struct WorkflowRecord {
     /// Initial project association; later organizational associations live in the project store.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_id: Option<String>,
-    /// Last accepted edit or task start. Progress reports do not change an author's snapshot.
+    /// Last edit, initial start or wait change; execution progress and redispatch do not change it.
     pub decision_generation: u64,
     /// Durable model response admissions, keyed by their unique source task.
     pub admissions: BTreeMap<TaskId, ModelAdmission>,
@@ -219,12 +220,25 @@ pub struct TaskRuntime {
     clock: Arc<dyn BoundaryClock>,
     ids: Arc<dyn IdGenerator>,
     gate: Mutex<()>,
-    cursor: Mutex<Option<String>>,
+    cursor: Mutex<SchedulingCursor>,
     cancellation_cursor: Mutex<Option<String>>,
     maximum_active_tasks: u32,
     active_tasks: Mutex<Option<u64>>,
     executing: Mutex<BTreeSet<milkdrift_capability::InvocationId>>,
+    failed_executions: Mutex<VecDeque<FailedExecution>>,
     admission_closed: std::sync::atomic::AtomicBool,
+}
+
+#[derive(Default)]
+struct SchedulingCursor {
+    after: Option<String>,
+    round: usize,
+    pending: Vec<ExecutionDispatch>,
+}
+
+struct FailedExecution {
+    dispatch: ExecutionDispatch,
+    non_entry_proven: bool,
 }
 
 impl TaskRuntime {
@@ -257,17 +271,18 @@ impl TaskRuntime {
             clock,
             ids,
             gate: Mutex::new(()),
-            cursor: Mutex::new(None),
+            cursor: Mutex::new(SchedulingCursor::default()),
             cancellation_cursor: Mutex::new(None),
             maximum_active_tasks: 32,
             active_tasks: Mutex::new(None),
             executing: Mutex::new(BTreeSet::new()),
+            failed_executions: Mutex::new(VecDeque::new()),
             admission_closed: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
-    /// Bounds accepted unfinished starts across all workflows on this daemon.
-    /// Existing retained starts keep their ownership when reopening with a tighter bound.
+    /// Bounds dispatched and unresolved starts across all workflows on this daemon.
+    /// Deferred, proven-unentered starts retain their identity without occupying an execution slot.
     ///
     /// # Errors
     /// Refuses zero or a bound above 65,536 tasks.
@@ -382,7 +397,7 @@ impl TaskRuntime {
                 .count(),
         )
         .map_err(|_| RuntimeError::InvalidTransition("task control reservation overflow".into()))?;
-        // This count is a cache of committed frozen starts, rebuilt from the same store on reopen.
+        // This count caches dispatched/unresolved starts, rebuilt from the same store on reopen.
         // Keeping it under the transition gate avoids rescanning every workflow on each worker poll.
         let mut active = self
             .active_tasks
@@ -436,7 +451,16 @@ impl TaskRuntime {
                 },
             },
             command,
-        })?;
+        });
+        let outcome = match outcome {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                // The durable commit may have succeeded before its reply failed. Rebuild from
+                // the store rather than carrying a stale concurrency count into the next tick.
+                *active = None;
+                return Err(error.into());
+            }
+        };
         if matches!(outcome, WorkflowCommitOutcome::Applied(_)) {
             *active = next_active;
         }
@@ -450,6 +474,12 @@ impl TaskRuntime {
         })?;
         record.updated_at = self.clock.now()?;
         policy::request_limit_stop(record)?;
+        if self.workflow(&record.id)?.is_some_and(|saved| {
+            saved.wait_question != record.wait_question
+                || saved.model_admission_wait != record.model_admission_wait
+        }) {
+            record.decision_generation = record.generation;
+        }
         update_workflow_state(record);
         Ok(prior)
     }
@@ -460,7 +490,10 @@ fn active_starts(record: &WorkflowRecord) -> Result<u64, RuntimeError> {
         record
             .tasks
             .values()
-            .filter(|task| task.frozen.is_some() && !task.state.is_settled())
+            .filter(|task| {
+                task.frozen.is_some()
+                    && matches!(task.state, TaskState::Running | TaskState::Uncertain)
+            })
             .count(),
     )
     .map_err(|error| RuntimeError::Scheduling(error.to_string()))

@@ -25,6 +25,7 @@ impl TaskRuntime {
         if maximum == 0 || maximum > 200 {
             return Err(invalid("task tick bound must be 1..=200"));
         }
+        self.reconcile_failed_executions(maximum)?;
         let _guard = self
             .gate
             .lock()
@@ -36,9 +37,40 @@ impl TaskRuntime {
             .cursor
             .lock()
             .map_err(|_| invalid("task scheduler cursor unavailable"))?;
-        let page = self.store.workflows(cursor.as_deref(), maximum)?;
-        *cursor = page.next.clone();
-        let mut dispatches = Vec::new();
+        if !cursor.pending.is_empty() {
+            let count = cursor.pending.len().min(usize::from(maximum));
+            let mut dispatches = Vec::new();
+            // A prior tick can fail after committing an earlier start, or after a commit whose
+            // reply was lost. Keep the whole bounded delivery slice until every read succeeds.
+            for dispatch in cursor.pending.iter().take(count) {
+                let workflow = milkdrift_blueprint::WorkflowId::new(dispatch.run().as_str())
+                    .map_err(invalid)?;
+                let task =
+                    milkdrift_blueprint::TaskId::new(dispatch.node().as_str()).map_err(invalid)?;
+                if self.workflow(&workflow)?.is_some_and(|workflow| {
+                    workflow.tasks.get(&task).is_some_and(|task| {
+                        task.state == TaskState::Running
+                            && task.frozen.as_ref().is_some_and(|frozen| {
+                                frozen.dispatch == *dispatch
+                                    && !frozen.entered
+                                    && frozen.execution_duration.is_none()
+                            })
+                    })
+                }) {
+                    dispatches.push(dispatch.clone());
+                }
+            }
+            cursor.pending.drain(..count);
+            return Ok(dispatches);
+        }
+        let round = cursor.round;
+        let page = self.store.workflows(cursor.after.as_deref(), maximum)?;
+        cursor.after = page.next.clone();
+        if cursor.after.is_none() {
+            // One scalar rotates each bounded task page on the next traversal, without retaining
+            // an ever-growing cursor for every workflow. Wrapping only restarts that rotation.
+            cursor.round = cursor.round.wrapping_add(1);
+        }
         for snapshot in page.items {
             let mut workflow = self.require_workflow(&snapshot.workflow)?;
             self.observe_duration(&mut workflow, self.clock.now()?)?;
@@ -54,14 +86,18 @@ impl TaskRuntime {
                 .values()
                 .filter(|task| matches!(task.state, TaskState::Running | TaskState::Uncertain))
                 .count();
-            let candidates: Vec<_> = workflow
+            let mut candidates: Vec<_> = workflow
                 .tasks
                 .iter()
                 .filter(|(_, task)| task.state == TaskState::Queued)
                 .map(|(id, _)| id.clone())
                 .collect();
+            if !candidates.is_empty() {
+                let offset = round % candidates.len();
+                candidates.rotate_left(offset);
+            }
             for task_id in candidates {
-                if dispatches.len() >= usize::from(maximum)
+                if cursor.pending.len() >= usize::from(maximum)
                     || active
                         >= usize::try_from(
                             workflow.limits.concurrent_tasks.min(
@@ -80,27 +116,28 @@ impl TaskRuntime {
                     .get(&task_id)
                     .ok_or_else(|| invalid("queued task disappeared"))?
                     .clone();
+                if self.active_task_count()? >= u64::from(self.maximum_active_tasks) {
+                    break;
+                }
                 if let Some(frozen) = &task.frozen {
-                    if !frozen.entered && !task.stop_requested {
+                    if !frozen.entered
+                        && frozen.execution_duration.is_none()
+                        && !task.stop_requested
+                    {
                         let dispatch = frozen.dispatch.clone();
                         let selected = workflow
                             .tasks
                             .get_mut(&task_id)
                             .ok_or_else(|| invalid("retained start disappeared"))?;
                         selected.state = TaskState::Running;
-                        selected.reason = None;
                         let expected = self.advance(&mut workflow)?;
-                        workflow.decision_generation = workflow.generation;
+                        cursor.pending.push(dispatch);
                         self.save(&workflow, Some(expected), None)?;
-                        dispatches.push(dispatch);
                         active = active
                             .checked_add(1)
                             .ok_or_else(|| invalid("task concurrency overflow"))?;
                     }
                     continue;
-                }
-                if self.active_task_count()? >= u64::from(self.maximum_active_tasks) {
-                    break;
                 }
                 let inputs = match resolve_inputs(&workflow, &task) {
                     Ok(inputs) => inputs,
@@ -145,8 +182,8 @@ impl TaskRuntime {
                         });
                         let expected = self.advance(&mut workflow)?;
                         workflow.decision_generation = workflow.generation;
+                        cursor.pending.push(dispatch);
                         self.save(&workflow, Some(expected), None)?;
-                        dispatches.push(dispatch);
                         active = active
                             .checked_add(1)
                             .ok_or_else(|| invalid("task concurrency overflow"))?;
@@ -185,7 +222,7 @@ impl TaskRuntime {
                 }
             }
         }
-        Ok(dispatches)
+        Ok(std::mem::take(&mut cursor.pending))
     }
 
     fn prepare_dispatch(

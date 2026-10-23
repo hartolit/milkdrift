@@ -110,7 +110,7 @@ fn corrective_lineage_stop_survives_restart_and_resume_never_refunds_failures() 
         );
     }
     let (runtime, executor, control) = runtime(root.path(), authority, clock)?;
-    assert!(runtime.recover()?.is_empty());
+    runtime.recover()?;
     assert!(runtime.tick(1)?.is_empty());
     let record = runtime.workflow(&workflow)?.ok_or("workflow absent")?;
     let mut limits = record.limits.clone();

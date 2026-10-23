@@ -20,7 +20,7 @@ async fn raw(
     assert!(status.is_success(), "{status}: {envelope}");
     assert_eq!(
         envelope.get("protocol").ok_or("protocol absent")?,
-        &json!({"major":3,"minor":4})
+        &json!({"major":3,"minor":5})
     );
     Ok(envelope.get("value").ok_or("value absent")?.clone())
 }

@@ -34,9 +34,13 @@ this bridge and the configured adapter.
 The daemon installs one durable native-directory claim store before admitting task paths. Host
 preparation resolves each declared directory to its physical path and identity, acquires its full
 read/write set, then rechecks the selection before external entry. Equal or ancestor/descendant
-writers conflict, including paths reached through symlink aliases. A changed symlink or replaced
-directory refuses entry. Claims are retained across host loss and uncertain results; only the
-runtime's post-settlement callback releases them. Current physical-directory identity support is
+writers conflict, including paths reached through symlink aliases. The ordinary task runtime treats
+typed native contention as waiting and retries its exact frozen start through bounded scheduling.
+Independent direct/peer serving retains its pre-entry refusal policy; it does not acquire the task
+scheduler's retry behavior. A changed symlink, replaced directory or invalid claim refuses entry and
+is never temporary contention. Claims are retained across host loss and uncertain results. Runtime
+releases them after settlement, or after proving exclusive non-entry and dropping prepared resources
+before deferring the same start. Current physical-directory identity support is
 Unix-specific; other platforms refuse declared native roots. These claims coordinate declared
 Milkdrift work and do not sandbox trusted native tools or prevent out-of-band file changes.
 

@@ -159,7 +159,8 @@ impl NativePathClaims {
             .ok_or_else(|| refused("accepted native directory claim is missing; entry refused"))
     }
 
-    pub(crate) fn release_settled(&self, owner: &str) -> Result<(), ExecutorError> {
+    /// The caller supplies terminal evidence or exclusive non-entry after dropping preparation.
+    pub(crate) fn release(&self, owner: &str) -> Result<(), ExecutorError> {
         self.store.release_native_paths(owner).map_err(storage)
     }
 }
@@ -266,7 +267,12 @@ fn refused(message: &str) -> ExecutorError {
     ExecutorError::BoundaryBeforeEntry(message.to_owned())
 }
 fn storage(error: milkdrift_persistence::PersistenceError) -> ExecutorError {
-    refused(&error.to_string())
+    match error {
+        milkdrift_persistence::PersistenceError::NativePathContention => {
+            ExecutorError::NativePathBusy
+        }
+        other => refused(&other.to_string()),
+    }
 }
 
 #[cfg(test)]
@@ -365,18 +371,18 @@ mod tests {
         {
             let host = NativePathClaims::new(Arc::new(RedbStore::open(root.path())?));
             host.acquire("writer", &[path(true, project.path())])?;
-            assert!(
-                host.acquire("reader", &[path(false, &project.path().join("research"))])
-                    .is_err()
-            );
+            assert!(matches!(
+                host.acquire("reader", &[path(false, &project.path().join("research"))]),
+                Err(ExecutorError::NativePathBusy)
+            ));
         }
         let host = NativePathClaims::new(Arc::new(RedbStore::open(root.path())?));
-        assert!(
-            host.acquire("new-writer", &[path(true, project.path())])
-                .is_err()
-        );
+        assert!(matches!(
+            host.acquire("new-writer", &[path(true, project.path())]),
+            Err(ExecutorError::NativePathBusy)
+        ));
         host.acquire("writer", &[path(true, project.path())])?;
-        host.release_settled("writer")?;
+        host.release("writer")?;
         host.acquire("reader-a", &[path(false, project.path())])?;
         host.acquire("reader-b", &[path(false, &project.path().join("research"))])?;
         assert!(
@@ -401,7 +407,10 @@ mod tests {
             }],
         )?;
         store.release_native_paths("writer")?;
-        assert!(host.revalidate("writer").is_err());
+        assert!(matches!(
+            host.revalidate("writer"),
+            Err(ExecutorError::BoundaryBeforeEntry(_))
+        ));
         Ok(())
     }
 
@@ -412,16 +421,16 @@ mod tests {
         let root = tempfile::tempdir()?;
         let project = tempfile::tempdir()?;
         let host = NativePathClaims::new(Arc::new(RedbStore::open(root.path())?));
-        assert!(
+        assert!(matches!(
             host.acquire(
                 "writer",
                 &[TaskPathAccess {
                     path: project.path().to_string_lossy().into_owned(),
                     write: true,
                 }]
-            )
-            .is_err()
-        );
+            ),
+            Err(ExecutorError::BoundaryBeforeEntry(_))
+        ));
         Ok(())
     }
 
@@ -442,19 +451,22 @@ mod tests {
                 write: true,
             }],
         )?;
-        assert!(
+        assert!(matches!(
             host.acquire(
                 "alias-writer",
                 &[TaskPathAccess {
                     path: project.path().to_string_lossy().into_owned(),
                     write: true
                 }]
-            )
-            .is_err()
-        );
+            ),
+            Err(ExecutorError::NativePathBusy)
+        ));
         std::fs::remove_file(&link)?;
         std::os::unix::fs::symlink(other.path(), &link)?;
-        assert!(host.revalidate("writer").is_err());
+        assert!(matches!(
+            host.revalidate("writer"),
+            Err(ExecutorError::BoundaryBeforeEntry(_))
+        ));
         Ok(())
     }
 
@@ -480,12 +492,12 @@ mod tests {
                 .is_err()
         );
         assert!(host.acquire("same-folder", &[access(&left, true)]).is_err());
-        host.release_settled("research-a")?;
+        host.release("research-a")?;
         assert!(
             host.acquire("capture-project", &[access(project.path(), false)])
                 .is_err()
         );
-        host.release_settled("research-b")?;
+        host.release("research-b")?;
         host.acquire("capture-project", &[access(project.path(), false)])?;
         assert!(host.acquire("research-a", &[access(&left, true)]).is_err());
         Ok(())

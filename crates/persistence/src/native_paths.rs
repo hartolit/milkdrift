@@ -34,13 +34,16 @@ pub trait NativePathClaimStore: Send + Sync {
     /// Accept exact replay or insert the complete set, refusing conflicting roots atomically.
     ///
     /// # Errors
-    /// Refuses changed replay, overlapping writers, exhausted capacity and storage failures.
+    /// Returns [`PersistenceError::NativePathContention`] for overlap with an existing
+    /// reader/writer, without accepting any requested root. Changed replay, malformed claims,
+    /// exhausted capacity and storage failures are separate refusals, not retryable contention.
     fn claim_native_paths(&self, claim: &NativePathClaim) -> Result<(), PersistenceError>;
     /// Claim a serving invocation's configured directories while its exact pre-entry
     /// dispatch claim is still current. Cancellation cannot recreate a released claim.
     ///
     /// # Errors
-    /// Refuses stale dispatch ownership, changed selection, overlapping writers and storage failures.
+    /// Returns [`PersistenceError::NativePathContention`] for reader/writer overlap. Refuses stale
+    /// dispatch ownership and changed selection separately, before accepting any requested root.
     fn claim_serving_native_paths(
         &self,
         record: &crate::PeerExecutionRecord,
@@ -51,7 +54,8 @@ pub trait NativePathClaimStore: Send + Sync {
     /// # Errors
     /// Returns storage failures or malformed identities.
     fn native_path_claim(&self, owner: &str) -> Result<Option<NativePathClaim>, PersistenceError>;
-    /// Release only after the owning runtime durably settles or authorizes reconciliation.
+    /// Release after the owner durably settles, authorizes reconciliation, or proves exclusive
+    /// non-entry and drops prepared resources before deferring the same accepted start.
     /// This trusted internal operation is not exposed as an ordinary client deletion.
     ///
     /// # Errors

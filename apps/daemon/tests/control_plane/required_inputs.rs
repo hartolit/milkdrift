@@ -108,6 +108,161 @@ async fn supply_text(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn explicit_wait_survives_input_restart_and_replayed_earlier_continue() -> TestResult {
+    let directory = TempDir::new()?;
+    let plan = recording_plan(&directory)?;
+    let daemon = start(plan.clone(), CONTROLLER_TOKEN).await?;
+    let accepted = daemon
+        .client
+        .create_workflow(&request(
+            "explicit-wait-input",
+            vec![task("required", false)],
+            InputValue::Absent,
+        ))
+        .await?;
+    let workflow = &accepted.workflow_id;
+    let task = accepted.aliases.get("required").ok_or("task missing")?;
+    assert_waiting(&daemon.client, workflow, task).await?;
+    let first_wait = ChangeWorkflowRequest {
+        request_id: "first-question".into(),
+        expected_generation: daemon.client.workflow(workflow).await?.generation,
+        changes: vec![TaskChangeDto::Wait {
+            question: "Review first brief".into(),
+        }],
+    };
+    daemon.client.change_workflow(workflow, &first_wait).await?;
+    let earlier_continue = ChangeWorkflowRequest {
+        request_id: "continue-first-question".into(),
+        expected_generation: daemon.client.workflow(workflow).await?.generation,
+        changes: vec![TaskChangeDto::Continue],
+    };
+    let continued = daemon
+        .client
+        .change_workflow(workflow, &earlier_continue)
+        .await?;
+    let later_wait = ChangeWorkflowRequest {
+        request_id: "later-question".into(),
+        expected_generation: daemon.client.workflow(workflow).await?.generation,
+        changes: vec![TaskChangeDto::Wait {
+            question: "Review the changed budget".into(),
+        }],
+    };
+    daemon.client.change_workflow(workflow, &later_wait).await?;
+    assert_eq!(
+        daemon
+            .client
+            .change_workflow(workflow, &earlier_continue)
+            .await?,
+        continued
+    );
+    let mut stale_continue = earlier_continue.clone();
+    stale_continue.request_id = "delayed-first-question".into();
+    assert!(
+        matches!(daemon.client.change_workflow(workflow, &stale_continue).await,
+        Err(ClientError::Api(error)) if error.code == ErrorCode::Conflict)
+    );
+    let inputs = ChangeWorkflowRequest {
+        request_id: "supply-without-answering".into(),
+        expected_generation: daemon.client.workflow(workflow).await?.generation,
+        changes: vec![
+            TaskChangeDto::BindInput {
+                name: "shared".into(),
+                value: InputValue::Text {
+                    text: "Ready input".into(),
+                },
+            },
+            TaskChangeDto::BindInput {
+                name: "unrelated".into(),
+                value: InputValue::Text {
+                    text: "More context".into(),
+                },
+            },
+        ],
+    };
+    let input_receipt = daemon.client.change_workflow(workflow, &inputs).await?;
+    assert_eq!(
+        daemon
+            .client
+            .workflow(workflow)
+            .await?
+            .wait_question
+            .as_deref(),
+        Some("Review the changed budget")
+    );
+    assert_eq!(entries(&directory)?, 0);
+    daemon.stop().await?;
+
+    let daemon = start(plan.clone(), CONTROLLER_TOKEN).await?;
+    assert_eq!(
+        daemon.client.change_workflow(workflow, &inputs).await?,
+        input_receipt
+    );
+    assert_eq!(
+        daemon
+            .client
+            .change_workflow(workflow, &earlier_continue)
+            .await?,
+        continued
+    );
+    let paused = daemon.client.workflow(workflow).await?;
+    assert_eq!(
+        paused.wait_question.as_deref(),
+        Some("Review the changed budget")
+    );
+    let summary = paused
+        .tasks
+        .iter()
+        .find(|item| &item.id == task)
+        .ok_or("summary missing")?;
+    assert_eq!(summary.state, TaskStateDto::Queued);
+    assert!(!summary.entered);
+    assert!(summary.started_at.is_none());
+    assert_eq!(entries(&directory)?, 0);
+    let resume = ChangeWorkflowRequest {
+        request_id: "continue-later-question".into(),
+        expected_generation: paused.generation,
+        changes: vec![TaskChangeDto::Continue],
+    };
+    // A native client must make the same scoped decision; the browser owns no resume policy.
+    let path = directory.path().join("resume.json");
+    fs::write(&path, serde_json::to_vec(&resume)?)?;
+    cli_ok(
+        &daemon,
+        &directory,
+        "resume-later-via-cli",
+        &[
+            "workflow",
+            "edit",
+            workflow,
+            path.to_str().ok_or("non-UTF-8 fixture path")?,
+        ],
+    )?;
+    let completed = wait_task(&daemon.client, workflow, task, TaskStateDto::Completed).await?;
+    assert!(completed.frozen.as_ref().is_some_and(|start| start.entered));
+    let summary = daemon
+        .client
+        .workflow(workflow)
+        .await?
+        .tasks
+        .into_iter()
+        .find(|item| &item.id == task)
+        .ok_or("summary missing")?;
+    assert!(summary.entered);
+    assert_eq!(entries(&directory)?, 1);
+    let receipt = daemon.client.workflow_receipt(&resume.request_id).await?;
+    daemon.stop().await?;
+    let restarted = start(plan, CONTROLLER_TOKEN).await?;
+    assert_eq!(
+        restarted.client.change_workflow(workflow, &resume).await?,
+        receipt
+    );
+    assert_eq!(restarted.client.task(workflow, task).await?, completed);
+    restarted.stop().await?;
+    assert_eq!(entries(&directory)?, 1);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn required_absent_waits_across_restart_then_public_edit_enters_once() -> TestResult {
     let directory = TempDir::new()?;
     let plan = recording_plan(&directory)?;

@@ -62,6 +62,95 @@ cleanup journey was exercised. Those limits do not establish behavior for every 
 The scratch harness adds no maintained executable or acceptance test; this investigation makes no
 full-gate or repaired-runtime claim.
 
+## Side S01 pause, recovery and project contention
+
+The October 24 S01 implementation repairs the three diagnostic sequences above through the existing
+runtime, host and public command owners. The [side handoff](virtual-office/canvas-experience/handoff.md)
+records its tested checkpoint and the next unassigned phase. This is focused evidence under the
+explicit S05 full-gate schedule, not completion of the main sprint or actual user acceptance.
+
+The six maintained `tasks::lifecycle` regressions cover input supply during a human wait, old Continue
+replay against a later wait, pause before and during preparation, Stop races, repeated reopen and a
+pause beyond the original dispatch deadline. They compare frozen dispatches, count actual executor
+entries and inspect allowance/resource ownership. Busy work yields within the same workflow and
+across the daemon's execution limit. Authority revocation still prevents resumed entry; uncertain
+cleanup remains uncertain through Stop and reopen.
+
+Four `tasks::lifecycle_faults` regressions inject production redb faults before and after scheduler
+and final-entry commits. A partially committed tick retains delivery ownership; a failed worker
+handoff retains live reconciliation while storage is unavailable. Lost entry replies and failed
+cleanup never become evidence of non-entry. These are controlled storage-boundary faults, not
+physical power-loss qualification.
+
+Host worker tests exercise real preparation handles, native claims and ordinary polling, including
+an unrelated project progressing while another writer holds a claim. Storage tests distinguish
+reader/writer overlap and aliases from malformed claims, changed exact replay and corruption.
+An uncertain writer remains protected after reopen. Direct and peer serving retain their separate
+pre-entry refusal policy; the two new `native_contention` cases prove no entry or competing claim leak.
+
+`required_inputs::explicit_wait_survives_input_restart_and_replayed_earlier_continue` runs the actual
+daemon and CLI with a recording Rust process. Supplying required and unrelated inputs preserves the
+human pause across restart. An old receipt replays unchanged, a stale new Continue refuses, and the
+current CLI Continue produces exactly one recorded process entry. Another restart/replay adds none.
+
+Executed Rust checks, all with `--all-features` unless stated:
+
+| Command/package target | Result |
+| --- | --- |
+| `cargo test -p milkdrift-runtime --test durable_runtime` | 60 passed, including six lifecycle and four storage-fault regressions. |
+| `cargo test -p milkdrift-capability-host` | 21 unit, 12 worker, seven materialization and 20 registry tests passed. |
+| `cargo test -p milkdrift-redb-store --test native_path_claims --test task_workflows` | One compound native-claim test and ten task-store tests passed. |
+| `cargo test -p milkdrift-redb-store --lib native_paths::` | Integrity/type distinction test passed. |
+| `cargo test -p milkdrift-peer-http --test peer_service` | 60 passed. |
+| `cargo test -p milkdrift-control` | 16 passed, including nine model-admission cases. |
+| `cargo test -p milkdrift-daemon --test control_plane` | 52 passed. |
+| `cargo test -p milkdrift-control-protocol -p milkdrift-control-client` | 26 passed across unit, transport, metadata, project and stream targets. |
+| `cargo test -p milkdrift-cli` | 18 parsing/unit and 23 control-client cases passed. |
+| `cargo test -p milkdrift-evidence --bin connected-tasks` | Six fixture tests passed. |
+| `cargo test -p milkdrift-evidence --test repository_contracts` | All 30 passed. |
+
+Scoped all-target Clippy with `-D warnings` and all-feature rustdoc with `RUSTDOCFLAGS='-D warnings'`
+pass for the affected owners and consumers. Affected all-target default-feature checks and
+all-feature daemon/CLI/evidence caller checks pass; the four storage-fault regressions pass again
+after the test-only mutex-lifetime lint correction. Twelve default/all-feature API inventories for runtime,
+persistence, capability-host, control-protocol, redb-store and blueprint were generated under
+`target/public-api/s01/`. Review traces the typed contention variants, safe non-entry cleanup hook,
+ordinary-scheduler recovery and required summary `entered` field to their maintained consumers.
+Control 3.5 and generated TypeScript adopt the field together; physical/internal store formats remain
+21/22 and supported records and exact receipts are preserved. Existing ts-rs attribute notices are
+not suppressed and did not fail the scoped compiler/lint checks.
+
+The actual-binary `connected-tasks check` passes against the rebuilt daemon and CLI at
+`target/canvas-experience/s01-application/`. Its redacted `check.json` records captured input preservation,
+exact replay after restart, daemon isolation and ordinary project operations. Controlled model/tool
+work retains eight tasks and three accepted batches without client continuation; two projects execute
+real Rust tests and preserve unrelated files. Both daemons shut down before report publication.
+This proves the controlled integration, not real-model quality or physical Podman execution.
+
+Frontend check, lint, 115 unit tests and production build pass. The three new real-daemon browser
+cases pass: input supply preserves a human pause and unrelated draft; a lost Pause reply recovers
+the exact control without submitting that draft; and a project writer waits through pause and
+restart before the same frozen start enters after Resume. The last case observes one actual process
+entry before restart and two total after Resume, retaining the original `started_at`. It closes
+the original client before restarting, then uses a fresh 390-pixel Chromium client.
+
+The desktop pause/draft and busy-task renders and narrow recovered-task render were inspected.
+Pause reason, Resume, fixed-input explanation and no-entry/no-settlement evidence remain readable;
+queued tasks show the workflow pause instead of an earlier missing-input diagnostic. An uncertain
+control reply disables input editing until exact recovery. These observations do not establish user
+acceptance or physical-phone operation. The complete browser run passed 39 cases; the remaining
+two-client conflict case exhausted its 60-second overall budget after the second Apply was accepted.
+Report timings show its individual operations remained within their deadlines, and its accepted-task
+assertion had run for only 5.2 seconds when the overall budget expired. That case alone now has a
+120-second overall budget; individual assertion/request deadlines and exact request-count checks
+are unchanged. Its fresh-fixture focused rerun passed in 5.2 seconds against the identical production
+build, followed by successful lint. Thus all 40 cases have passing coverage; this is not a claim of
+one green 40-case invocation. The report and redacted action timings remain with the complete run.
+
+Raw logs use ignored `target/s01-*`; the final browser run uses
+`target/canvas-experience/s01-browser-final-2/`. Exploratory failure artifacts remain preserved
+separately. Fixture roots contain credentials and must not be published.
+
 ## Prompt 02e projects and execution environments verification
 
 Implementation checkpoint `bbae7a6` contains the assigned project correction: daemon-owned folder registrations, durable directory-creation

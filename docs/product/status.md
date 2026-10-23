@@ -21,7 +21,8 @@ daemon-owned projects, ordinary host folders and project-level execution setting
 implements the project boundary and has completed its focused checks, with the physical Podman
 qualification gap below. The prepared [canvas experience side sprint](../development/virtual-office/canvas-experience/README.md)
 now owns the next correction and takes over unimplemented main prompt 04's method responsibility.
-Its early user gate must fulfill outstanding prompt 02; none of its production phases is assigned.
+Its early user gate must fulfill outstanding prompt 02. S01 implements the lifecycle repair and has
+completed its focused verification. S02–S05 remain unassigned.
 Side S05 owns its planned full gate; main prompt 07 retains the later final integrated gate. Hosted quality run 227
 failed on the earlier `e720bb9`; no later hosted pass is claimed.
 
@@ -99,7 +100,16 @@ dirty drawings remain scoped in memory to the authenticated daemon, actor, proje
 submits them. Graph/detail caches are bounded and off-page connections remain explicit. A full draft
 cache still permits viewing other workflows. Conflicts retain the drawing for a new decision;
 lost replies offer exact recovery. Spatial layout owns no scheduling or elapsed-time meaning;
-a secondary timeline shows actual starts and settlements. The daemon still owns all durable work.
+a secondary timeline shows recorded start acceptance and settlement, including time before entry.
+The daemon still owns all durable work.
+
+An explicit human pause survives input supply and restart until authorized Continue. A start paused
+before external entry retains its accepted definition, inputs and invocation while releasing safe
+preparation resources. Known native project contention waits in the same scheduler and leaves room
+for unrelated work. Entry intent is exposed separately from start acceptance. Pause, Resume and Stop
+act directly in the existing canvas without submitting unrelated drafts or changing selection;
+uncertain replies retain exact recovery. Replaying an earlier Continue returns its original receipt
+without answering a later question.
 
 The task scheduler uses existing external preparation, final-entry and effect-lifetime mechanisms.
 Durable native path claims coordinate declared project reads/writes, including aliases and
@@ -111,13 +121,10 @@ stop requests, uncertainty and restart cannot refund unresolved work.
 
 ## Limitations now
 
-Pause diagnostics reproduce two runtime defects before external entry: accepting Wait after a
-start freezes can settle it as Failed, and reopening while paused can leave it Running without
-redispatch after Continue. Supplying an unrelated input also clears an explicit decision question
-and allows scheduling. The [diagnostic evidence](../development/verification-evidence.md#daemon-lifecycle-design-diagnostics)
-records the controlled runtime/store cases and their limits. These behaviors remain unresolved;
-the [daemon/frontend discussion](../development/virtual-office/whiteboard/discussions/architecture/daemon-frontend-contract.md)
-separates observed defects from proposed contract changes.
+The earlier [pause diagnostics](../development/verification-evidence.md#daemon-lifecycle-design-diagnostics)
+describe the pre-S01 defects. Maintained runtime/host and public daemon regressions now cover their
+repair, including uncertain cleanup and lost storage replies. This does not implement the planned
+saved authoring, right inspector or method experience.
 
 Host tools remain trusted processes; native claims do not sandbox them or lock out external
 editors. Project-aware process profiles are configured by the operator. Fixed-directory and isolated
@@ -168,6 +175,15 @@ task supports at most 16 tool calls, bounded UTF-8 file content and a finite pro
 
 ## Current validation/evidence snapshot
 
+Side S01 passes 60 durable runtime cases, 52 daemon control-plane cases and the complete affected
+host/control/client/CLI and scoped storage/peer checks. Frontend check/lint, 115 unit cases and build
+pass. Its complete browser run passes 39 cases; the remaining two-client case passes a fresh focused
+rerun after correcting only its overall test budget. All three new pause/contention journeys pass,
+and desktop/narrow renders were inspected. Actual-binary integration, 30 repository contracts,
+scoped Clippy/rustdoc and public API review pass. The
+[S01 evidence](../development/verification-evidence.md#side-s01-pause-recovery-and-project-contention)
+records the exact coverage and limits; S05 remains the side's full gate.
+
 Prompt 02c passes frontend check/lint, 89 unit cases, production build and all 22 real-daemon
 Chromium cases. The added cases cover separate workflow creation, ordinary additions, retained
 drafts and focus, task-local context/files, exact recovery, explicit waits, stale generations and
@@ -214,5 +230,5 @@ new source. No hosted rerun or completed actual user acceptance is claimed.
 Executed checks and their environment limits belong in
 [verification evidence](../development/verification-evidence.md). The sprint
 [handoff](../development/virtual-office/daemon-workflows-implementation/handoff.md) records the
-tested checkpoints and exact local review instructions. The full
-Rust/frontend gate remains the named prompt-07 assignment.
+tested checkpoints and exact local review instructions. Side S05 owns the next full Rust/frontend
+gate; main prompt 07 owns the later integrated gate after the remaining main work.

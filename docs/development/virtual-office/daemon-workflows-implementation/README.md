@@ -18,7 +18,9 @@ attachment qualification remains open on this host. Resume the actual early user
 The prepared [canvas experience side sprint](../canvas-experience/README.md) now owns the coherent
 replacement under [ADR 0052](../../../decisions/0052-canvas-authoring-and-method-experience.md).
 It fulfills outstanding 02 only through actual review and takes over all unimplemented 04 methods.
-Main 04 is superseded as an assignment, not completed; side S01–S05 and main 05–07 remain unassigned.
+Main 04 is superseded as an assignment, not completed. Side S01 is complete locally; its
+[handoff](../canvas-experience/handoff.md) owns the lifecycle checkpoint. S02–S05 and main 05–07
+remain unassigned.
 The consumer/CI retirement,
 required-input absence and cumulative-time defects pass focused regressions and the complete strict
 static gate at `c9e9809`. Publication and a corrected hosted run remain pending. Tested local

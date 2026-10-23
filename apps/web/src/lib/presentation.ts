@@ -5,7 +5,7 @@ export function readableReason(reason: string | null): string | null {
   return reason?.startsWith('missing supplied input ') ? 'Waiting for a required input' : reason;
 }
 
-/** Shared actual-time coordinates; queued work has no invented placement on this axis. */
+/** Recorded freeze-to-settlement intervals include preparation and deferred entry. */
 export function executionLanes(tasks: TaskSummaryDto[], observedAt: number): { task: TaskSummaryDto; left: number; width: number }[] {
   const started = tasks.filter((task) => task.started_at !== null);
   if (!started.length) return [];
@@ -20,8 +20,11 @@ export function timeLabel(value: number | null): string {
   });
 }
 
-export function stateLabel(task: Pick<TaskReadDto, 'state' | 'stop_requested'>): string {
-  const label = task.state.charAt(0).toUpperCase() + task.state.slice(1);
+export function stateLabel(task: Pick<TaskReadDto, 'state' | 'stop_requested' | 'started_at' | 'frozen'> | Pick<TaskSummaryDto, 'state' | 'stop_requested' | 'started_at' | 'entered'>): string {
+  const entered = 'entered' in task ? task.entered : task.frozen?.entered === true;
+  const label = task.state === 'running' && !entered ? 'Preparing'
+    : task.state === 'queued' && task.started_at !== null ? 'Waiting before entry'
+    : task.state.charAt(0).toUpperCase() + task.state.slice(1);
   return task.stop_requested && task.state !== 'stopped' ? `${label} · stop requested` : label;
 }
 

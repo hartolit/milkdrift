@@ -40,7 +40,8 @@ async function connect(page: Page, daemon: DaemonFixture) {
   await page.getByRole('button', { name: 'Add daemon connection' }).click();
   await page.getByLabel('Daemon URL').fill(daemon.url);
   await page.getByLabel('Bearer credential').fill(daemon.token);
-  const projectsLoaded = page.waitForResponse((response) => response.url().includes('/v1/projects?') && response.request().method() === 'GET');
+  const projectsUrl = new URL('/v1/projects', daemon.url).href;
+  const projectsLoaded = page.waitForResponse((response) => response.url().startsWith(`${projectsUrl}?`) && response.request().method() === 'GET');
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Your projects', exact: true })).toBeVisible();
   const initialProjects = (await (await projectsLoaded).json()) as { value: { items: Array<{ name: string }> } };
@@ -142,6 +143,8 @@ async function result(page: Page, title: string) {
 async function waitMissing(page: Page, title: string) {
   await selectTask(page, title);
   await expect(inspector(page)).toContainText('Waiting for a required input');
+  // The detail read can precede the workflow generation that recorded this readiness reason.
+  await expect(taskNode(page, title).locator('.node-description')).toHaveText('Waiting for a required input');
 }
 async function supply(page: Page, inputPath: string) {
   await closeDetails(page);
@@ -172,12 +175,15 @@ async function createSimpleWorkflow(page: Page, title: string) {
 async function workflowDecision(page: Page, decision: 'wait' | 'continue', question = '') {
   await expect(page.getByRole('button', { name: '+ Add task', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Workflow', exact: true }).click();
+  const submitted = page.waitForResponse((response) => response.request().method() === 'POST' && response.url().endsWith('/changes'));
   if (decision === 'wait') {
     await page.getByRole('button', { name: 'Wait for a decision', exact: true }).click();
     await page.getByLabel('What needs a decision?', { exact: true }).fill(question);
     await page.getByRole('button', { name: 'Wait for this decision', exact: true }).click();
   } else await page.getByRole('button', { name: 'Resume workflow', exact: true }).click();
-  await apply(page).click();
+  expect((await submitted).ok()).toBe(true);
+  await expect(page.getByRole('region', { name: 'Workflow pause', exact: true })).toHaveCount(decision === 'wait' ? 1 : 0);
+  await expect(page.getByRole('button', { name: '+ Add task', exact: true })).toBeEnabled();
 }
 async function connectNodes(page: Page, source: string, destination: string, outcome = false) {
   await closeDetails(page);
@@ -362,7 +368,7 @@ test('queued cancellation permits linked correction without inventing original e
   const title = `Queued stop ${Date.now()}`;
   await page.goto('/'); await connect(page, config.a); await submit(page, title, config.input_a, true);
   await waitMissing(page, title);
-  await page.getByRole('button', { name: 'Request stop', exact: true }).click(); await apply(page).click();
+  await page.getByRole('button', { name: 'Request stop', exact: true }).click();
   await waitState(page, title, 'stopped'); await selectTask(page, title);
   await page.getByText('Timing & history', { exact: true }).click(); await expect(inspector(page)).toContainText('Not started');
   await page.getByRole('button', { name: 'Create correction', exact: true }).click();
@@ -469,15 +475,15 @@ test('the daemon admits model-authored parallel research and correction without 
   await apply(page).click();
   await expect.poll(() => page.locator('.graph-node.task .node-state.running').count(), { timeout: 30000 }).toBeGreaterThanOrEqual(2);
   await page.getByRole('button', { name: 'Timeline', exact: true }).click();
-  await expect.poll(() => page.getByLabel('Actual task execution').getByRole('button', { name: /no end recorded$/ }).count()).toBeGreaterThanOrEqual(2);
+  await expect.poll(() => page.getByLabel('Recorded task lifetimes').getByRole('button', { name: /, external entry recorded, no end recorded$/ }).count()).toBeGreaterThanOrEqual(2);
   await page.screenshot({ path: testInfo.outputPath('parallel-runtime-evidence.png'), fullPage: true });
   await page.getByRole('button', { name: 'Canvas', exact: true }).click();
   await result(page, 'Final animation report'); expect(continuations).toBe(0);
   await expect(page.getByTestId('result-output')).toHaveText(/^Final animation report/);
   await expect(taskNode(page, 'Research render validation')).toContainText('failed');
   await page.getByRole('button', { name: 'Timeline', exact: true }).click();
-  const bars = page.getByLabel('Actual task execution');
-  const interval = async (title: string) => bars.getByRole('button', { name: new RegExp(`^${title}: started`) }).evaluate((e) => ({ left: parseFloat((e as HTMLElement).style.left), width: parseFloat((e as HTMLElement).style.width) }));
+  const bars = page.getByLabel('Recorded task lifetimes');
+  const interval = async (title: string) => bars.getByRole('button', { name: new RegExp(`^${title}: start recorded`) }).evaluate((e) => ({ left: parseFloat((e as HTMLElement).style.left), width: parseFloat((e as HTMLElement).style.width) }));
   const [motion, training] = await Promise.all([interval('Research motion representation'), interval('Research training data')]);
   expect(motion.left).toBeLessThan(training.left + training.width); expect(training.left).toBeLessThan(motion.left + motion.width);
   await selectTask(page, 'Animation composition'); await page.getByText('Inputs used at start', { exact: true }).click();
@@ -528,6 +534,104 @@ test('ordinary additions isolate context and files while a human wait and missin
   await waitMissing(page, title);
 });
 
+test('supplying an input preserves the human pause and resume leaves unrelated authoring intact', async ({ page }, testInfo) => {
+  const title = `Paused input ${Date.now()}`, draft = 'Keep this unfinished idea', question = 'Wait for my decision even when the manifest arrives.';
+  await page.goto('/'); await connect(page, config.a); await submit(page, title, config.input_a, true); await waitMissing(page, title);
+  await workflowDecision(page, 'wait', question);
+  await supply(page, config.input_a); await apply(page).click();
+  const pause = page.getByRole('region', { name: 'Workflow pause', exact: true });
+  await expect(pause).toContainText(question);
+  await expect(taskNode(page, title).locator('.node-state')).toHaveText(/queued/);
+  await expect(taskNode(page, title).locator('.node-description')).toHaveText('Workflow paused');
+  await selectTask(page, title); await page.getByText('Timing & history', { exact: true }).click();
+  await expect(inspector(page)).toContainText('Not started');
+  await addTask(page, draft);
+  const position = await page.locator('.graph-plane').getAttribute('style');
+  await page.screenshot({ path: testInfo.outputPath('explicit-pause-with-draft.png'), fullPage: true });
+  const resumed = page.waitForRequest((request) => request.method() === 'POST' && request.url().endsWith('/changes'));
+  await pause.getByRole('button', { name: 'Resume workflow', exact: true }).click();
+  expect((await resumed).postDataJSON().changes).toEqual([{ kind: 'continue' }]);
+  await expect(pause).toHaveCount(0);
+  await expect(instructions(page)).toHaveValue(draft);
+  await expect(page.locator('.graph-node.is-draft.task')).toHaveCount(1);
+  await expect(page.locator('.graph-plane')).toHaveAttribute('style', position!);
+  await waitState(page, title, 'completed');
+});
+
+test('a lost pause reply recovers its exact control without submitting the selected draft', async ({ page }) => {
+  const title = `Pause recovery ${Date.now()}`, draft = 'Keep this idea out of the pause request';
+  await page.goto('/'); await connect(page, config.a); await createSimpleWorkflow(page, title); await addTask(page, draft);
+  const position = await page.locator('.graph-plane').getAttribute('style');
+  const requests: { body: string; url: string }[] = [];
+  await page.route('**/v1/workflows/*/changes', async (route) => {
+    requests.push({ body: route.request().postData()!, url: route.request().url() });
+    if (requests.length === 1) { const response = await route.fetch(); expect(response.ok()).toBe(true); await route.abort('failed'); }
+    else await route.continue();
+  });
+  await page.getByRole('button', { name: 'Pause workflow', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Find submission receipt', exact: true })).toBeEnabled();
+  const request = JSON.parse(requests[0].body);
+  expect(request.changes).toEqual([{ kind: 'wait', question: 'Paused by you.' }]);
+  await expect(instructions(page)).toBeDisabled();
+  const receipt = page.waitForRequest((read) => read.method() === 'GET' && read.url().endsWith(`/v1/workflow-requests/${encodeURIComponent(request.request_id)}`));
+  await page.getByRole('button', { name: 'Find submission receipt', exact: true }).click(); await receipt;
+  await expect(page.getByRole('button', { name: 'Find submission receipt', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Workflow pause', exact: true })).toContainText('Paused by you.');
+  await expect(instructions(page)).toBeEnabled(); await expect(instructions(page)).toHaveValue(draft);
+  await expect(page.locator('.graph-node.is-draft.task')).toHaveCount(1);
+  await expect(page.locator('.graph-plane')).toHaveAttribute('style', position!);
+  expect(requests).toHaveLength(1);
+});
+
+test('busy project work stays frozen through pause and restart then resumes once', async ({ page, browser }, testInfo) => {
+  test.setTimeout(120000);
+  const root = dirname(resolve(path!)), fixture = join(root, 'tools/cargo-report');
+  execFileSync(fixture, ['lifecycle', '--root', root], { timeout: 30000, stdio: 'pipe' });
+  const seed = JSON.parse(readFileSync(join(root, 'lifecycle-seed.json'), 'utf8')) as { workflow: string; title: string; first: string; first_title: string; second: string; second_title: string; started_at: number };
+  let released = false;
+  try {
+    await page.goto('/'); await connect(page, config.a);
+    await openDaemonNavigation(page); await page.getByRole('button', { name: 'Open project lifecycle-project', exact: true }).click();
+    await discoverWorkflow(page, seed.title); await selectTask(page, seed.second_title);
+    await expect(inspector(page)).toContainText('Project is in use');
+    await expect(inspector(page)).toContainText('Waiting before entry');
+    await expect(page.getByRole('button', { name: 'Edit task', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Remove unstarted task', exact: true })).toHaveCount(0);
+    await expect(taskNode(page, seed.second_title)).toHaveAttribute('data-node', seed.second);
+    const position = await page.locator('.graph-plane').getAttribute('style');
+    await page.screenshot({ path: testInfo.outputPath('project-busy-before-entry.png'), fullPage: true });
+    await page.getByRole('button', { name: 'Pause workflow', exact: true }).click();
+    await expect(page.getByRole('region', { name: 'Workflow pause', exact: true })).toBeVisible();
+    await expect(inspector(page).getByRole('heading', { name: seed.second_title, exact: true })).toBeVisible();
+    await expect(page.locator('.graph-plane')).toHaveAttribute('style', position!);
+    execFileSync(fixture, ['lifecycle', '--root', root, '--release'], { timeout: 10000, stdio: 'pipe' }); released = true;
+    await waitState(page, seed.first_title, 'completed');
+    expect(readFileSync(join(root, 'daemon-a/lifecycle-project/entries'), 'utf8')).toBe('entered\n');
+    await page.close();
+    execFileSync(fixture, ['control', '--root', root, 'restart-a'], { timeout: 20000, stdio: 'pipe' });
+    const fresh = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    try {
+      const observer = await fresh.newPage(); await observer.goto('/'); await connect(observer, config.a);
+      await openDaemonNavigation(observer); await observer.getByRole('button', { name: 'Open project lifecycle-project', exact: true }).click();
+      await discoverWorkflow(observer, seed.title); await selectTask(observer, seed.second_title);
+      await expect(observer.getByRole('region', { name: 'Workflow pause', exact: true })).toBeVisible();
+      await expect(inspector(observer)).toContainText('Waiting before entry');
+      await observer.getByText('Timing & history', { exact: true }).click();
+      await expect(inspector(observer)).toContainText('No entry recorded');
+      await observer.screenshot({ path: testInfo.outputPath('paused-recovered-task-narrow.png'), fullPage: true });
+      await observer.getByRole('button', { name: 'Resume workflow', exact: true }).click();
+      await waitState(observer, seed.second_title, 'completed');
+      const response = await observer.request.get(`${config.a.url}/v1/workflows/${encodeURIComponent(seed.workflow)}/tasks/${encodeURIComponent(seed.second)}`, { headers: { authorization: `Bearer ${config.a.token}` } });
+      expect(response.ok()).toBe(true);
+      const task = (await response.json()).value;
+      expect(task.started_at).toBe(seed.started_at); expect(task.frozen.entered).toBe(true);
+      expect(readFileSync(join(root, 'daemon-a/lifecycle-project/entries'), 'utf8')).toBe('entered\nentered\n');
+    } finally { await fresh.close(); }
+  } finally {
+    if (!released) execFileSync(fixture, ['lifecycle', '--root', root, '--release'], { timeout: 10000, stdio: 'pipe' });
+  }
+});
+
 for (const recovery of ['receipt', 'replay'] as const) {
   test(`an unconfirmed addition keeps its exact workflow through navigation and ${recovery} recovery`, async ({ page }) => {
     const a = `Recover A ${recovery} ${Date.now()}`, b = `Recover B ${recovery} ${Date.now()}`, draft = `Retain this ${recovery} submission on A.`;
@@ -554,6 +658,8 @@ for (const recovery of ['receipt', 'replay'] as const) {
 }
 
 test('a stale addition retains its drawing and needs a fresh decision without clearing a human wait', async ({ page, browser }) => {
+  // Two clients execute, conflict, review, and resubmit; each operation keeps its own bound.
+  test.setTimeout(120000);
   const title = `Stale workspace ${Date.now()}`, draft = 'Review this addition against the newer workflow.';
   await page.goto('/'); await connect(page, config.a); await createSimpleWorkflow(page, title); await addTask(page, draft);
   const other = await browser.newContext();

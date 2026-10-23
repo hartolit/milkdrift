@@ -4,6 +4,18 @@ import { addCanvasTask, addSource, cacheTask, capabilityKey, chooseCapability, c
 import { acceptedTask, session, workflow, projectCanvas as createCanvas } from './canvas.test-fixtures';
 
 describe('bounded canvas authoring', () => {
+  it('shows the current human pause for queued work without rewriting its retained daemon reason', () => {
+    const task = acceptedTask(); task.reason = 'missing supplied input source';
+    const snapshot = workflow([task]); snapshot.wait_question = 'Wait for my decision.';
+    const canvas = createCanvas(session(), { kind: 'existing', workflowId: snapshot.id, title: snapshot.title, generation: snapshot.generation });
+    cacheTask(canvas, task);
+    expect(projectGraph(canvas, snapshot).nodes.find((node) => node.id === task.id)?.detail).toBe('Workflow paused');
+    expect(canvas.details[0].reason).toBe('missing supplied input source');
+    expect(snapshot.tasks[0].reason).toBe('missing supplied input source');
+    snapshot.wait_question = null;
+    expect(projectGraph(canvas, snapshot).nodes.find((node) => node.id === task.id)?.detail).toBe('Waiting for a required input');
+  });
+
   it('keeps an empty canvas unsaved and requires deliberate choice when more than one executor exists', () => {
     const configured = session(); configured.capabilities.push({ id: 'model-b', operation: 'model.generate' });
     const canvas = createCanvas(configured, { kind: 'new' });

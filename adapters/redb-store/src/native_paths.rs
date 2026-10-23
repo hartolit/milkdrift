@@ -80,9 +80,7 @@ fn claim_in_transaction(
                         || other.physical.starts_with(&root.physical))
             })
         }) {
-            return Err(PersistenceError::InvalidDocument(
-                "native project paths overlap an unresolved reader or writer".to_owned(),
-            ));
+            return Err(PersistenceError::NativePathContention);
         }
     }
     table
@@ -130,4 +128,37 @@ pub(crate) fn validate_claim(key: &str, claim: &NativePathClaim) -> Result<(), P
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use milkdrift_persistence::NativePathRoot;
+
+    #[test]
+    fn corrupt_existing_claim_is_not_temporary_contention() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let directory = tempfile::tempdir()?;
+        let store = RedbStore::open(directory.path())?;
+        let write = store.database().begin_write()?;
+        write
+            .open_table(NATIVE_PATH_CLAIMS)?
+            .insert("damaged-owner", b"not a claim".as_slice())?;
+        write.commit()?;
+        let claim = NativePathClaim {
+            owner: "new-owner".into(),
+            roots: vec![NativePathRoot {
+                requested: directory.path().to_owned(),
+                physical: directory.path().to_owned(),
+                identity: "test-directory".into(),
+                write: true,
+            }],
+        };
+        assert!(matches!(
+            store.claim_native_paths(&claim),
+            Err(PersistenceError::Corruption(_))
+        ));
+        assert!(store.native_path_claim(&claim.owner)?.is_none());
+        Ok(())
+    }
 }

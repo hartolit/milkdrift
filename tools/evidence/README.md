@@ -43,6 +43,15 @@ This mode also configures a second actor on each daemon with workflow inspection
 folders or access to internal artifacts. A captured private source lets the browser prove that a
 valid connection can show a restricted source and refuse its reuse without exposing the content.
 
+The canvas suite also calls `connected-tasks lifecycle --root DIRECTORY` once on a fresh fixture.
+It attaches a project using the advertised process environment and admits two writers through the
+public API. The first Rust process appends one entry and waits for an external file signal; ordinary
+daemon native claims keep the second queued. `lifecycle --root DIRECTORY --release` writes only that
+signal. The browser pauses the workflow, releases the first writer, restarts the daemon and resumes
+the same retained second start. Private `lifecycle-seed.json` coordinates the UI; the append-only
+fixture file counts actual process entries. The fixture never changes task records or performs
+scheduling, and the process has a finite 80-second hold.
+
 The finite application lane uses those same daemons and capabilities:
 
 ```sh

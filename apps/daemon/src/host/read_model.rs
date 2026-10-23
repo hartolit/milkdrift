@@ -135,6 +135,9 @@ pub(super) fn public_control(error: ControlError) -> PublicFailure {
 
 pub(super) fn public_persistence(error: PersistenceError) -> PublicFailure {
     match error {
+        PersistenceError::NativePathContention => {
+            PublicFailure::new(ErrorCode::Unavailable, "Project is in use", true)
+        }
         PersistenceError::WorkflowGenerationConflict {
             expected, actual, ..
         } => {

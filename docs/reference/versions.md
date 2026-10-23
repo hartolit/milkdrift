@@ -20,7 +20,7 @@ version and redb format below.
 | Daemon configuration | 14 | Existing version-14 files remain valid; optional `name` seeds absent metadata and defaults to `Milkdrift`. |
 | CLI JSON output | 2 | Exact owning reader; incompatible input refused. |
 | Managed resource request / inventory | 3 | Exact owning reader; incompatible input refused. |
-| External control / authenticated cursor | 3.4 / 2 | Exact owning reader; incompatible input refused. |
+| External control / authenticated cursor | 3.5 / 2 | Exact owning reader; incompatible input refused. |
 | Peer protocol and catalog messages | 1.6 | Exact owning reader; incompatible input refused. |
 
 Opening a physical-schema-19 or -20 store is supported only when its internal document format is exactly
@@ -51,3 +51,8 @@ requirement is checked. Optional runtime fields retain their absent historical e
 does not rewrite accepted tasks or receipts. `InspectProject` and `ManageProject` extend operation
 presets, changing affected grant digests; unchanged authority schema does not imply unchanged grants.
 Complete unfinished old work with its matching binary/configuration before upgrading those presets.
+
+Control 3.5 adds `entered` to compact task summaries so clients distinguish frozen starts from
+durable external-entry intent without fetching captured inputs. Upgrade daemon and clients together.
+Pause and temporary-contention repairs preserve the current task/store format and exact receipts;
+queued tasks can retain an unentered frozen start and its original `started_at`.

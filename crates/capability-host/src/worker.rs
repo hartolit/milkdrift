@@ -1,7 +1,7 @@
 //! Explicit bounded caller-owned worker threads for durable runtime effects.
 
 use std::{
-    collections::{BTreeSet, VecDeque},
+    collections::BTreeSet,
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{
         Arc, Mutex,
@@ -14,7 +14,7 @@ use std::{
 
 use milkdrift_capability::InvocationId;
 use milkdrift_persistence::PageSize;
-use milkdrift_runtime::{EffectAction, ExecutionDispatch, RuntimeError, TaskRuntime};
+use milkdrift_runtime::{EffectAction, RuntimeError, TaskRuntime};
 use thiserror::Error;
 
 use crate::{CapabilityHost, HostError, ShutdownReport};
@@ -150,39 +150,19 @@ pub struct EffectWorkerHost {
 
 struct WorkerRuntime {
     runtime: Arc<TaskRuntime>,
-    recovered: Mutex<VecDeque<ExecutionDispatch>>,
 }
 
 impl WorkerRuntime {
     fn claim_execution_effects(&self, page: PageSize) -> Result<Vec<EffectAction>, RuntimeError> {
-        let mut recovered = self
-            .recovered
-            .lock()
-            .map_err(|_| RuntimeError::Scheduling("task recovery queue unavailable".into()))?;
-        let maximum =
-            usize::try_from(page.get()).map_err(|e| RuntimeError::Scheduling(e.to_string()))?;
-        let mut actions = Vec::new();
-        while actions.len() < maximum {
-            let Some(dispatch) = recovered.pop_front() else {
-                break;
-            };
-            actions.push(EffectAction::Execute(Box::new(dispatch)));
-        }
-        let remaining = maximum
-            .checked_sub(actions.len())
-            .ok_or_else(|| RuntimeError::Scheduling("worker claim accounting overflow".into()))?;
-        if remaining != 0 {
-            actions.extend(
-                self.runtime
-                    .tick(
-                        u16::try_from(remaining.min(200))
-                            .map_err(|e| RuntimeError::Scheduling(e.to_string()))?,
-                    )?
-                    .into_iter()
-                    .map(|dispatch| EffectAction::Execute(Box::new(dispatch))),
-            );
-        }
-        Ok(actions)
+        Ok(self
+            .runtime
+            .tick(
+                u16::try_from(page.get().min(200))
+                    .map_err(|error| RuntimeError::Scheduling(error.to_string()))?,
+            )?
+            .into_iter()
+            .map(|dispatch| EffectAction::Execute(Box::new(dispatch)))
+            .collect())
     }
 
     fn claim_cancellation_effects(
@@ -249,17 +229,10 @@ impl EffectWorkerHost {
         capability_host: CapabilityHost,
         config: EffectWorkerConfig,
     ) -> Result<Self, EffectWorkerError> {
-        let recovered = runtime
+        runtime
             .recover()
             .map_err(|error| EffectWorkerError::Runtime(error.to_string()))?;
-        Self::start_owner(
-            Arc::new(WorkerRuntime {
-                runtime,
-                recovered: Mutex::new(recovered.into()),
-            }),
-            capability_host,
-            config,
-        )
+        Self::start_owner(Arc::new(WorkerRuntime { runtime }), capability_host, config)
     }
 
     fn start_owner(

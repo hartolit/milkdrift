@@ -505,7 +505,31 @@ impl TaskExecutor for CapabilityHost {
         if dispatch.is_task()
             && let Some(claims) = self.core.native_paths.get()
         {
-            claims.release_settled(dispatch.attempt().as_str())?;
+            claims.release(dispatch.attempt().as_str())?;
+        }
+        Ok(())
+    }
+
+    fn defer_before_entry(&self, dispatch: &ExecutionDispatch) -> Result<(), ExecutorError> {
+        {
+            let state = self.core.state.lock().map_err(|_| {
+                ExecutorError::BoundaryBeforeEntry(
+                    "host registry unavailable during deferral".into(),
+                )
+            })?;
+            let invocation = dispatch.request().invocation();
+            if state.in_flight.contains_key(invocation) || state.pending.contains_key(invocation) {
+                return Err(ExecutorError::BoundaryBeforeEntry(
+                    "prepared or entered invocation ownership remains during deferral".into(),
+                ));
+            }
+        }
+        // Runtime owns the exact unentered dispatch until this returns. Its prepared handle
+        // has already dropped, releasing adapter resources and the generation permit.
+        if dispatch.is_task()
+            && let Some(claims) = self.core.native_paths.get()
+        {
+            claims.release(dispatch.attempt().as_str())?;
         }
         Ok(())
     }

@@ -702,6 +702,7 @@ it('retains a connected drawing while visiting models and another workflow', asy
 it('recovers an uncertain workflow action after navigation without changing its exact target', async () => {
   idleStream();
   const a = workflow('a', 'Workflow A');
+  a.wait_question = 'Review the result before continuing.';
   const b = workflow('b', 'Workflow B');
   let attempts = 0;
   const request = vi.spyOn(DaemonClient.prototype, 'request').mockImplementation(async <T>(path: string, body?: unknown): Promise<T> => {
@@ -723,7 +724,6 @@ it('recovers an uncertain workflow action after navigation without changing its 
   await screen.findByRole('heading', { name: a.title, level: 1 });
   await fireEvent.click(screen.getByRole('button', { name: 'Workflow' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Resume workflow' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Apply changes' }));
   await screen.findByRole('button', { name: 'Replay exact submission' });
   const original = request.mock.calls.find(([, body]) => body)?.[1];
   expect(original).toMatchObject({ expected_generation: 1, changes: [{ kind: 'continue' }] });

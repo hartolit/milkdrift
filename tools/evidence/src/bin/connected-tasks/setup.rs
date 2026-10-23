@@ -131,6 +131,7 @@ pub(super) fn configure(
             "canvas-compatible",
             "canvas-wrong-media",
             "canvas-oversized",
+            "canvas-hold",
         ]);
     }
     set(
@@ -203,6 +204,7 @@ pub(super) fn configure(
     let mut process_profiles = vec![profile.clone(), cargo_profile];
     if canvas_cases {
         process_profiles.extend(canvas_profiles(&directory, &profile)?);
+        process_profiles.push(super::lifecycle::profile(&directory, &profile)?);
     }
     set(
         &mut configuration,

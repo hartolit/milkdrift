@@ -43,6 +43,12 @@ mod model_actions;
 #[path = "preparation.rs"]
 mod preparation;
 
+#[path = "lifecycle.rs"]
+mod lifecycle;
+
+#[path = "lifecycle_faults.rs"]
+mod lifecycle_faults;
+
 fn request() -> TestResult<WorkflowCreate> {
     Ok(WorkflowCreate {
         project_id: None,
@@ -468,7 +474,8 @@ fn captured_file_bytes_and_definition_freeze_at_start_and_edit_race_refuses() ->
         complete.tasks.get(&task_id).map(|task| task.state),
         Some(TaskState::Completed)
     );
-    assert!(runtime.recover()?.is_empty());
+    runtime.recover()?;
+    assert!(runtime.tick(1)?.is_empty());
     Ok(())
 }
 
@@ -635,7 +642,7 @@ fn cumulative_invocation_allowance_survives_settlement_and_store_reopen() -> Tes
     }
     {
         let (runtime, executor, _control) = runtime(root.path(), authority, clock)?;
-        assert!(runtime.recover()?.is_empty());
+        runtime.recover()?;
         runtime.execute(runtime.tick(1)?.pop().ok_or("second dispatch absent")?)?;
         assert_eq!(executor.entry_count(), 0);
         let record = runtime.workflow(&workflow)?.ok_or("workflow absent")?;
@@ -1274,11 +1281,12 @@ fn global_task_start_bound_spans_workflows_and_recovers_accepted_occupancy() -> 
         (first, second)
     };
     let (runtime, executor, _control) = runtime_with_limit(root.path(), authority, clock, 1)?;
-    let retained = runtime.recover()?;
+    runtime.recover()?;
+    let retained = runtime.tick(4)?;
     assert_eq!(retained.len(), 1);
     assert!(
         runtime.tick(4)?.is_empty(),
-        "reopen must count retained frozen starts"
+        "reopen must count a redispatched frozen start"
     );
     runtime.execute(
         retained

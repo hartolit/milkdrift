@@ -226,7 +226,8 @@ fn preparation_unknown_ownership_never_fabricates_non_entry_or_releases_claims()
             assert_eq!(executor.settlements.load(Ordering::SeqCst), 1);
             assert!(runtime.execute(dispatch).is_err());
             assert_eq!(executor.inner.entry_count(), 1);
-            assert!(runtime.recover()?.is_empty());
+            runtime.recover()?;
+            assert!(runtime.tick(1)?.is_empty());
             assert_eq!(executor.settlements.load(Ordering::SeqCst), 2);
             continue;
         }
@@ -247,7 +248,8 @@ fn preparation_unknown_ownership_never_fabricates_non_entry_or_releases_claims()
             executor.settlements.load(Ordering::SeqCst),
             expected_settles
         );
-        assert!(runtime.recover()?.is_empty());
+        runtime.recover()?;
+        assert!(runtime.tick(1)?.is_empty());
         assert_eq!(
             executor.settlements.load(Ordering::SeqCst),
             expected_settles * 2

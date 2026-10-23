@@ -63,6 +63,9 @@ pub enum ExecutorError {
     /// No immediate generation permit was available; this invocation did not enter or acquire one.
     #[error("capability capacity unavailable before entry: {0}")]
     CapacityUnavailable(String),
+    /// Another attempt owns an overlapping native project path; this attempt did not enter.
+    #[error("Project is in use")]
+    NativePathBusy,
     /// This worker's admission was refused; another worker may own the same invocation.
     #[error("capability generation overloaded: {0}")]
     Overloaded(String),
@@ -779,6 +782,19 @@ pub trait TaskExecutor: Send + Sync {
     /// # Errors
     /// Returns a failure to release the exact settled attempt's retained resources.
     fn settle(&self, _dispatch: &ExecutionDispatch) -> Result<(), ExecutorError> {
+        Ok(())
+    }
+
+    /// Releases preparation claims for an exact attempt proven not to have entered.
+    ///
+    /// Runtime drops the prepared handle before calling this hook and retains exclusive worker
+    /// ownership until cleanup finishes. This does not settle the task or replace its frozen start.
+    /// Cleanup must be exact and idempotent: a failed durable handoff can require it again.
+    /// Executors without durable preparation claims need no additional cleanup.
+    ///
+    /// # Errors
+    /// Returns an unresolved release failure; runtime must retain uncertainty instead of retrying.
+    fn defer_before_entry(&self, _dispatch: &ExecutionDispatch) -> Result<(), ExecutorError> {
         Ok(())
     }
 

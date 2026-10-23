@@ -1,5 +1,7 @@
 //! Complete native path sets conflict atomically and retain exact physical identity across reopen.
-use milkdrift_persistence::{NativePathClaim, NativePathClaimStore, NativePathRoot};
+use milkdrift_persistence::{
+    NativePathClaim, NativePathClaimStore, NativePathRoot, PersistenceError,
+};
 use milkdrift_redb_store::RedbStore;
 
 fn root(path: &std::path::Path, identity: &str, write: bool) -> NativePathRoot {
@@ -28,7 +30,10 @@ fn physical_aliases_and_partial_overlap_cannot_create_another_owner()
         owner: "alias".into(),
         roots: vec![root(&right, "same-physical-root", false)],
     };
-    assert!(store.claim_native_paths(&alias).is_err());
+    assert!(matches!(
+        store.claim_native_paths(&alias),
+        Err(PersistenceError::NativePathContention)
+    ));
     let partial = NativePathClaim {
         owner: "partial".into(),
         roots: vec![
@@ -36,7 +41,10 @@ fn physical_aliases_and_partial_overlap_cannot_create_another_owner()
             root(&left.join("child"), "child", false),
         ],
     };
-    assert!(store.claim_native_paths(&partial).is_err());
+    assert!(matches!(
+        store.claim_native_paths(&partial),
+        Err(PersistenceError::NativePathContention)
+    ));
     assert!(store.native_path_claim("partial")?.is_none());
     let independent = NativePathClaim {
         owner: "independent".into(),
@@ -48,8 +56,20 @@ fn physical_aliases_and_partial_overlap_cannot_create_another_owner()
     store.claim_native_paths(&first)?;
     let mut changed = first.clone();
     changed.roots.first_mut().ok_or("claim root missing")?.write = false;
-    assert!(store.claim_native_paths(&changed).is_err());
-    assert!(store.claim_native_paths(&alias).is_err());
+    assert!(matches!(
+        store.claim_native_paths(&changed),
+        Err(PersistenceError::ImmutableConflict { .. })
+    ));
+    assert!(matches!(
+        store.claim_native_paths(&alias),
+        Err(PersistenceError::NativePathContention)
+    ));
+    let mut malformed = alias.clone();
+    malformed.owner.clear();
+    assert!(matches!(
+        store.claim_native_paths(&malformed),
+        Err(PersistenceError::InvalidDocument(_))
+    ));
     store.release_native_paths("first")?;
     store.release_native_paths("independent")?;
     store.claim_native_paths(&alias)?;
@@ -58,6 +78,9 @@ fn physical_aliases_and_partial_overlap_cannot_create_another_owner()
         roots: vec![root(&right.join("child"), "child", false)],
     };
     store.claim_native_paths(&shared)?;
-    assert!(store.claim_native_paths(&first).is_err());
+    assert!(matches!(
+        store.claim_native_paths(&first),
+        Err(PersistenceError::NativePathContention)
+    ));
     Ok(())
 }

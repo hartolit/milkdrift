@@ -18,10 +18,23 @@ same bounded content contract before a start is committed; an oversized immutabl
 without entering an external capability. The worker calls `execute` outside the scheduler. Local
 preparation precedes a fresh authority check and durable external-entry intent. Enforceable maximum
 resource use is charged cumulatively before entry, including nested calls; restart and task removal
-do not replenish the account. Native and managed resource owners enforce their additional guards. A generation-capacity refusal
-that proves non-entry leaves the exact accepted start queued for another attempt to acquire a permit.
-Its frozen request and invocation identity remain unchanged and no execution allowance is charged;
-a refusal that cannot establish exclusive ownership remains uncertain.
+do not replenish the account. Native and managed resource owners enforce their additional guards.
+An explicit pause, generation-capacity refusal or temporary native-path overlap before entry returns
+the exact accepted start to the ordinary queue. Prepared handles drop before the executor releases
+claims proven safe to release. The start keeps its request and invocation identity without charging
+execution allowance. Bounded rotating selection lets unrelated work progress past busy tasks.
+A refusal that cannot establish exclusive non-entry remains uncertain and retains its claims.
+
+Supplying input never answers a human wait; only an authorized Continue does. Singleton wait,
+continue and stop commands tolerate intervening progress but still refuse a superseded decision.
+Exact replay returns the original receipt before considering today's question. Authoring edits keep
+their exact generation guard. A paused accepted start can outlive its original lease timestamp:
+ordinary task duration is charged at entry, not while waiting for the person or project.
+
+Failed storage operations can have committed. The scheduler retains its bounded undelivered page
+until it can read which exact starts committed. An interrupted worker retains exclusive ownership
+until reconciliation can establish safe deferral, terminal cleanup or uncertainty. Neither a lost
+entry-commit reply nor a failed cleanup becomes permission to enter again.
 
 `ExecutionReporter` accepts sequenced append-only observations. Progress, output references and
 terminal results have independent bounds, with capacity reserved for terminal settlement and stop
@@ -30,7 +43,8 @@ outputs. A correction can satisfy a failed obligation only through explicit adop
 the original result or the bindings of an already started consumer.
 
 A persisted entry with no terminal proof becomes uncertain after restart. It is never automatically
-entered again. An accepted unentered start may resume with its exact frozen inputs. Cancellation
+entered again. Recovery returns an accepted unentered start to ordinary scheduling, preserving a
+human pause and its exact frozen inputs. Cancellation
 acknowledgement alone does not establish stop. Proven terminal settlement permits the executor to
 release native claims; recovery repeats that release idempotently if the daemon stopped between the
 durable settlement and the release callback.

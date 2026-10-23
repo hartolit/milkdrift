@@ -8,6 +8,8 @@ use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 #[derive(Clone, Copy)]
 enum Interruption {
     None,
+    #[cfg(unix)]
+    NativeContention,
     Refuse,
     Panic,
     Cancel,
@@ -164,6 +166,15 @@ fn exercise_for(interruption: Interruption, client: bool) -> TestResult {
     });
     let (host, descriptor) = host_with_adapter(adapter.clone())?;
     host.install_native_path_store(store.clone(), Vec::new())?;
+    #[cfg(unix)]
+    if matches!(interruption, Interruption::NativeContention) {
+        store.claim_native_paths(&milkdrift_persistence::NativePathClaim {
+            owner: "existing-native-writer".into(),
+            roots: vec![milkdrift_capability_host::capture_native_project_root(
+                &native, true,
+            )?],
+        })?;
+    }
     let peer = PeerId::new("preparation-client")?;
     let target = PeerId::new("preparation-host")?;
     let actor = ActorRef::new("preparation-client")?;
@@ -216,7 +227,6 @@ fn exercise_for(interruption: Interruption, client: bool) -> TestResult {
     let InvocationAcceptance::Accepted { execution, .. } = acceptance else {
         return Err("preparation fixture was not accepted".into());
     };
-    prepared_receiver.recv_timeout(Duration::from_secs(5))?;
     let caller = if client {
         milkdrift_peer_protocol::ServingCaller {
             host: target,
@@ -225,6 +235,35 @@ fn exercise_for(interruption: Interruption, client: bool) -> TestResult {
     } else {
         milkdrift_peer_protocol::ServingCaller::peer(&target, &peer)
     };
+    #[cfg(unix)]
+    if matches!(interruption, Interruption::NativeContention) {
+        // Independent serving retains its pre-entry refusal policy. Ordinary task runtime
+        // owns automatic native-contention waiting; this service must not silently retry.
+        let terminal = wait_for_terminal(&store, &caller, &execution)?;
+        assert_eq!(adapter.preparations.load(Ordering::SeqCst), 0);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(terminal.last_observation_sequence, 1);
+        let observations = store.peer_observations(&caller, &execution, 0, PageSize::new(8)?)?;
+        assert_eq!(
+            observations
+                .observations
+                .last()
+                .and_then(|item| item.event.kind().terminal())
+                .ok_or("terminal absent")?
+                .status(),
+            TerminalStatus::Failure
+        );
+        assert!(store.native_path_claim("existing-native-writer")?.is_some());
+        assert!(
+            store
+                .native_path_claim(terminal.managed_invocation()?.as_str())?
+                .is_none()
+        );
+        assert!(service.shutdown_workers(Duration::from_secs(5)).clean);
+        assert!(host.shutdown().is_ok());
+        return Ok(());
+    }
+    prepared_receiver.recv_timeout(Duration::from_secs(5))?;
     let Some(PeerExecutionSnapshot::Hot(claimed)) = store.peer_execution(&caller, &execution)?
     else {
         return Err("preparing claim disappeared".into());
@@ -274,20 +313,7 @@ fn exercise_for(interruption: Interruption, client: bool) -> TestResult {
         _ => {}
     }
     release.send(())?;
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    let terminal = loop {
-        let Some(PeerExecutionSnapshot::Hot(record)) = store.peer_execution(&caller, &execution)?
-        else {
-            return Err("preparation result disappeared".into());
-        };
-        if matches!(record.phase, PeerExecutionPhase::Terminal { .. }) {
-            break record;
-        }
-        if std::time::Instant::now() >= deadline {
-            return Err(format!("preparation did not settle: {:?}", record.phase).into());
-        }
-        thread::sleep(Duration::from_millis(5));
-    };
+    let terminal = wait_for_terminal(&store, &caller, &execution)?;
     assert!(service.shutdown_workers(Duration::from_secs(5)).clean);
     assert_eq!(adapter.preparations.load(Ordering::SeqCst), 1);
     assert_eq!(
@@ -318,6 +344,27 @@ fn exercise_for(interruption: Interruption, client: bool) -> TestResult {
     // A completed or refused preparation releases the exact generation permit.
     assert!(host.shutdown().is_ok());
     Ok(())
+}
+
+fn wait_for_terminal(
+    store: &RedbStore,
+    caller: &milkdrift_peer_protocol::ServingCaller,
+    execution: &PeerExecutionId,
+) -> TestResult<milkdrift_persistence::PeerExecutionRecord> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let Some(PeerExecutionSnapshot::Hot(record)) = store.peer_execution(caller, execution)?
+        else {
+            return Err("preparation result disappeared".into());
+        };
+        if matches!(record.phase, PeerExecutionPhase::Terminal { .. }) {
+            return Ok(*record);
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(format!("preparation did not settle: {:?}", record.phase).into());
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
 }
 
 #[test]
@@ -427,6 +474,16 @@ fn serving_enters_the_prepared_handle_once() -> TestResult {
 #[test]
 fn direct_serving_claims_configured_writer_and_releases_after_terminal() -> TestResult {
     exercise_for(Interruption::None, true)
+}
+#[cfg(unix)]
+#[test]
+fn serving_native_contention_refuses_without_entry_or_releasing_the_existing_owner() -> TestResult {
+    exercise(Interruption::NativeContention)
+}
+#[cfg(unix)]
+#[test]
+fn direct_native_contention_refuses_without_entry_or_releasing_the_existing_owner() -> TestResult {
+    exercise_for(Interruption::NativeContention, true)
 }
 #[test]
 fn unknown_prepared_duration_has_no_external_entry() -> TestResult {

@@ -1,6 +1,7 @@
 # S01 — Preserve future work through pause and temporary contention
 
-**Prepared, not assigned.** Execute only under the explicitly assigned [side-sprint schedule](README.md).
+**Assigned and completed locally 2026-10-24.** See the [handoff](handoff.md) for verified results and
+limits. This completed assignment remains under the [side-sprint schedule](README.md).
 Deliver a daemon that preserves accepted future work when a person pauses it or its project is busy,
 with truthful state and usable controls in the existing production client. This phase repairs the
 shared lifecycle before the canvas replacement; it does not wait for that replacement to expose fixes.

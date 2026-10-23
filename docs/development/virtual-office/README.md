@@ -28,7 +28,8 @@ journey remain open.
 Its [handoff](daemon-workflows-implementation/handoff.md) records tested checkpoints,
 actual review observations and how to resume; the sprint README owns the next assignment.
 
-[Canvas experience](canvas-experience/README.md) is prepared, not assigned. Its selected design
+[Canvas experience](canvas-experience/README.md) has completed S01 and its focused verification.
+Its [handoff](canvas-experience/handoff.md) owns the current checkpoint; S02–S05 remain unassigned. Its selected design
 combines the tree/right-inspector canvas, bounded saved authoring, meaningful connections, daemon
 lifecycle repairs and complete method reuse. S03 must establish outstanding main-02 user evidence;
 S05 owns the side's full gate. Its accepted handoff leads to main 05 → 06 → 07, not another method
@@ -43,8 +44,9 @@ The [roadmap](../../product/roadmap.md) owns unfinished work; unrelated whiteboa
 
 ## Prepared assignments
 
-The next prepared work is [side S01](canvas-experience/S01-preserve-future-work.md), under its
-explicit schedule. The [main prompts](daemon-workflows-implementation/README.md#ordered-assignments)
+The completed [side S01](canvas-experience/S01-preserve-future-work.md) is ready to hand off under its
+explicit schedule. [S02](canvas-experience/S02-saved-canvas-authoring.md) is next, prepared and unassigned.
+The [main prompts](daemon-workflows-implementation/README.md#ordered-assignments)
 retain remaining remote/retention and integrated review responsibilities.
 The v3 [previous program](milkdrift-remedial-planning-v3/deliverables/proposed-implementation/README.md)
 remains superseded history. No implementation starts without the user's next instruction.

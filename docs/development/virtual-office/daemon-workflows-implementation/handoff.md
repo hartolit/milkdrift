@@ -19,7 +19,8 @@ and the substantive task journey remain open. The October 19 project/environment
 prepared [02e](02e-projects-and-execution-environments.md), subsequently explicitly assigned for
 implementation. It adds daemon-owned project registration, guarded execution bindings and the shared
 browser/CLI/public-client path. Main 04 is now superseded by the prepared canvas side sprint;
-side S01–S05 and main 05–07 remain unassigned. Side S05 owns its full-system gate; prompt 07 owns
+side S01 is complete locally, with its [handoff](../canvas-experience/handoff.md) owning the lifecycle
+checkpoint. S02–S05 and main 05–07 remain unassigned. Side S05 owns its full-system gate; prompt 07 owns
 the later integrated main gate. No push, history rewrite, external service change or paid model use
 occurred.
 
@@ -312,7 +313,8 @@ four-hour lifetime. The preceding `/tmp/milkdrift-prompt02d-user-review-20261018
 uses new development stores and endpoints, separate from automated browser/CLI evidence. The
 rebuilt production client is served at `http://127.0.0.1:4173/`.
 
-Daemon/client protocol is 3.4; earlier review daemons need their matching older client. The normal
+That October 20 daemon/client checkpoint uses protocol 3.4. Current S01 uses 3.5; preserved review
+daemons need their matching older client. The normal
 review fixture offers captured-input and project-aware Cargo processes and two controlled model
 choices. Additional canvas boundary executors are confined to automated `--canvas-cases` fixtures.
 No project or workflow registration is seeded in this review instance. The existing

@@ -3,6 +3,7 @@ mod animation;
 mod animation_check;
 mod canvas_seeds;
 mod check;
+mod lifecycle;
 mod model;
 mod projects;
 mod report;
@@ -29,6 +30,15 @@ struct Arguments {
 
 #[derive(Subcommand)]
 enum Action {
+    /// Admit competing project writers through the public API, or release their external hold.
+    Lifecycle {
+        #[arg(long)]
+        root: PathBuf,
+        #[arg(long)]
+        release: bool,
+    },
+    /// Bounded external writer used by the lifecycle browser case.
+    LifecycleHold,
     /// Create bounded canvas review cases through the running fixture's public command API.
     Seed {
         #[arg(long)]
@@ -88,6 +98,8 @@ enum Control {
 #[tokio::main]
 async fn main() -> EvidenceResult {
     match Arguments::parse().action {
+        Action::Lifecycle { root, release } => lifecycle::scenario(&root, release).await,
+        Action::LifecycleHold => lifecycle::hold(),
         Action::Seed { root } => canvas_seeds::seed(&root).await,
         Action::CanvasReport { kind } => canvas_seeds::report(&kind),
         Action::Serve {

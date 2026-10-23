@@ -93,13 +93,19 @@ Removing an unused registration preserves unrelated drafts. Unsent drawings for 
 remain available for inspection or discard, with submission blocked. Start new work in a registered project.
 
 Pan, zoom, fit and the accessible list operate on the same graph. A closable left inspector stays
-compact at narrow widths. Layout is presentation; the secondary timeline uses actual starts and
-settlements to show overlap. Queued tasks have no invented start time. Results have bounded previews
+compact at narrow widths. Layout is presentation; the secondary timeline shows recorded acceptance
+and settlement intervals, which can include preparation and waiting. A frozen start can remain
+queued before external entry; its original acceptance time is preserved. Results have bounded previews
 and explicit complete-content downloads; technical facts remain separate from ordinary authoring.
 Access restrictions and uncertainty remain visible.
 
 **Edit task**, **Create correction**, **Use correction for future work**, **Request stop** and
-**Remove unstarted task** are contextual actions. Workflow actions expose wait, resume, completion
+**Remove unstarted task** are contextual actions. Pause, Resume and Stop act directly without
+submitting unrelated canvas edits or leaving the selected task. Lost replies use the same exact
+receipt recovery as authoring; an unresolved submission must be recovered before another command.
+Preparing and waiting before entry remain distinct from external execution. Project contention shows
+**Project is in use** without exposing another actor's work. A paused workflow stays paused when
+an input is supplied; Resume is deliberate. Workflow actions also expose completion
 and prospective limits. Rejected model proposals can be reviewed and dismissed with repaired work
 in the same atomic change; dismissal does not resume a separate human wait. Model continuation,
 automatic repair and tools remain deliberate permissions. New tasks inherit reviewed project
@@ -227,5 +233,6 @@ Install the matching browser once with `npx playwright install chromium`. Browse
 desktop and phone result screenshots under ignored `test-results/`; traces are disabled because
 they can capture bearer headers and credential form values. Unit/component tests cover connection
 separation, credential disposal, fragmented observation framing and accessible refusal messages.
-Passing these focused checks is evidence for this client boundary; the sprint's final full-system
-gate remains in prompt 07 and actual user review remains in prompt 02.
+Passing these focused checks is evidence for this client boundary. The canvas side sprint's S05
+owns its full-system gate; main prompt 07 owns the later integrated gate. Actual user review remains
+open and is scheduled in side S03 against main prompt 02's criteria.

@@ -340,7 +340,8 @@ fn response_save_fault_preserves_pending_bytes_without_manufacturing_terminal_pr
             assert_eq!(fixture.executor.entries.load(Ordering::SeqCst), 1);
         }
         let fixture = Fixture::open(root.path(), "response-after")?;
-        assert!(fixture.engine.recover()?.is_empty());
+        fixture.engine.recover()?;
+        assert!(fixture.engine.tick(1)?.is_empty());
         let record = fixture.engine.workflow(&id)?.ok_or("workflow absent")?;
         let source = record.tasks.values().next().ok_or("source absent")?;
         assert_eq!(source.state, TaskState::Uncertain);
@@ -489,7 +490,8 @@ fn child_entry_commit_fault_never_infers_safe_retry_from_a_lost_reply() -> TestR
             );
         }
         let fixture = Fixture::open(root.path(), "entry-after")?;
-        let recovered = fixture.engine.recover()?;
+        fixture.engine.recover()?;
+        let recovered = fixture.engine.tick(1)?;
         let record = fixture.engine.workflow(&id)?.ok_or("workflow absent")?;
         assert_eq!(record.tasks.len(), 2);
         assert_eq!(record.admitted_model_batches, 1);

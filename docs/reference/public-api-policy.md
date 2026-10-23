@@ -130,6 +130,16 @@ Public task DTOs in `control-protocol::tasks` are transport contracts for CLI, S
 JSON consumers. Rust generates the TypeScript declarations and envelope decoder. Summary/read/result
 DTOs deliberately have different payload sizes: a discovery page never embeds all captured files.
 `validate_response_capacity`, cursor binding and error status mapping remain pure wire helpers.
+`TaskSummaryDto::entered` exposes the runtime's durable entry intent separately from start acceptance;
+the browser and CLI can distinguish preparation without fetching frozen input bytes. Control 3.5
+coordinates this required field across readers and generated browser types.
+
+`PersistenceError::NativePathContention` identifies only validated overlapping claims and exposes no
+blocking owner or path. The host maps it to `ExecutorError::NativePathBusy` for ordinary-task waiting;
+other storage or identity failures retain their distinct refusal. `TaskExecutor::defer_before_entry`
+releases preparation claims only while runtime owns a proven-unentered dispatch after dropping its
+prepared handle. Failed cleanup retains uncertainty. `TaskRuntime::recover` restores this state to
+the ordinary scheduler; it no longer hands a second dispatch queue to the worker host.
 
 `CapabilityAdapter::task_authoring`, `TaskAuthoringContract` and `TaskAuthoringPort` are workspace
 adapter contracts. Process and model adapters derive connector choices from their existing private

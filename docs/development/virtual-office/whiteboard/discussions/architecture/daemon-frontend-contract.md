@@ -2,8 +2,9 @@
 
 **Consolidation, 2026-10-23.** [ADR 0052](../../../../../decisions/0052-canvas-authoring-and-method-experience.md)
 selects the contract changes and their boundaries. The [side sprint](../../../canvas-experience/README.md)
-owns prepared repair/adoption assignments. The diagnostics below remain unresolved current evidence
-until implementation and verification establish the promised behavior.
+owns repair/adoption assignments. S01 was assigned on October 24; its
+[handoff](../../../canvas-experience/handoff.md) records implementation and verification. The
+diagnostics below describe the earlier source, while canonical status owns current behavior.
 
 The daemon must earn its interface. If supplying an unrelated workflow input releases a decision wait,
 normal progress invalidates an unchanged edit, or drawing another wire changes an existing result
@@ -269,4 +270,5 @@ the user's UX principles and prior proposals, then exchanged actual objections a
 source findings. They share context and provide no independent usability acceptance. Only the
 three diagnostic sequences have new executable evidence here; the other cited paths are source
 findings and proposed comparisons. The [overview](../../README.md#overview) owns assignment and
-further action; production fixes remain unassigned.
+further action. This paragraph records the October 23 investigation; see the S01 handoff for the
+subsequently assigned production repair.

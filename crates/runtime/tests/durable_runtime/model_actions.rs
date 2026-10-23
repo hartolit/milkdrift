@@ -323,7 +323,8 @@ fn no_progress_and_rejected_feedback_share_a_restart_stable_stop_allowance() -> 
         assert!(engine.tick(1)?.is_empty());
     }
     let (engine, _, control) = runtime(root.path(), authority, clock)?;
-    assert!(engine.recover()?.is_empty());
+    engine.recover()?;
+    assert!(engine.tick(1)?.is_empty());
     let stopped = engine.workflow(&workflow)?.ok_or("workflow absent")?;
     assert_eq!(stopped.rejected_responses, 2);
     let mut repair = stopped

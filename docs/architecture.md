@@ -12,8 +12,9 @@ proposal, controller and published-workflow engines have been retired. Existing 
 converted into task workflows. Their readers remain in the preservation checkpoints.
 
 [ADR 0052](decisions/0052-canvas-authoring-and-method-experience.md) selects the next saved-authoring
-and method experience. Its [side sprint](development/virtual-office/canvas-experience/README.md) is
-prepared, not implemented. Mutable non-executable authoring uses bounded conditional snapshots;
+and method experience. Its [side sprint](development/virtual-office/canvas-experience/README.md)
+starts with the lifecycle repair described below; saved authoring and methods remain planned.
+Mutable non-executable authoring will use bounded conditional snapshots;
 deliberate admission retains exact command receipts. Existing workflow/control/persistence owners
 own that distinction, while the client owns the tree, gestures and right inspector. Planned changes
 also separate data-derived readiness from independent ordering and clarify method activation and
@@ -207,8 +208,13 @@ accounting. A full store refuses new ordinary work rather than silently discardi
 
 Restart restores the durable task records. A queued task can become ready using its accepted
 inputs; an entered invocation without terminal evidence becomes uncertain, not successful or safely
-retryable. Release of native or managed resource holds requires the owning terminal/physical-stop
-proof. A client timeout and a cancellation acknowledgement supply no such proof.
+retryable. A human pause persists across input supply and restart until authorized Continue.
+Known-unentered frozen starts return to ordinary scheduling after pause, preparation-capacity refusal
+or typed native contention, retaining their exact accepted identity. Prepared handles drop before
+the host releases safe non-entry claims. Uncertain cleanup retains ownership; native or managed
+holds after entry require the owning terminal/physical-stop proof. A client timeout and a
+cancellation acknowledgement supply no such proof. Bounded pending delivery and failed-worker
+reconciliation retain ownership across lost storage replies without adding a host scheduling queue.
 
 Discovery returns compact workflow summaries. Workflow task lists are explicitly paged; a selected
 task is read separately. Large captured text and result text have labelled previews with retained
@@ -229,7 +235,7 @@ One transaction adds the required metadata/project tables and changes the physic
 rewriting workflow, receipt or installation-identity rows. Earlier graph/task formats still require
 a separate fresh root; this narrow addition does not restore their readers or change frozen grants.
 Daemon configuration stays at version 14 because the optional name seed preserves existing reads;
-control protocol 3.4 requires coordinated client upgrades. Do not stop existing services, reset a
+control protocol 3.5 requires coordinated client upgrades. Do not stop existing services, reset a
 store or repoint an existing installation merely to try the new task client. See
 [operation](operations/daemon.md), [authority](operations/authority.md) and the
 [public API](reference/control-api.md) for configuration and transport details.

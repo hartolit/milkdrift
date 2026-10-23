@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import CanvasWorkspaceTestHarness from './CanvasWorkspaceTestHarness.svelte';
 import { acceptedTask, session, workflow, project, projectCanvas as createCanvas } from '../lib/canvas.test-fixtures';
-import { addCanvasTask, cacheTask, updateInstructions, type CanvasState } from '../lib/canvas';
+import { addCanvasTask, cacheTask, copy, freezeCanvas, updateInstructions, type CanvasState } from '../lib/canvas';
 import type { ChangeWorkflowRequest, TaskProjectBindingDto, TaskReadDto } from '../lib/protocol.generated';
 import { DaemonClient, DaemonError } from '../lib/transport';
 
@@ -22,6 +22,146 @@ async function addTask(text: string) {
 }
 function inspector() { return screen.getByRole('complementary', { name: 'Selected item' }); }
 async function submit() { await fireEvent.submit(inspector().querySelector('form')!); }
+
+it('pauses immediately without submitting an unfinished drawing or moving its selection', async () => {
+  const existing = acceptedTask(), snapshot = workflow([existing]);
+  const initial = createCanvas(session(), { kind: 'existing', workflowId: snapshot.id, title: snapshot.title, generation: snapshot.generation });
+  addCanvasTask(initial, session());
+  const selected = initial.selected;
+  initial.camera = { x: 28, y: 37, zoom: .8 };
+  const { connection, request } = client(session(), [existing]), accepted = vi.fn();
+  let state!: CanvasState;
+  render(CanvasWorkspaceTestHarness, { session: session(), client: connection, workflow: snapshot, initial, onstate: (canvas) => state = canvas, onaccepted: accepted });
+  await fireEvent.click(screen.getByRole('button', { name: 'Pause workflow' }));
+  await waitFor(() => expect(state.pending).toBeNull());
+  expect(request.mock.calls.filter(([, body]) => body).map(([, body]) => body)).toEqual([
+    expect.objectContaining({ expected_generation: 5, changes: [{ kind: 'wait', question: 'Paused by you.' }] }),
+  ]);
+  expect(accepted).not.toHaveBeenCalled();
+  expect(state.tasks).toHaveLength(1);
+  expect(state.tasks[0].definition.instructions).toBe('');
+  expect(state.selected).toBe(selected);
+  expect(state.camera).toEqual({ x: 28, y: 37, zoom: .8 });
+  expect(state.target).toMatchObject({ generation: 6 });
+});
+
+it('keeps a deferred frozen task immutable and requests stop without inventing settlement', async () => {
+  const deferred = acceptedTask();
+  deferred.reason = 'Project is in use'; deferred.started_at = 10;
+  deferred.frozen = { inputs: {}, capability_generation: 3, actor_id: 'actor-a', grant_id: 'grant-a', grant_revision: 1, entered: false };
+  const snapshot = workflow([deferred]), initial = createCanvas(session(), { kind: 'existing', workflowId: snapshot.id, title: snapshot.title, generation: snapshot.generation });
+  const draft = addCanvasTask(initial, session()); updateInstructions(initial, draft, 'Keep my unrelated idea');
+  cacheTask(initial, deferred); initial.selected = deferred.id;
+  const { connection, request } = client(session(), [deferred]), accepted = vi.fn();
+  let state!: CanvasState;
+  render(CanvasWorkspaceTestHarness, { session: session(), client: connection, workflow: snapshot, initial, onstate: (canvas) => state = canvas, onaccepted: accepted });
+  expect(within(inspector()).getByText('Waiting before entry')).toBeTruthy();
+  expect(within(inspector()).getByText('Project is in use', { selector: '.notice' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Edit task' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Remove unstarted task' })).toBeNull();
+  expect(within(inspector()).getByText('No entry recorded')).toBeTruthy();
+  await fireEvent.click(screen.getByRole('button', { name: 'Request stop' }));
+  await waitFor(() => expect(state.pending).toBeNull());
+  expect(request.mock.calls.find(([, body]) => body)?.[1]).toEqual({ request_id: deferred.stop_request_id, expected_generation: 5, changes: [{ kind: 'stop', task: deferred.id }] });
+  expect(state.tasks[0].definition.instructions).toBe('Keep my unrelated idea');
+  expect(state.selected).toBe(deferred.id); expect(accepted).not.toHaveBeenCalled();
+  expect(screen.getByText('Stop requested. Waiting for the daemon to report the outcome.')).toBeTruthy();
+  expect(within(inspector()).getByText('No settlement recorded')).toBeTruthy();
+});
+
+it('recovers the exact resume request while retaining the selected draft and visible pause', async () => {
+  const snapshot = workflow(); snapshot.wait_question = 'Choose the publication date.';
+  const initial = createCanvas(session(), { kind: 'existing', workflowId: snapshot.id, title: snapshot.title, generation: snapshot.generation });
+  const draft = addCanvasTask(initial, session()); updateInstructions(initial, draft, 'Keep this unsubmitted task');
+  const { connection, request } = client(), accepted = vi.fn(); let state!: CanvasState;
+  request.mockImplementation(async <T>(path: string, body?: unknown): Promise<T> => {
+    if (body) throw new Error('Resume reply lost');
+    if (path.startsWith('/v1/workflow-requests/')) return { request_id: state.pending!.request.request_id, workflow_id: snapshot.id, generation: 6, aliases: {} } as T;
+    throw new Error(`Unexpected read: ${path}`);
+  });
+  render(CanvasWorkspaceTestHarness, { session: session(), client: connection, workflow: snapshot, initial, onstate: (canvas) => state = canvas, onaccepted: accepted });
+  expect(screen.getByRole('region', { name: 'Workflow pause' }).textContent).toContain(snapshot.wait_question);
+  await fireEvent.click(screen.getByRole('button', { name: 'Resume workflow' }));
+  await screen.findByRole('button', { name: 'Find submission receipt' });
+  const pending = copy(state.pending);
+  expect(pending).toMatchObject({ control: true, path: '/v1/workflows/workflow-a/changes', request: { expected_generation: 5, changes: [{ kind: 'continue' }] } });
+  expect((screen.getByRole('button', { name: 'Resume workflow' }) as HTMLButtonElement).disabled).toBe(true);
+  await fireEvent.click(screen.getByRole('button', { name: 'Find submission receipt' }));
+  await waitFor(() => expect(state.pending).toBeNull());
+  expect(request.mock.calls.filter(([, body]) => body)).toHaveLength(1);
+  expect(request).toHaveBeenLastCalledWith(`/v1/workflow-requests/${pending!.request.request_id}`, undefined);
+  expect(state.tasks[0].definition.instructions).toBe('Keep this unsubmitted task');
+  expect(state.selected).toBe(draft.id); expect(accepted).not.toHaveBeenCalled();
+});
+
+it('uses the current workflow for a control without rebasing an older drawing', async () => {
+  const snapshot = workflow(); snapshot.generation = 8;
+  const initial = createCanvas(session(), { kind: 'existing', workflowId: snapshot.id, title: snapshot.title, generation: 5 });
+  const draft = addCanvasTask(initial, session()); updateInstructions(initial, draft, 'Retain my earlier work');
+  initial.changes = [{ kind: 'bind_input', name: 'source', value: { kind: 'text', text: 'Keep this staged source' } }];
+  const staged = copy(initial.changes);
+  const { connection, request } = client(); let state!: CanvasState;
+  request.mockImplementation(async <T>(_path: string, body?: unknown): Promise<T> => ({ request_id: (body as { request_id: string }).request_id, workflow_id: snapshot.id, generation: 9, aliases: {} }) as T);
+  render(CanvasWorkspaceTestHarness, { session: session(), client: connection, workflow: snapshot, initial, onstate: (canvas) => state = canvas });
+  await fireEvent.click(screen.getByRole('button', { name: 'Pause workflow' }));
+  await waitFor(() => expect(state.pending).toBeNull());
+  expect(request).toHaveBeenCalledExactlyOnceWith('/v1/workflows/workflow-a/changes', expect.objectContaining({ expected_generation: 8, changes: [{ kind: 'wait', question: 'Paused by you.' }] }));
+  expect(state.target).toMatchObject({ generation: 5 });
+  expect(state.tasks[0].definition.instructions).toBe('Retain my earlier work');
+  expect(state.changes).toEqual(staged); expect(state.selected).toBe(draft.id);
+});
+
+it('leaves an uncertain authoring request intact when a workflow control is attempted', async () => {
+  const snapshot = workflow(), initial = createCanvas(session(), { kind: 'existing', workflowId: snapshot.id, title: snapshot.title, generation: snapshot.generation });
+  const draft = addCanvasTask(initial, session()); updateInstructions(initial, draft, 'An already submitted task');
+  initial.pending = freezeCanvas(initial, session());
+  const pending = copy(initial.pending), { connection, request } = client(); let state!: CanvasState;
+  render(CanvasWorkspaceTestHarness, { session: session(), client: connection, workflow: snapshot, initial, onstate: (canvas) => state = canvas });
+  const pause = screen.getByRole('button', { name: 'Pause workflow' }) as HTMLButtonElement;
+  expect(pause.disabled).toBe(true); await fireEvent.click(pause);
+  expect(request).not.toHaveBeenCalled(); expect(state.pending).toEqual(pending);
+  expect(state.tasks[0].definition.instructions).toBe('An already submitted task');
+});
+
+it('refuses a stale control without automatic retry or discarding its unrelated drawing', async () => {
+  const snapshot = workflow(); snapshot.wait_question = 'A decision that may have changed.';
+  const initial = createCanvas(session(), { kind: 'existing', workflowId: snapshot.id, title: snapshot.title, generation: snapshot.generation });
+  const draft = addCanvasTask(initial, session()); updateInstructions(initial, draft, 'Do not submit this idea');
+  const { connection, request } = client(); let state!: CanvasState;
+  request.mockRejectedValue(new DaemonError('conflict', 'A newer decision requires review.', 409));
+  render(CanvasWorkspaceTestHarness, { session: session(), client: connection, workflow: snapshot, initial, onstate: (canvas) => state = canvas });
+  await fireEvent.click(screen.getByRole('button', { name: 'Resume workflow' }));
+  await waitFor(() => expect(state.pending).toBeNull());
+  expect(request).toHaveBeenCalledOnce();
+  expect(screen.getByText('The workflow changed. Review its current state before choosing this action again. Your drawing is retained.')).toBeTruthy();
+  expect(state.target).toMatchObject({ generation: 5 }); expect(state.selected).toBe(draft.id);
+  expect(state.tasks[0].definition.instructions).toBe('Do not submit this idea');
+  expect(screen.queryByRole('button', { name: 'Replay exact submission' })).toBeNull();
+});
+
+it('keeps supplying input unavailable until an uncertain control receipt is recovered', async () => {
+  const task = acceptedTask(); task.definition.inputs.document = { kind: 'supplied', name: 'source', optional: false };
+  const snapshot = workflow([task]); snapshot.wait_question = 'Choose when to continue.';
+  const initial = createCanvas(session(), { kind: 'existing', workflowId: snapshot.id, title: snapshot.title, generation: snapshot.generation });
+  cacheTask(initial, task); initial.selected = 'supplied:source'; initial.inspector = true;
+  initial.pending = { path: '/v1/workflows/workflow-a/changes', control: true, request: { request_id: 'pending-control', expected_generation: 5, changes: [{ kind: 'continue' }] } };
+  const { connection, request } = client(); let state!: CanvasState;
+  request.mockImplementation(async <T>(path: string): Promise<T> => {
+    if (path === '/v1/workflow-requests/pending-control') return { request_id: 'pending-control', workflow_id: snapshot.id, generation: 6, aliases: {} } as T;
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(CanvasWorkspaceTestHarness, { session: session(), client: connection, workflow: snapshot, initial, onstate: (canvas) => state = canvas });
+  const field = screen.getByLabelText('Replacement text') as HTMLTextAreaElement;
+  const supply = screen.getByRole('button', { name: 'Supply input' }) as HTMLButtonElement;
+  expect(field.disabled).toBe(true); expect(supply.disabled).toBe(true);
+  await fireEvent.click(supply); expect(state.changes).toEqual([]);
+  await fireEvent.click(screen.getByRole('button', { name: 'Find submission receipt' }));
+  await waitFor(() => expect(supply.disabled).toBe(false)); expect(field.disabled).toBe(false);
+  expect(state.changes).toEqual([]); expect(state.selected).toBe('supplied:source');
+  await fireEvent.input(field, { target: { value: 'The source to use later' } }); await fireEvent.click(supply);
+  expect(state.changes).toEqual([{ kind: 'bind_input', name: 'source', value: { kind: 'text', text: 'The source to use later' } }]);
+  expect(request).toHaveBeenCalledExactlyOnceWith('/v1/workflow-requests/pending-control', undefined);
+});
 
 it('keeps the empty workflow unsaved, then submits instructions with a visibly assigned model', async () => {
   const { connection, request } = client();
