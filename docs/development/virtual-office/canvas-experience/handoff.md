@@ -5,7 +5,8 @@
 The user assigned S02 on October 24 and resumed it on October 26. Implementation and focused Rust,
 frontend, actual-binary and browser verification are complete. S02 stops ready for the S03 user review.
 S03–S05 and main 05–07 remain unassigned. The planning checkpoint is `851d216d`; S01 implementation
-is `1225fa0e`, with its handoff at `974c438b`. S02 has not yet been committed. This record does not
+is `1225fa0e`, with its handoff at `974c438b`. S02 implementation and its checked consumers are
+committed at `6c34677b`. This record does not
 claim the side-sprint full gate, main-sprint completion or actual user acceptance.
 
 ## Delivered boundary

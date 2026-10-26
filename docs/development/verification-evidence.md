@@ -156,7 +156,8 @@ separately. Fixture roots contain credentials and must not be published.
 
 ## Side S02 saved authoring and continuous canvas
 
-The October 24–26 S02 checks exercise saved, non-executable authoring through shared Rust control,
+Implementation checkpoint `6c34677b` contains the checked S02 boundary. The October 24–26 checks
+exercise saved, non-executable authoring through shared Rust control,
 redb, the actual daemon, native clients and Svelte. These are focused checks under the explicitly
 scheduled S05 full gate. They do not establish actual user acceptance or complete the main sprint.
 The [side handoff](virtual-office/canvas-experience/handoff.md) owns the assignment checkpoint and
