@@ -45,6 +45,7 @@ fn commit(
     guard: Option<(String, u64)>,
 ) -> Result<WorkflowCommit, Box<dyn std::error::Error>> {
     Ok(WorkflowCommit {
+        authoring: None,
         project_id,
         project_guard: guard,
         expected_generation: None,

@@ -19,9 +19,12 @@ pub use project::{
 };
 
 pub use task::{
-    MAX_WORKFLOW_DOCUMENT_BYTES, MAX_WORKFLOW_REQUEST_BYTES, WorkflowCommandAcceptance,
-    WorkflowCommandReceipt, WorkflowCommit, WorkflowCommitOutcome, WorkflowManagedExecution,
-    WorkflowPage, WorkflowSnapshot, WorkflowStorageLimits, WorkflowStorageUsage, WorkflowStore,
+    MAX_WORKFLOW_AUTHORING_BYTES, MAX_WORKFLOW_DOCUMENT_BYTES, MAX_WORKFLOW_POSITIONS,
+    MAX_WORKFLOW_PROTECTED_SOURCES, MAX_WORKFLOW_REQUEST_BYTES, WorkflowAuthoringCommit,
+    WorkflowAuthoringSnapshot, WorkflowCommandAcceptance, WorkflowCommandReceipt, WorkflowCommit,
+    WorkflowCommitOutcome, WorkflowManagedExecution, WorkflowPage, WorkflowPosition,
+    WorkflowPositionsCommit, WorkflowPositionsSnapshot, WorkflowSnapshot, WorkflowStorageLimits,
+    WorkflowStorageUsage, WorkflowStore,
 };
 
 pub use admin::{

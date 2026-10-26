@@ -36,7 +36,7 @@ pub(super) async fn run(
             "execution":{"kind":"explicit","expected_generation":project.generation,"settings":{"environment":{"kind":"host"},"allow_changes":false},"access":"none","tools":[]},
             "inputs":{"brief":{"kind":"supplied","name":"brief","optional":false}},
             "outputs":{"model_response":{"required":true,"media_type":"application/vnd.milkdrift.model-response.v1+json","max_bytes":2097152}},
-            "dependencies":[],"required":true,"corrective_of":null,"paths":[],"tools":[],
+            "dependencies":{},"required":true,"corrective_of":null,"paths":[],"tools":[],
             "actions":{"automatic_repair":true}
         }}],
         "inputs":{"brief":{"kind":"text","text":"Investigate learned animation in Rust: motion representation, training data, and render validation. Preserve failed research and correct its future consumers."}},

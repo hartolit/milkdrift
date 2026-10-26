@@ -1,6 +1,6 @@
 //! Browser, CLI and raw JSON callers share these authenticated task operations.
 use super::{ApiError, AppState, authenticate, owner_error, protocol_error, success};
-use crate::host::TaskRequest;
+use crate::host::{DaemonMetadataRequest, TaskRequest};
 use axum::{
     body::{Body, Bytes},
     extract::{Path, Query, State},
@@ -46,7 +46,7 @@ pub(super) fn expected_daemon(
         })
 }
 
-async fn execute(
+pub(super) async fn execute(
     state: &AppState,
     headers: &HeaderMap,
     operation: TaskRequest,
@@ -230,6 +230,19 @@ pub(super) async fn stream(
         .get("daemon_id")
         .and_then(|value| value.as_str())
         .unwrap_or_default();
+    let mut metadata_generation = handshake
+        .get("daemon_name_generation")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ErrorCode::Internal,
+                "daemon metadata generation is unavailable",
+                false,
+                Some(request_id.clone()),
+            )
+        })?;
+    let metadata_host = Some(daemon.to_owned());
     let feed = format!("task-stream:{daemon}");
     let binding = session.cursor_binding(&feed);
     let incarnation = blake3::hash(&state.stream_incarnation).to_string();
@@ -313,6 +326,28 @@ pub(super) async fn stream(
             if current_session.cursor_binding(&feed) != binding {
                 yield Ok(Event::default().event("forbidden").data("{\"message\":\"Authority changed; reconnect\"}"));
                 return;
+            }
+            // Naming has its own small durable owner. Workflow invalidation must not make
+            // every browser reload the capability catalog or unrelated project navigation.
+            let metadata = match state.host.daemon_metadata_request(current_session,
+                metadata_host.clone(), DaemonMetadataRequest::Read).await {
+                Ok(metadata) => metadata,
+                Err(error) => {
+                    let event = if matches!(error.code, ErrorCode::Unauthorized | ErrorCode::Unauthenticated | ErrorCode::DaemonIdentityMismatch) {
+                        "forbidden"
+                    } else { "resync_required" };
+                    yield Ok(Event::default().event(event).id(cursor.clone()).data("{}"));
+                    return;
+                }
+            };
+            let Some(current_generation) = metadata.get("generation").and_then(serde_json::Value::as_u64) else {
+                yield Ok(Event::default().event("resync_required").id(cursor.clone()).data("{}"));
+                return;
+            };
+            if current_generation != metadata_generation {
+                metadata_generation = current_generation;
+                let data = serde_json::json!({"generation":current_generation}).to_string();
+                yield Ok(Event::default().event("metadata_changed").id(cursor.clone()).data(data));
             }
             // This is an invalidation hint, not a durable event log. Refreshing the visible
             // page and selected workflow also observes work outside the first discovery page.

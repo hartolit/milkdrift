@@ -134,6 +134,27 @@ DTOs deliberately have different payload sizes: a discovery page never embeds al
 the browser and CLI can distinguish preparation without fetching frozen input bytes. Control 3.5
 coordinates this required field across readers and generated browser types.
 
+`blueprint::authoring` describes incomplete proposals and connection intentions for shared control;
+it does not replace immutable task definitions. `TaskDependencies` reads historical arrays with
+their original predicates and writes new independent `TaskOrderCondition` maps. `Rename` changes
+workflow metadata without a task obligation. Optional `TaskDefinition::capability_generation`
+retains the reviewed adapter generation for admission and pre-start checks; absence preserves old
+durable encoding. `TaskInputMedia` and the capability-owned authoring contract let adapters, host,
+runtime and control enforce the same known-media rules. `TaskExecutor::task_authoring` returns the
+descriptor and connector contract together so control checks existing catalog authority against
+all descriptor facts before exposing choices.
+
+`WorkflowAuthoringSnapshot`, `WorkflowAuthoringCommit` and independently versioned position types
+are workspace storage contracts. `WorkflowCommit::authoring` lets runtime's `edit_authoring_exact`
+commit the reviewed batch, exact receipt and remaining proposal together. Redb owns conditional
+replacement, protected source references and bounded capacity accounting; it never interprets
+the proposal as a second workflow. `TaskControlService` owns authorized checkpoint, review and Run
+construction. `AuthoringScope`, `AuthoringReview` and bounded `AuthoringIssue` are consumed by the
+daemon's transport mapping. Their public DTOs and client methods also serve CLI and Svelte.
+`WorkflowTopologyDto` is a bounded accepted-connection projection with its own generation-bound
+cursor, independent of selected task/result reads. Its rows never grant authority over accepted
+definitions or make saved presentation references authoritative.
+
 `PersistenceError::NativePathContention` identifies only validated overlapping claims and exposes no
 blocking owner or path. The host maps it to `ExecutorError::NativePathBusy` for ordinary-task waiting;
 other storage or identity failures retain their distinct refusal. `TaskExecutor::defer_before_entry`

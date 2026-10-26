@@ -196,7 +196,7 @@ fn request(
             "execution":{"kind":"explicit","expected_generation":1,"settings":{"environment":{"kind":"host"},"allow_changes":false},"access":"none","tools":[]},
             "capability":{"id":"visibility-model","operation":"model.generate"},
             "inputs":{"brief":{"kind":"supplied","name":"brief","optional":false}},
-            "dependencies":[],"required":true,"corrective_of":null,"paths":[]
+            "dependencies":{},"required":true,"corrective_of":null,"paths":[]
         }}],"inputs":{},"finish_when_settled":false,"limits":null
     }))?)
 }

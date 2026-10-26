@@ -17,7 +17,7 @@ function mount(session: TaskSessionDto = fixture.value) {
 
 it('shows the configured model label and explains where task assignment lives', () => {
   const capability = { id: 'configured-model', operation: 'model.generate' };
-  mount({ ...fixture.value, capabilities: [capability], authoring: [{ capability, label: 'Local research model', generation: 3, category: 'model', inputs: [], outputs: [], default_output: null, allows_additional_inputs: true }] });
+  mount({ ...fixture.value, capabilities: [capability], authoring: [{ capability, label: 'Local research model', generation: 3, category: 'model', input_media: 'text_json_or_image', inputs: [], outputs: [], default_output: null, allows_additional_inputs: true }] });
   expect(screen.getByRole('heading', { name: 'Local research model' })).toBeTruthy();
   expect(screen.getByText('Model or agent')).toBeTruthy();
   expect(screen.getByRole('region', { name: 'Models' }).textContent).toContain('Available to select');

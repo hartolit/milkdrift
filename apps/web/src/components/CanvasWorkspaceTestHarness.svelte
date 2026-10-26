@@ -10,7 +10,7 @@
     currentProject?: ProjectDto;
     onstate?: (canvas: CanvasState) => void; onaccepted?: (receipt: WorkflowReceipt) => Promise<void>; onerror?: (failure: unknown) => void; onmodels?: () => void;
   } = $props();
-  let canvas = $state(untrack(() => initial ?? createCanvas(session, workflow ? { kind: 'existing', workflowId: workflow.id, title: workflow.title, generation: workflow.generation } : { kind: 'new' })));
+  let canvas = $state(untrack(() => initial ?? createCanvas(session, workflow ? { kind: 'existing', workflowId: workflow.id, title: workflow.title, generation: workflow.generation } : { kind: 'existing', workflowId: 'workflow-a', title: 'Research workflow', generation: 5 })));
   onMount(() => onstate?.(canvas));
 </script>
-<CanvasWorkspace {canvas} {currentProject} {workflow} {session} {client} {onaccepted} {onerror} {onmodels} onreviewed={() => {}} onrefresh={async () => {}} onpage={async () => {}} oncapabilitychoice={() => {}} ondiscard={() => { canvas.tasks = []; canvas.sources = []; canvas.changes = []; canvas.inspector = false; }} />
+<CanvasWorkspace bind:canvas {currentProject} {workflow} {session} {client} {onaccepted} {onerror} {onmodels} onreviewed={() => {}} onrefresh={async () => {}} onpage={async () => {}} />

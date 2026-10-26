@@ -145,10 +145,11 @@ fn corrective_cycle_refuses_the_whole_batch_without_changing_limits() -> TestRes
     let mut create = request()?;
     let mut second = create.tasks.first().ok_or("task absent")?.clone();
     second.alias = TaskId::new("consumer")?;
-    second
-        .definition
-        .dependencies
-        .insert(TaskId::new("inspect")?);
+    second.definition.dependencies =
+        milkdrift_blueprint::TaskDependencies::Ordered(BTreeMap::from([(
+            TaskId::new("inspect")?,
+            milkdrift_blueprint::TaskOrderCondition::Success,
+        )]));
     create.tasks.push(second);
     let id = control
         .create(&context()?, "correction_cycle", create)?
@@ -157,12 +158,12 @@ fn corrective_cycle_refuses_the_whole_batch_without_changing_limits() -> TestRes
     let original = record
         .tasks
         .values()
-        .find(|task| task.definition.dependencies.is_empty())
+        .find(|task| task.definition.dependencies.references().next().is_none())
         .ok_or("original absent")?;
     let consumer = record
         .tasks
         .values()
-        .find(|task| !task.definition.dependencies.is_empty())
+        .find(|task| task.definition.dependencies.references().next().is_some())
         .ok_or("consumer absent")?;
     let mut definition = original.definition.clone();
     definition.corrective_of = Some(consumer.id.clone());
@@ -221,7 +222,10 @@ fn adoption_refuses_started_redirect_and_preserves_its_frozen_absence() -> TestR
             optional: true,
         },
     )]);
-    consumer.dependencies.insert(TaskId::new("inspect")?);
+    consumer.dependencies = milkdrift_blueprint::TaskDependencies::Ordered(BTreeMap::from([(
+        TaskId::new("inspect")?,
+        milkdrift_blueprint::TaskOrderCondition::Settled,
+    )]));
     create.tasks.push(NewTask {
         alias: TaskId::new("consumer")?,
         definition: consumer,
@@ -233,7 +237,7 @@ fn adoption_refuses_started_redirect_and_preserves_its_frozen_absence() -> TestR
     let original = record
         .tasks
         .values()
-        .find(|task| task.definition.dependencies.is_empty())
+        .find(|task| task.definition.dependencies.references().next().is_none())
         .ok_or("original absent")?;
     let original_id = original.id.clone();
     let mut correction = original.definition.clone();

@@ -6,6 +6,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{PersistenceError, TimestampMillis};
 
+mod authoring;
+pub use authoring::{
+    MAX_WORKFLOW_AUTHORING_BYTES, MAX_WORKFLOW_POSITIONS, MAX_WORKFLOW_PROTECTED_SOURCES,
+    WorkflowAuthoringCommit, WorkflowAuthoringSnapshot, WorkflowPosition, WorkflowPositionsCommit,
+    WorkflowPositionsSnapshot,
+};
+
 /// Largest runtime document accepted by the task storage boundary.
 pub const MAX_WORKFLOW_DOCUMENT_BYTES: usize = 256 * 1024 * 1024;
 /// Largest canonical client request retained for exact conflict detection.
@@ -93,6 +100,8 @@ pub struct WorkflowCommandReceipt {
 /// All durable facts of a task transition, committed atomically.
 #[derive(Clone, Debug)]
 pub struct WorkflowCommit {
+    /// Optional saved-authoring replacement accepted atomically with this command and alias map.
+    pub authoring: Option<WorkflowAuthoringCommit>,
     /// Reviewed project generation for newly resolved task bindings, checked in this transaction.
     pub project_guard: Option<(String, u64)>,
     /// Initial project association, committed with a new workflow and never inferred from paths.
@@ -147,8 +156,12 @@ impl Default for WorkflowStorageLimits {
 /// Current retained usage and capacity promised to accepted work.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct WorkflowStorageUsage {
-    /// Encoded runtime snapshot bytes.
+    /// Encoded runtime snapshots and latest authoring/position bytes.
     pub history_bytes: u64,
+    /// Latest authoring and position snapshot bytes already included in history bytes.
+    pub authoring_bytes: u64,
+    /// Replacement headroom for mutable authoring, separate from accepted task reserves.
+    pub authoring_replacement_bytes: u64,
     /// Exact retained command receipt bytes.
     pub receipt_bytes: u64,
     /// Exact retained command receipt count.
@@ -168,6 +181,46 @@ pub struct WorkflowStorageUsage {
 /// Atomic task state/receipt port. Its implementation preserves exact requests, reserves
 /// settlement capacity, and refuses conflicting reuse before considering the supplied state.
 pub trait WorkflowStore: Send + Sync {
+    /// Reads the latest authoring content. Existing workflows without saved authoring return
+    /// generation zero, a null document and its digest; missing workflows return None.
+    ///
+    /// # Errors
+    /// Returns storage failures or invalid retained checkpoint content.
+    fn workflow_authoring(
+        &self,
+        workflow: &WorkflowId,
+    ) -> Result<Option<WorkflowAuthoringSnapshot>, PersistenceError>;
+
+    /// Replaces one latest snapshot under its own generation guard, without creating a receipt.
+    /// A stale generation refuses even when its document matches an earlier successful write.
+    ///
+    /// # Errors
+    /// Refuses missing workflows, stale generations, bounds, unavailable sources and storage failures.
+    fn checkpoint_workflow_authoring(
+        &self,
+        workflow: &WorkflowId,
+        checkpoint: WorkflowAuthoringCommit,
+    ) -> Result<WorkflowAuthoringSnapshot, PersistenceError>;
+
+    /// Reads independently versioned presentation positions; absent content starts at generation zero.
+    ///
+    /// # Errors
+    /// Returns storage failures or invalid retained position content.
+    fn workflow_positions(
+        &self,
+        workflow: &WorkflowId,
+    ) -> Result<Option<WorkflowPositionsSnapshot>, PersistenceError>;
+
+    /// Replaces bounded positions without changing authoring or runtime generations.
+    ///
+    /// # Errors
+    /// Refuses missing workflows, stale generations, invalid positions and exhausted storage.
+    fn checkpoint_workflow_positions(
+        &self,
+        workflow: &WorkflowId,
+        checkpoint: WorkflowPositionsCommit,
+    ) -> Result<WorkflowPositionsSnapshot, PersistenceError>;
+
     /// Read current retained usage without changing state or observing the clock.
     ///
     /// # Errors

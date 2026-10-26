@@ -317,7 +317,7 @@ impl TaskControlService {
                     .collect()
             })
             .unwrap_or_default();
-        definition.dependencies.clear();
+        definition.dependencies = Default::default();
         definition.instructions = format!(
             "Repair the rejected structured action batch. Preserve the original intent within the same authority. Use the refreshed snapshot supplied with this task. Do not repeat started work. Rejection: {}\nOriginal instructions: {}",
             admission.reason.as_deref().unwrap_or("invalid actions"),

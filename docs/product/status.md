@@ -22,7 +22,8 @@ implements the project boundary and has completed its focused checks, with the p
 qualification gap below. The prepared [canvas experience side sprint](../development/virtual-office/canvas-experience/README.md)
 now owns the next correction and takes over unimplemented main prompt 04's method responsibility.
 Its early user gate must fulfill outstanding prompt 02. S01 implements the lifecycle repair and has
-completed its focused verification. S02–S05 remain unassigned.
+completed its focused verification. S02 implements saved authoring and the continuous canvas, with
+its focused verification complete. S03–S05 remain unassigned; actual usability acceptance remains open.
 Side S05 owns its planned full gate; main prompt 07 retains the later final integrated gate. Hosted quality run 227
 failed on the earlier `e720bb9`; no later hosted pass is claimed.
 
@@ -75,15 +76,21 @@ durable generation guard and exact actor-scoped receipt; restart cannot restore 
 seed. Other connected clients refresh the name through existing observation, including empty searches.
 Disconnected names are explicitly cached. Earlier browser labels are adopted without losing pins.
 
-The Svelte workspace keeps tasks, text/file sources and result connections on one canvas, with a
-compact left selection panel, pan/zoom/fit and an accessible list. **New workflow** opens an unsaved
-canvas; **Add task** adds a card. One explicit submission accepts the drawing atomically. Instructions
-suggest a title and **Model or agent** exposes the configured choice. **Models & agents** lists those
+The Svelte workspace keeps tasks, text/file sources and result connections on one saved canvas, with a
+right inspector, pan/zoom/fit and an accessible list. A persistent daemon → project → workflow tree
+keeps navigation separate from placement and selection. **New workflow** creates a discoverable empty
+workflow; **Add task** places a blank card without opening an inspector. Conditional saves retain
+unfinished work without execution. Deliberate Run/Apply accepts the reviewed scope atomically.
+Instructions suggest a title and a saved usual-model choice can apply to new or explicitly selected
+unassigned cards. **Models & agents** lists those
 connections and explains the existing operator setup. Model/agent installation remains daemon
 configuration, not an in-browser capability installer.
 
 Adapter-owned authoring metadata supplies real input slots, output ports, labels and configuration
-generations. A draft result connection adds its actual output declaration and implied prerequisite.
+generations. Shared control constructs actual input bindings and output declarations from draft wires.
+Unresolved wires retain intent and block included work. Data readiness and independent success or
+settlement ordering are distinct; historical predicates retain their original meaning. Each output
+keeps its own ceiling under one aggregate actual-output reservation.
 Retained named results may be selected even when the historical producer did not declare them;
 shared admission verifies publication metadata and current source authority. Correction redirect
 preserves the original media contract and finite output allowance. Bounded inline/shared-input reads
@@ -95,11 +102,11 @@ does not authorize those reads.
 
 The canvas exposes prospective edits, correction/rebinding, stop, removal, wait/resume, completion,
 limits and rejected-model-proposal dismissal through contextual actions. The former definition,
-composer and JSON batch editor product paths are removed. Exact pending requests and up to eight
-dirty drawings remain scoped in memory to the authenticated daemon, actor, project and workflow; navigation never
-submits them. Graph/detail caches are bounded and off-page connections remain explicit. A full draft
-cache still permits viewing other workflows. Conflicts retain the drawing for a new decision;
-lost replies offer exact recovery. Spatial layout owns no scheduling or elapsed-time meaning;
+composer and JSON batch editor product paths are removed. Latest authoring and independent positions
+are saved under the daemon workflow, with bounded client caches scoped to actor and connection.
+Navigation does not admit work. Graph/detail caches are bounded and off-page connections remain
+explicit. Conflicts preserve local candidates; lost checkpoint replies reconcile current content,
+while deliberate commands recover exact receipts. Spatial layout owns no scheduling or elapsed-time meaning;
 a secondary timeline shows recorded start acceptance and settlement, including time before entry.
 The daemon still owns all durable work.
 
@@ -123,8 +130,8 @@ stop requests, uncertainty and restart cannot refund unresolved work.
 
 The earlier [pause diagnostics](../development/verification-evidence.md#daemon-lifecycle-design-diagnostics)
 describe the pre-S01 defects. Maintained runtime/host and public daemon regressions now cover their
-repair, including uncertain cleanup and lost storage replies. This does not implement the planned
-saved authoring, right inspector or method experience.
+repair, including uncertain cleanup and lost storage replies. S02 adds saved authoring and the
+right inspector; the method experience remains a later assignment.
 
 Host tools remain trusted processes; native claims do not sandbox them or lock out external
 editors. Project-aware process profiles are configured by the operator. Fixed-directory and isolated
@@ -136,14 +143,14 @@ before workload entry; successful physical attached-project execution remains un
 
 The user rejects the current screen and navigation as too complex and bloated. Canvas behavior and
 model assignment have focused verification, but the usability review and substantive task journey
-remain open. The requested tree, blank placement, direct ports and right inspector are developed in
-the [selected design](../decisions/0052-canvas-authoring-and-method-experience.md) and prepared side sprint.
-Saved authoring and the redesigned interaction are not implemented or accepted through actual user review.
+remain open. S02 implements the requested tree, blank placement, direct ports and right inspector
+from the [selected design](../decisions/0052-canvas-authoring-and-method-experience.md).
+The redesigned interaction has not been accepted through actual user review.
 Adding a new model or process still requires a qualified
 operator profile, appropriate grants and daemon restart; the browser now exposes that setup path
 rather than implying that a connection can be installed from a task's selector.
-Drafts are memory-only and are lost on reload
-or disconnect; accepted work remains daemon-owned. A new workflow still requires its first task.
+Saved drafts survive reload and reconnect. Unsaved edits after an unsuccessful checkpoint still
+depend on their current client; conflicts require a deliberate decision. Empty workflows are durable.
 Rename receipts have a fixed capacity of 1,024; new renames refuse at capacity while reads and exact
 replay remain available.
 
@@ -157,8 +164,9 @@ The current store format is a development cutover. Earlier graph, revision, prop
 structured-child, prompt-sequence, workflow-publication and evaluated-learning product paths are
 retired. There is no migration or compatibility reader for those stores in the new executable.
 Internal document format 22 refuses earlier task records lacking the current duration and model
-admission facts. Physical schema 21 adopts only exact schema 19 or 20 stores with internal format 22,
-adding daemon/project tables without rewriting workflow records or receipts. Earlier formats remain refused.
+admission facts. Physical schema 22 adopts only exact schema 19, 20 or 21 stores with internal format 22,
+adding the absent daemon/project tables and authoring/position tables without rewriting workflow
+records or receipts. Earlier formats remain refused.
 The expanded Controller preset changes its grant digest: unfinished work bound to an older grant
 can be denied before its next external entry. Follow the [upgrade guidance](../operations/daemon.md)
 and preserve matching binaries/configurations for old work. Existing stores/services and Git preservation checkpoints remain intact. Generic managed

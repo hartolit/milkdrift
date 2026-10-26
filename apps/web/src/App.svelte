@@ -1,14 +1,15 @@
 <script lang="ts">
-  import { onDestroy, onMount, tick, untrack } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import { SvelteURLSearchParams } from 'svelte/reactivity';
   import ConnectionForm from './components/ConnectionForm.svelte';
+  import DaemonTree from './components/DaemonTree.svelte';
   import DaemonSettings, { type RenameDraft } from './components/DaemonSettings.svelte';
   import CanvasWorkspace from './components/CanvasWorkspace.svelte';
   import ModelsAgents from './components/ModelsAgents.svelte';
   import ProjectSettings, { newProjectDraft, type ProjectDraft } from './components/ProjectSettings.svelte';
   import { endpointUrl, loadProfiles, maxConnections, saveProfiles } from './lib/connections';
   import type { ConnectionProfile } from './lib/connections';
-  import type { ProjectCommandDto, ProjectDto, ProjectPageDto, ProjectReceiptDto, RenameDaemonReceipt, TaskCapability, TaskSessionDto, WorkflowPageDto, WorkflowReadDto, WorkflowReceipt, WorkflowSummaryDto } from './lib/protocol.generated';
+  import type { CreateWorkflowRequest, ProjectCommandDto, ProjectDto, ProjectPageDto, ProjectReceiptDto, RenameDaemonReceipt, TaskSessionDto, WorkflowPageDto, WorkflowReadDto, WorkflowReceipt, WorkflowSummaryDto } from './lib/protocol.generated';
   import { createCanvas, hasChanges, type CanvasState as TaskDraft, type CanvasTarget as TaskDraftTarget } from './lib/canvas';
   import { DaemonClient, DaemonError } from './lib/transport';
   import { timeLabel } from './lib/presentation';
@@ -40,7 +41,7 @@
     recent: WorkflowSummaryDto[];
     drafts: TaskDraft[];
     visibleDraftId: string;
-    preferredCapability?: TaskCapability;
+    newWorkflow: CreateWorkflowRequest | null;
     view: 'work' | 'settings' | 'models' | 'project';
     loading: boolean;
     discoveryKey: string | undefined;
@@ -48,6 +49,7 @@
     error: string;
     observation: string;
     stream: AbortController;
+    metadataTimer: number | null;
     cursor: string | undefined;
     refreshGeneration: number;
     busy: boolean;
@@ -60,7 +62,6 @@
   let reconnectProfile = $state<ConnectionProfile | undefined>();
   let globalError = $state('');
   let navigationOpen = $state(false);
-  let savedConnectionsOpen = $state(untrack(() => profiles.length > 0));
   let navigationButton: HTMLButtonElement | undefined;
   let bootstrap: DaemonClient | undefined;
   let bootstrapGeneration = 0;
@@ -72,7 +73,7 @@
 
   $effect(() => {
     const states = connections.flatMap((connection) => {
-      const dirtyCount = connection.drafts.filter(hasChanges).length;
+      const dirtyCount = connection.drafts.filter((draft) => draft.authoringSave.status !== 'saved' && draft.authoringSave.status !== 'loading' || draft.pending).length;
       return connection.drafts.map((draft) => ({ draft, blocked: dirtyCount >= maxDrafts && !hasChanges(draft) }));
     });
     untrack(() => { for (const { draft, blocked } of states) draft.capacityBlocked = blocked; });
@@ -162,6 +163,7 @@
   function disconnect(connection: Connection) {
     connection.refreshGeneration++;
     connection.stream.abort();
+    if (connection.metadataTimer !== null) window.clearInterval(connection.metadataTimer);
     connection.client.disconnect();
     disposeWork(connection);
     connection.workflows = [];
@@ -181,10 +183,10 @@
     connection.workGeneration++;
     connection.projectGeneration++;
     connection.selectionGeneration++;
-    for (const draft of connection.drafts) draft.disposed = true;
+    for (const draft of connection.drafts) { draft.disposed = true; draft.checkpoint?.close(); draft.positionCheckpoint?.close(); }
     connection.drafts = [];
     connection.visibleDraftId = '';
-    connection.preferredCapability = undefined;
+    connection.newWorkflow = null;
     connection.recent = [];
     connection.projects = [];
     connection.projectId = '';
@@ -475,7 +477,9 @@
             await refreshObserved(connection);
           } else if (event.event === 'workflow_changed') {
             if (event.id) connection.cursor = event.id;
-            await refreshObserved(connection);
+            await refresh(connection);
+          } else if (event.event === 'metadata_changed') {
+            await refreshSession(connection);
           } else if (event.event === 'forbidden') {
             fail(connection, new DaemonError('unauthorized', 'Observation authority changed.', 403));
           }
@@ -531,12 +535,11 @@
       const connection: Connection = {
         profile, client, session, rename: { name: session.daemon_name, dirty: false, pending: null }, workflows: [], nextCursor: null, pageCursor: undefined, truncated: false, search: '', appliedSearch: '', selected: null, taskCursor: undefined,
         selectedId: '', selectionGeneration: 0, sessionGeneration: 0, projects: [], projectCursor: null, projectId: '', earlierOnly: false, projectDraft: newProjectDraft(), projectDrafts: [], projectGeneration: 0, workGeneration: 0, unresolvedProjects: [], recent: [], drafts: [], visibleDraftId: '', view: 'work', loading: true, discoveryKey: undefined,
-        error: '', observation: 'Connecting live updates', stream: new AbortController(), cursor: undefined, refreshGeneration: 0, busy: false,
+        newWorkflow: null, error: '', observation: 'Connecting live updates', stream: new AbortController(), metadataTimer: null, cursor: undefined, refreshGeneration: 0, busy: false,
       };
       connections = [...connections, connection];
       activeId = profile.id;
       connectionForm = false;
-      savedConnectionsOpen = false;
       bootstrap = undefined;
       // Read and update through the reactive connection proxy after insertion.
       const installed = connections.find((item) => item.profile.id === profile.id)!;
@@ -548,9 +551,16 @@
         void selectWorkflow(installed, restored.workflow, undefined, false);
       }
       rememberLocation();
+      installed.metadataTimer = window.setInterval(() => { if (!installed.stream.signal.aborted) void Promise.all([refreshSession(installed), refreshProjects(installed)]); }, 30000);
       void observe(installed);
       await Promise.all([refreshProjects(installed), refresh(installed)]);
     } catch (failure) { client.disconnect(); throw failure; }
+  }
+
+  function withConnection(id: string, action: (connection: Connection) => void) {
+    const connection = connections.find((item) => item.profile.id === id);
+    if (!connection || !mayLeaveWork()) return;
+    activeId = id; closeConnectionForm(); action(connection);
   }
 
   function choose(profile: ConnectionProfile) {
@@ -630,8 +640,8 @@
     let draft = connection.drafts.find((item) => item.target.kind === target.kind && (target.kind === 'new' ? item.target.projectId === target.projectId : (item.target.kind === 'existing' && item.target.workflowId === target.workflowId)));
     if (!draft) {
       if (connection.drafts.length >= maxDrafts + 1) {
-        const clean = connection.drafts.find((item) => !hasChanges(item) && item.id !== connection.visibleDraftId);
-        if (clean) { clean.disposed = true; connection.drafts = connection.drafts.filter((item) => item !== clean); }
+        const clean = connection.drafts.find((item) => item.authoringSave.status === 'saved' && !item.pending && item.id !== connection.visibleDraftId);
+        if (clean) { clean.disposed = true; clean.checkpoint?.close(); clean.positionCheckpoint?.close(); connection.drafts = connection.drafts.filter((item) => item !== clean); }
         else { connection.error = `This connection holds ${maxDrafts} drafts. Open and discard one before starting another; your existing drafts are intact.`; return; }
       }
       draft = createCanvas(connection.session, target, connection.projects.find((project) => project.id === target.projectId) ?? null);
@@ -640,43 +650,26 @@
     return connection.drafts.find((item) => item.id === draft.id)!;
   }
 
-  function openComposer(connection: Connection, target: TaskDraftTarget) {
-    if (target.kind === 'new') {
-      if (!connection.projectId) { showProject(connection, null); return; }
-      target = { ...target, projectId: connection.projectId };
-    }
-    const draft = ensureCanvas(connection, target);
-    if (!draft) return;
-    if (target.kind === 'new') { connection.selectedId = ''; connection.selected = null; connection.selectionGeneration++; }
-    connection.visibleDraftId = draft.id;
-    connection.view = 'work';
-    connection.error = '';
-    closeConnectionForm();
-    closeNavigation();
-    rememberLocation();
-  }
-
-  function discardDrawing(connection: Connection, draft: TaskDraft) {
-    if (draft.busy || draft.pending || draft.pendingUpload) return;
-    if (draft.target.kind === 'new') {
-      draft.disposed = true;
-      connection.drafts = connection.drafts.filter((item) => item.id !== draft.id);
-      if (connection.visibleDraftId === draft.id) connection.visibleDraftId = '';
-    } else {
-      draft.tasks = []; draft.sources = []; draft.changes = []; draft.bindings = {}; draft.conflict = false; draft.error = ''; draft.selected = ''; draft.inspector = false;
-    }
-    rememberLocation(true);
-  }
-
-  async function resumeDraft(connection: Connection, draft: TaskDraft) {
-    if (draft.disposed || !mayLeaveWork()) return;
-    connection.projectId = draft.target.projectId ?? '';
-    const read = draft.target.kind === 'existing' ? selectWorkflow(connection, draft.target.workflowId, undefined, false, false) : selectWorkflow(connection, '', undefined, false, false);
-    connection.view = 'work';
-    connection.visibleDraftId = draft.id;
-    closeNavigation();
-    rememberLocation();
-    await read;
+  async function openComposer(connection: Connection, target: TaskDraftTarget) {
+    if (target.kind !== 'new') { await selectWorkflow(connection, target.workflowId); return; }
+    const projectId = target.projectId ?? connection.projectId;
+    if (!projectId) { showProject(connection, null); return; }
+    if (connection.busy) return;
+    connection.busy = true; connection.error = '';
+    const request = connection.newWorkflow ?? { request_id: crypto.randomUUID(), project_id: projectId, title: 'Untitled workflow', description: '', tasks: [], inputs: {}, finish_when_settled: false, limits: null };
+    connection.newWorkflow = request;
+    try {
+      let receipt: WorkflowReceipt;
+      try { receipt = await connection.client.request<WorkflowReceipt>('/v1/workflows', request); }
+      catch (failure) {
+        if (failure instanceof DaemonError && failure.status < 500) { connection.newWorkflow = null; throw failure; }
+        receipt = await connection.client.request<WorkflowReceipt>(`/v1/workflow-requests/${encodeURIComponent(request.request_id)}`);
+      }
+      if (connection.stream.signal.aborted) return;
+      connection.newWorkflow = null; connection.projectId = request.project_id ?? '';
+      await selectWorkflow(connection, receipt.workflow_id); await refresh(connection);
+    } catch (failure) { fail(connection, failure); }
+    finally { connection.busy = false; }
   }
 
   function composerError(connection: Connection, failure: unknown) {
@@ -693,20 +686,13 @@
 
   async function accepted(connection: Connection, draft: TaskDraft, receipt: WorkflowReceipt) {
     if (connection.stream.signal.aborted || draft.disposed) return;
-    const stillHere = activeId === connection.profile.id && connection.visibleDraftId === draft.id && connection.view === 'work' && !connectionForm;
-    for (const alias of Object.keys(receipt.aliases)) delete draft.positions[alias];
-    for (const source of draft.sources) delete draft.positions[source.id];
-    draft.target = { kind: 'existing', workflowId: receipt.workflow_id, projectId: draft.target.projectId, title: draft.title || draft.tasks[0]?.definition.title || (draft.target.kind === 'existing' ? draft.target.title : 'Workflow'), generation: receipt.generation };
-    draft.tasks = []; draft.sources = []; draft.changes = []; draft.bindings = {}; draft.conflict = false; draft.error = ''; draft.selected = ''; draft.inspector = false; draft.notice = 'Changes accepted by the daemon.';
-    if (stillHere) {
-      await selectWorkflow(connection, receipt.workflow_id);
-      await tick();
-      if (active === connection && connection.selected?.id === receipt.workflow_id && connection.view === 'work' && !connectionForm) document.querySelector<HTMLButtonElement>('[data-add-task]')?.focus();
-    }
+    if (draft.target.kind === 'existing') draft.target.generation = receipt.generation;
+    draft.conflict = false; draft.error = ''; draft.notice = 'Plan accepted. Other ideas remain saved.';
+    if (connection.selectedId === receipt.workflow_id) await readSelection(connection);
     await refresh(connection);
   }
 
-  onDestroy(() => { cancelBootstrap(); for (const connection of connections) { connection.stream.abort(); connection.client.disconnect(); } });
+  onDestroy(() => { cancelBootstrap(); for (const connection of connections) { connection.stream.abort(); if (connection.metadataTimer !== null) window.clearInterval(connection.metadataTimer); connection.client.disconnect(); } });
 </script>
 
 <svelte:head><meta name="description" content="Submit work to your Milkdrift daemon, follow its progress, and return to retained results." /></svelte:head>
@@ -721,30 +707,19 @@
   <aside id="daemon-navigation" class="sidebar" class:navigation-open={navigationOpen} aria-label="Workspace navigation">
     <div class="brand-lockup"><img class="brand-logo" src="/milkdrift-logo.svg" alt="" width="46" height="44" /><span class="brand">Milkdrift</span></div>
     <div class="sidebar-heading"><p class="eyebrow">Daemon</p><button class="quiet" onclick={addConnection} aria-label="Add daemon connection">+</button></div>
-    {#if profiles.length}<label class="daemon-switcher"><span class="visually-hidden">Daemon</span><select value={activeId} onchange={(event) => { const profile = profiles.find((item) => item.id === event.currentTarget.value); if (profile) choose(profile); }}><option value="" disabled>Choose a daemon</option>{#each profiles as profile (profile.id)}<option value={profile.id}>{profile.cachedName}{connections.some((item) => item.profile.id === profile.id) ? '' : ' · Reconnect'}</option>{/each}</select></label>{/if}
-    <details class="saved-connections" bind:open={savedConnectionsOpen}><summary>Saved connections</summary><ul class="connection-list">{#each profiles as profile (profile.id)}{@const connected = connections.some((item) => item.profile.id === profile.id)}<li><button class:active={activeId === profile.id} onclick={() => choose(profile)} aria-pressed={activeId === profile.id}><span class="status-dot" class:connected aria-hidden="true"></span><span>{profile.cachedName}<small>{profile.endpoint}</small><small>{connected ? 'Connected' : 'Cached name · Authenticate to reconnect'}</small></span></button><button class="quiet forget-connection" onclick={() => forget(profile)} aria-label={`Forget ${profile.cachedName} connection`}>Forget</button></li>{/each}</ul></details>
+    <DaemonTree {profiles} {connections} {activeId}
+      onchoose={choose}
+      onselect={(id, workflow) => withConnection(id, (connection) => { void selectWorkflow(connection, workflow); })}
+      onnew={(id, project) => withConnection(id, (connection) => { connection.projectId = project.id; openComposer(connection, { kind: 'new', projectId: project.id }); })}
+      onproject={(id, project) => withConnection(id, (connection) => showProject(connection, project))}
+      onmoreprojects={(id) => { const connection = connections.find((item) => item.profile.id === id); if (connection) void refreshProjects(connection, true); }}
+      onsettings={(id) => withConnection(id, () => showSettings())}
+      onmodels={(id) => withConnection(id, () => showModels())}
+      onerror={(id, failure) => { const connection = connections.find((item) => item.profile.id === id); if (connection) fail(connection, failure); }} />
     {#if !profiles.length}<p class="sidebar-footer">Add your first daemon to start a task.</p>{/if}
+    <details class="saved-connections"><summary>Manage connections</summary>{#each profiles as profile (profile.id)}<button class="quiet" onclick={() => forget(profile)} aria-label={`Forget ${profile.cachedName} connection`}>Forget {profile.cachedName}</button>{/each}</details>
     {#if active}
-      <div class="sidebar-heading"><p class="eyebrow">Projects</p><button class="quiet" aria-label="Add project" onclick={() => showProject(active!, null)}>+</button></div>
-      <nav class="project-navigation" aria-label="Projects">
-        {#each active.projects as project (project.id)}<button class:active={active.projectId === project.id} aria-label={`Open project ${project.name}`} aria-current={active.projectId === project.id ? 'true' : undefined} onclick={() => chooseProject(active!, project.id)}><span aria-hidden="true">▱</span> {project.name}</button>{/each}
-        {#if active.projectCursor}<button class="quiet" onclick={() => refreshProjects(active!, true)}>More projects</button>{/if}
-        <button class:active={!active.projectId && !active.earlierOnly} onclick={() => chooseProject(active!, '')}>All accessible workflows</button>
-        <button class:active={!active.projectId && active.earlierOnly} onclick={() => chooseProject(active!, '', true)}>Earlier workflows</button>
-      </nav>
-      {#if activeProject}<div class="sidebar-heading"><p class="eyebrow">{activeProject.name}</p><button class="quiet" aria-label="Project settings" onclick={() => showProject(active!, activeProject)}>⚙</button></div><button class="primary new-workflow" aria-label="New workflow" onclick={() => openComposer(active!, { kind: 'new' })}>+ New workflow</button>{/if}
-      <nav class="recent-workflows" aria-label="Recent workflows">
-        <p class="eyebrow">Current & recent</p>
-        {#if active.selected && !active.recent.some((item) => item.id === active!.selectedId)}<button class="active" aria-current="page" aria-label={active.selected.title} onclick={() => selectWorkflow(active!, active!.selectedId)}>{active.selected.title}<small>Current workflow</small></button>{/if}
-        {#each active.recent as workflow (workflow.id)}<button aria-label={workflow.title} class:active={active.selectedId === workflow.id && active.view === 'work'} aria-current={active.selectedId === workflow.id && active.view === 'work' ? 'page' : undefined} onclick={() => selectWorkflow(active!, workflow.id)}>{workflow.title}<small>{workflow.task_count} {workflow.task_count === 1 ? 'task' : 'tasks'} · {workflow.state}</small></button>{/each}
-        {#if active.loading && !active.recent.length}<p class="field-hint">Loading workflows…</p>{/if}
-      </nav>
-      <nav class="workspace-navigation" aria-label="Workspace">
-        <button class:active={active.view === 'work' && !active.selectedId} onclick={showWorkflows}><span aria-hidden="true">▦</span> All workflows</button>
-        <button class:active={active.view === 'models'} onclick={showModels}><span aria-hidden="true">✦</span> Models & agents</button>
-        <button class:active={active.view === 'settings'} onclick={showSettings}><span aria-hidden="true">⚙</span> Daemon settings</button>
-      </nav>
-      {#if active.drafts.some(hasChanges)}<details class="workspace-drafts"><summary>Drafts ({active.drafts.filter(hasChanges).length}/{maxDrafts})</summary><p class="field-hint">Drawings stay in this authenticated browser session.</p>{#each active.drafts.filter(hasChanges) as draft (draft.id)}<button onclick={() => resumeDraft(active!, draft)}>{draft.title || draft.tasks[0]?.definition.title || 'Unsaved changes'}<small>{draft.target.kind === 'new' ? 'New workflow' : draft.target.title}{draft.pending ? ' · Reply unconfirmed' : draft.busy ? ' · Sending' : ''}</small></button>{/each}</details>{/if}
+      <button class="quiet" onclick={showWorkflows}>All workflows</button>
       <div class="connection-detail"><p class="eyebrow">Connected daemon</p><strong>{active.session.daemon_name}</strong><p class="connection-address">{active.profile.endpoint}</p><p aria-live="polite"><span class="status-dot connected" aria-hidden="true"></span> {active.observation}</p><button class="quiet" onclick={() => { disconnect(active!); closeNavigation(); }}>Disconnect</button></div>
     {/if}
     <p class="sidebar-footer">Closing this client leaves your daemon running.</p>
@@ -754,7 +729,7 @@
     {#if connectionForm}
       {#key reconnectProfile?.id}<ConnectionForm profile={reconnectProfile} onconnect={connect} oncancel={closeConnectionForm} />{/key}
     {:else if active}
-      {#if active.error}<p class="notice error" role="alert">{active.error}</p>{/if}
+      {#if active.error}<p class="notice error" role="alert">{active.error}</p>{/if}{#if active.newWorkflow}<div class="notice warning">Workflow creation is unconfirmed. Its exact request is retained.<button disabled={active.busy} onclick={() => openComposer(active!, { kind: 'new', projectId: active!.newWorkflow!.project_id })}>Recover workflow creation</button></div>{/if}
       {#key `${active.profile.id}:${active.session.actor_id}`}
         {#if active.view === 'settings'}
           <DaemonSettings client={active.client} session={active.session} bind:draft={active.rename} onrenamed={renamed.bind(null, active)} onrefresh={refreshSession.bind(null, active)} onerror={fail.bind(null, active)} onback={() => { active!.view = 'work'; rememberLocation(); }} />
@@ -766,15 +741,15 @@
           {#if visibleDraft}
             {@const connection = active}{@const draft = visibleDraft}
             {#if !draft.target.projectId && connection.selected}<div class="notice"><p>No project is available to this connection for later submissions. Accepted tasks retain their recorded tools and paths. Earlier workflows can be associated with an accessible project.</p><label>Associate with project<select value="" disabled={!!connection.projectDraft.pending} onchange={(event) => { const project = connection.projects.find((item) => item.id === event.currentTarget.value); if (project) void associateWorkflow(connection, project); }}><option value="">Choose a project</option>{#each connection.projects as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label></div>{/if}
-            {#key draft.id}<CanvasWorkspace bind:this={workflowView} canvas={draft} currentProject={activeProject} workflow={draft.target.kind === 'existing' && connection.selected?.id === draft.target.workflowId ? connection.selected : null} client={connection.client} session={connection.session} preferredCapability={connection.preferredCapability} onaccepted={accepted.bind(null, connection, draft)} onreviewed={reviewed.bind(null, connection, draft)} onrefresh={refresh.bind(null, connection)} onpage={(cursor) => selectWorkflow(connection, connection.selectedId, cursor, false, false)} onerror={composerError.bind(null, connection)} oncapabilitychoice={(capability) => connection.preferredCapability = capability} onmodels={showModels} ondiscard={() => discardDrawing(connection, draft)} />{/key}
+            {#key draft.id}<CanvasWorkspace bind:this={workflowView} bind:canvas={() => draft, () => {}} currentProject={activeProject} workflow={draft.target.kind === 'existing' && connection.selected?.id === draft.target.workflowId ? connection.selected : null} client={connection.client} session={connection.session} onaccepted={accepted.bind(null, connection, draft)} onreviewed={reviewed.bind(null, connection, draft)} onrefresh={readSelection.bind(null, connection)} onpage={(cursor) => selectWorkflow(connection, connection.selectedId, cursor, false, false)} onerror={composerError.bind(null, connection)} onmodels={showModels} />{/key}
           {:else if active.selectedId}
             <div class="panel" role="status">{active.busy ? 'Loading workflow…' : 'This workflow could not be loaded.'}<button onclick={() => readSelection(active!)}>Retry workflow</button></div>
           {:else}
           {#if !activeProject}<div class="page-heading"><div><p class="eyebrow">{active.session.daemon_name}</p><h1>Your projects</h1><p>Choose a project to start work in its folder on this daemon.</p></div><button class="primary" onclick={() => showProject(active!, null)}>Add project</button></div>
-            {#if active.projects.length}<ul class="project-list">{#each active.projects as project (project.id)}<li><button class="workflow-card" onclick={() => chooseProject(active!, project.id)}><strong>{project.name}</strong><small>{project.availability}</small></button></li>{/each}</ul>{/if}
+            {#if active.projects.length}<ul class="project-list">{#each active.projects as project (project.id)}<li><button class="workflow-card" aria-label={`Open project ${project.name}`} onclick={() => chooseProject(active!, project.id)}><strong>{project.name}</strong><small>{project.availability}</small></button></li>{/each}</ul>{/if}
             {#if active.unresolvedProjects.length}<div class="notice warning"><p>Some folder creations need a decision. Their directories have been preserved.</p>{#each active.unresolvedProjects as operation (operation.request_id)}<button onclick={() => recoverProject(active!, operation)}>Recover folder creation {operation.operation_folder ?? operation.request_id}</button>{/each}</div>{/if}
           {/if}
-          <div class="page-heading"><div><p class="eyebrow">{activeProject?.name ?? 'Retained work'}</p><h2>{activeProject ? 'Your workflows' : active.earlierOnly ? 'Earlier workflows' : 'All accessible workflows'}</h2><p>{activeProject ? `Work in progress and retained results in ${activeProject.name}.` : active.earlierOnly ? 'Work accepted before projects. Associate a workflow deliberately to use project settings for later tasks.' : `Permitted work and results on ${active.session.daemon_name}. Choose a project above for new work.`}</p></div>{#if activeProject}<button class="quiet" onclick={() => showProject(active!, activeProject)}>Project settings</button>{/if}</div>
+          <div class="page-heading"><div><p class="eyebrow">{activeProject?.name ?? 'Retained work'}</p><h2>{activeProject ? 'Your workflows' : active.earlierOnly ? 'Earlier workflows' : 'All accessible workflows'}</h2><p>{activeProject ? `Work in progress and retained results in ${activeProject.name}.` : active.earlierOnly ? 'Work accepted before projects. Associate a workflow deliberately to use project settings for later tasks.' : `Permitted work and results on ${active.session.daemon_name}. Choose a project above for new work.`}</p></div>{#if activeProject}<button class="primary" onclick={() => openComposer(active!, { kind: 'new' })}>New workflow</button><button class="quiet" onclick={() => showProject(active!, activeProject)}>Project settings</button>{/if}</div>
           <form class="toolbar" onsubmit={(event) => { event.preventDefault(); search(active!); }}><label><span class="visually-hidden">Search workflows and retained results</span><input type="search" bind:value={active.search} placeholder="Search workflows and retained results" /></label><button>Search</button><button type="button" onclick={() => refresh(active!)}>Refresh</button></form>
           {#if active.workflows.length}
             {#if active.loading}<p role="status">Updating workflow results…</p>{/if}

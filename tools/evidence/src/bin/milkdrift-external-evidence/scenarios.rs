@@ -130,7 +130,11 @@ pub(super) async fn run_process_scenario(
     correction
         .inputs
         .insert("prompt".into(), workflows::text(prompt));
-    correction.dependencies.push(review.clone());
+    correction.dependencies =
+        milkdrift_control_protocol::tasks::TaskDependenciesDto::Ordered(BTreeMap::from([(
+            review.clone(),
+            milkdrift_control_protocol::tasks::TaskOrderConditionDto::Success,
+        )]));
     correction.inputs.insert(
         "review".into(),
         InputBinding::TaskOutput {
@@ -147,7 +151,11 @@ pub(super) async fn run_process_scenario(
         Some(repository),
         &project,
     );
-    verification.dependencies.push("corrective-coding".into());
+    verification.dependencies =
+        milkdrift_control_protocol::tasks::TaskDependenciesDto::Ordered(BTreeMap::from([(
+            "corrective-coding".into(),
+            milkdrift_control_protocol::tasks::TaskOrderConditionDto::Success,
+        )]));
     verification.corrective_of = Some(weak.clone());
     workflows::output(
         &mut verification,

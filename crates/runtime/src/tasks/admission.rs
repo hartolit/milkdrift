@@ -13,6 +13,13 @@ use milkdrift_workspace::RunId;
 use super::{TaskRecord, TaskRuntime, TaskState, WorkflowRecord, WorkflowState};
 use crate::RuntimeError;
 
+#[derive(Default)]
+pub(super) struct EditContext<'a> {
+    pub transport: Option<serde_json::Value>,
+    pub model_source: Option<(&'a TaskId, bool)>,
+    pub authoring: Option<milkdrift_persistence::WorkflowAuthoringCommit>,
+}
+
 impl TaskRuntime {
     /// Looks up the exact actor-scoped public request before resolving current authoring metadata.
     /// The control owner authorizes this read; an absent receipt grants no admission or execution.
@@ -157,10 +164,9 @@ impl TaskRuntime {
             || request.title.len() > 256
             || request.description.len() > 4096
             || request.tasks.len() > MAX_TASK_BATCH_ACTIONS
-            || request.tasks.is_empty()
         {
             return Err(invalid(
-                "workflow needs a bounded title and 1..=32 initial tasks",
+                "workflow needs a bounded title and at most 32 initial tasks",
             ));
         }
         if decision.request().actor.as_str() != owner_actor {
@@ -283,7 +289,7 @@ impl TaskRuntime {
         workflow: &WorkflowId,
         batch: TaskBatch,
     ) -> Result<WorkflowCommandReceipt, RuntimeError> {
-        self.edit_request(owner_actor, key, workflow, batch, None, None)
+        self.edit_request(owner_actor, key, workflow, batch, EditContext::default())
     }
 
     /// Binds replay to the original canonical public edit, including explicit defaults.
@@ -303,8 +309,10 @@ impl TaskRuntime {
             key,
             workflow,
             batch,
-            Some(canonical_transport_value(canonical_transport)?),
-            None,
+            EditContext {
+                transport: Some(canonical_transport_value(canonical_transport)?),
+                ..EditContext::default()
+            },
         )
     }
 
@@ -325,8 +333,37 @@ impl TaskRuntime {
             key,
             workflow,
             batch,
-            Some(serde_json::to_value(original)?),
-            None,
+            EditContext {
+                transport: Some(serde_json::to_value(original)?),
+                ..EditContext::default()
+            },
+        )
+    }
+
+    /// Admits a reviewed saved proposal and its remaining canvas in the same receipt transaction.
+    /// Control supplies the validated remaining document; runtime adds only allocated task aliases.
+    ///
+    /// # Errors
+    /// Refuses stale authoring/runtime guards, invalid remaining content and ordinary edit failures.
+    pub fn edit_authoring_exact(
+        &self,
+        owner_actor: &str,
+        key: &str,
+        workflow: &WorkflowId,
+        batch: TaskBatch,
+        canonical_transport: &[u8],
+        authoring: milkdrift_persistence::WorkflowAuthoringCommit,
+    ) -> Result<WorkflowCommandReceipt, RuntimeError> {
+        self.edit_request(
+            owner_actor,
+            key,
+            workflow,
+            batch,
+            EditContext {
+                transport: Some(canonical_transport_value(canonical_transport)?),
+                authoring: Some(authoring),
+                ..EditContext::default()
+            },
         )
     }
 
@@ -336,9 +373,13 @@ impl TaskRuntime {
         key: &str,
         workflow: &WorkflowId,
         batch: TaskBatch,
-        transport: Option<serde_json::Value>,
-        model_source: Option<(&TaskId, bool)>,
+        context: EditContext<'_>,
     ) -> Result<WorkflowCommandReceipt, RuntimeError> {
+        let EditContext {
+            transport,
+            model_source,
+            mut authoring,
+        } = context;
         let _guard = self
             .gate
             .lock()
@@ -362,15 +403,10 @@ impl TaskRuntime {
         if let Some((source, repair)) = model_source {
             super::model_actions::check_admission(&record, source, &batch, repair)?;
         } else {
-            // Progress and redispatch do not change the human's decision. These three controls
-            // may use that observed decision, while any intervening edit/start/control refuses.
-            let control_only = matches!(
-                batch.changes.as_slice(),
-                [TaskChange::Wait { .. } | TaskChange::Continue | TaskChange::Stop { .. }]
-            );
+            // Progress, readiness explanations and redispatch do not change semantic choices.
+            // Intervening authoring/start decisions still conflict; affected versions remain exact.
             if batch.expected_generation > record.generation
                 || batch.expected_generation < record.decision_generation
-                || !control_only && batch.expected_generation != record.generation
             {
                 return Err(RuntimeError::InvalidTransition(format!(
                     "stale workflow generation: expected {}, actual {}",
@@ -406,9 +442,33 @@ impl TaskRuntime {
                 ));
             }
         }
+        let media_tasks = batch.changes.iter().flat_map(|change| match change {
+            TaskChange::Add { alias, .. } => aliases.get(alias).cloned().into_iter().collect::<Vec<_>>(),
+            TaskChange::Revise { task, .. } => vec![task.clone()],
+            TaskChange::BindInput { name, .. } => record.tasks.values().filter(|task| task.definition.inputs.values().any(|binding| matches!(binding, milkdrift_blueprint::TaskInputBinding::Supplied { name: source, .. } if source == name))).map(|task| task.id.clone()).collect(),
+            _ => Vec::new(),
+        }).collect::<BTreeSet<_>>();
+        let new_definitions = batch
+            .changes
+            .iter()
+            .filter_map(|change| match change {
+                TaskChange::Add { alias, .. } => aliases.get(alias).cloned(),
+                TaskChange::Revise { task, .. } => Some(task.clone()),
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
         let now = self.clock.now()?;
         for change in batch.changes {
             match change {
+                TaskChange::Rename { title, description } => {
+                    if title.trim().is_empty() || title.len() > 256 || description.len() > 4096 {
+                        return Err(invalid(
+                            "workflow title or description is empty or oversized",
+                        ));
+                    }
+                    record.title = title;
+                    record.description = description;
+                }
                 TaskChange::DismissAdmission { task } => {
                     let admission = record
                         .admissions
@@ -425,7 +485,9 @@ impl TaskRuntime {
                 }
                 TaskChange::Add { alias, definition } => {
                     guard_project_settings(&mut record.admission_project_guard, &definition)?;
-                    self.validate_future_definition(&record, &definition)?;
+                    // Shared input changes later in this same atomic batch must be included
+                    // before checking media. Definition and executor authority remain immediate.
+                    drop(self.validate_executor_definition(&record, &definition)?);
                     let id = aliases
                         .get(&alias)
                         .ok_or_else(|| invalid("missing allocated alias"))?
@@ -468,7 +530,7 @@ impl TaskRuntime {
                     }) {
                         guard_project_settings(&mut record.admission_project_guard, &definition)?;
                     }
-                    self.validate_future_definition(&record, &definition)?;
+                    drop(self.validate_executor_definition(&record, &definition)?);
                     let value = future_task(&mut record, &task, expected_version)?;
                     if value.previous_definitions.len() >= 128 {
                         return Err(invalid(
@@ -562,6 +624,7 @@ impl TaskRuntime {
         if let Some((source, repair)) = model_source {
             super::model_actions::accept_admission(&mut record, source, key, &aliases, repair)?;
         }
+        self.validate_known_media(&record, &media_tasks, &new_definitions)?;
         let expected = self.advance(&mut record)?;
         record.decision_generation = record.generation;
         let acceptance = WorkflowCommandAcceptance {
@@ -571,7 +634,18 @@ impl TaskRuntime {
             canonical_request,
             result: serde_json::json!({"workflow_id":workflow,"generation":record.generation,"aliases":aliases}),
         };
-        receipt(self.save(&record, Some(expected), Some(acceptance))?)
+        if let Some(update) = &mut authoring {
+            let mut document: milkdrift_blueprint::authoring::AuthoringDocument =
+                serde_json::from_value(update.document.clone())?;
+            for (alias, task) in &aliases {
+                document
+                    .accepted
+                    .insert(alias.to_string(), task.to_string());
+            }
+            document.validate().map_err(invalid)?;
+            update.document = serde_json::to_value(document)?;
+        }
+        receipt(self.save_with_authoring(&record, Some(expected), Some(acceptance), authoring)?)
     }
 
     fn replay(
@@ -703,21 +777,25 @@ fn adopt_correction(
                 .previous_definitions
                 .push(consumer.definition.clone());
         }
+        if consumer.definition.dependencies.is_legacy() {
+            consumer.definition.dependencies = milkdrift_blueprint::TaskDependencies::Ordered(
+                consumer
+                    .definition
+                    .dependencies
+                    .conditions(&consumer.definition.inputs),
+            );
+        }
         if let Some(TaskInputBinding::TaskOutput { task, .. }) =
             consumer.definition.inputs.get_mut(&redirect.input)
         {
             *task = correction.clone();
         }
-        consumer.definition.dependencies.insert(correction.clone());
     }
     for id in changed {
         let consumer = record
             .tasks
             .get_mut(&id)
             .ok_or_else(|| invalid("redirected consumer disappeared"))?;
-        if !consumer.definition.inputs.values().any(|binding| matches!(binding, TaskInputBinding::TaskOutput { task, .. } | TaskInputBinding::SettledOutcome { task } if task == original_id)) {
-            consumer.definition.dependencies.remove(original_id);
-        }
         consumer.version = consumer
             .version
             .checked_add(1)
@@ -838,11 +916,24 @@ fn remap_definition(
     mut definition: TaskDefinition,
     aliases: &BTreeMap<TaskId, TaskId>,
 ) -> TaskDefinition {
-    definition.dependencies = definition
-        .dependencies
-        .iter()
-        .map(|id| aliases.get(id).unwrap_or(id).clone())
-        .collect::<BTreeSet<_>>();
+    definition.dependencies = match definition.dependencies {
+        milkdrift_blueprint::TaskDependencies::Legacy(values) => {
+            milkdrift_blueprint::TaskDependencies::Legacy(
+                values
+                    .into_iter()
+                    .map(|id| aliases.get(&id).unwrap_or(&id).clone())
+                    .collect(),
+            )
+        }
+        milkdrift_blueprint::TaskDependencies::Ordered(values) => {
+            milkdrift_blueprint::TaskDependencies::Ordered(
+                values
+                    .into_iter()
+                    .map(|(id, condition)| (aliases.get(&id).unwrap_or(&id).clone(), condition))
+                    .collect(),
+            )
+        }
+    };
     for binding in definition.inputs.values_mut() {
         if let TaskInputBinding::TaskOutput { task, .. }
         | TaskInputBinding::SettledOutcome { task } = binding

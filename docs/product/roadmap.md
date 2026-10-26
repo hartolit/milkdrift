@@ -33,8 +33,8 @@ method work. Main 04 is superseded as an assignment, not completed. The side inc
 repairs, saved authoring, the coherent canvas and method experience, and its own S05 full gate.
 Prompt 03 stays complete and is not replayed.
 Earlier checkpoints and stores remain preserved; no corrected hosted run is claimed.
-Side S01 is complete locally with its focused evidence. S02 is next prepared work;
-S02–S05 and main 05–07 remain unassigned.
+Side S01 and S02 are complete locally with their focused evidence;
+S03–S05 and main 05–07 remain unassigned.
 Main 07 owns the final integrated test-and-repair gate
 after remote tools, retention and main 06 review; the side gate does not pre-qualify those changes.
 The superseded remedial P00–P09 is historical evidence only.

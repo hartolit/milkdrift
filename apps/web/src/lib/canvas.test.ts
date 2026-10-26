@@ -1,212 +1,165 @@
 import { describe, expect, it } from 'vitest';
-import { addCanvasTask, addSource, cacheTask, capabilityKey, chooseCapability, connectBinding, freezeCanvas, projectGraph, removeConnection, reviseTask, sourceBinding, stageChange, synchronizeDependencies, updateDefinition, updateInstructions, updateSource } from './canvas';
+import { addCanvasTask, addSource, addConnection, removeUnusedCanvasReferences, adoptAuthoring, canvasDocument, cacheTask, capabilityKey, chooseCapability, copy, projectGraph, resolveConnections, reviseTask, updateDefinition, updateInstructions, updateSource, useUsualModel } from './canvas';
+import { acceptedTask, session, workflow, projectCanvas as createCanvas, topology } from './canvas.test-fixtures';
 
-import { acceptedTask, session, workflow, projectCanvas as createCanvas } from './canvas.test-fixtures';
-
-describe('bounded canvas authoring', () => {
-  it('shows the current human pause for queued work without rewriting its retained daemon reason', () => {
-    const task = acceptedTask(); task.reason = 'missing supplied input source';
-    const snapshot = workflow([task]); snapshot.wait_question = 'Wait for my decision.';
-    const canvas = createCanvas(session(), { kind: 'existing', workflowId: snapshot.id, title: snapshot.title, generation: snapshot.generation });
-    cacheTask(canvas, task);
-    expect(projectGraph(canvas, snapshot).nodes.find((node) => node.id === task.id)?.detail).toBe('Workflow paused');
-    expect(canvas.details[0].reason).toBe('missing supplied input source');
-    expect(snapshot.tasks[0].reason).toBe('missing supplied input source');
-    snapshot.wait_question = null;
-    expect(projectGraph(canvas, snapshot).nodes.find((node) => node.id === task.id)?.detail).toBe('Waiting for a required input');
+describe('saved canvas authoring', () => {
+  it('places blank cards without choosing a model, changing selection, opening details or moving the camera', () => {
+    const configured = session(), canvas = createCanvas(configured, { kind: 'existing', workflowId: 'w', title: 'Ideas', generation: 1 });
+    canvas.camera = { x: 32, y: -50, zoom: .6 }; canvas.selected = 'other';
+    const a = addCanvasTask(canvas, configured), b = addCanvasTask(canvas, configured);
+    expect(a.definition.instructions).toBe(''); expect(a.definition.capability.id).toBe(''); expect(a.definition.dependencies).toEqual({});
+    expect(canvas.positions[a.id]).not.toEqual(canvas.positions[b.id]); expect(canvas.inspector).toBe(false); expect(canvas.selected).toBe('other'); expect(canvas.camera).toEqual({ x: 32, y: -50, zoom: .6 });
+    expect(canvasDocument(canvas).tasks).toHaveLength(2);
   });
-
-  it('keeps an empty canvas unsaved and requires deliberate choice when more than one executor exists', () => {
-    const configured = session(); configured.capabilities.push({ id: 'model-b', operation: 'model.generate' });
+  it('applies a deliberate usual model to just unassigned new cards and future cards', () => {
+    const configured = session(), canvas = createCanvas(configured, { kind: 'new' });
+    const a = addCanvasTask(canvas, configured), b = addCanvasTask(canvas, configured);
+    chooseCapability(b, configured, capabilityKey(configured.capabilities[0])); b.contractGeneration = 2;
+    const accepted = acceptedTask(); canvas.topology = topology([accepted]); reviseTask(canvas, accepted, configured);
+    useUsualModel(canvas, configured, capabilityKey(configured.capabilities[0]), true);
+    expect(canvas.highlighted).toEqual([a.id]); expect(a.contractGeneration).toBe(3); expect(b.contractGeneration).toBe(2);
+    expect(canvas.tasks.find((task) => task.version !== null)?.definition).toMatchObject({ capability: accepted.definition.capability });
+    expect(addCanvasTask(canvas, configured).definition.capability).toEqual(configured.capabilities[0]);
+  });
+  it('keeps default-only choice off existing unassigned tasks and preserves an unavailable reviewed generation', () => {
+    const configured = session(), canvas = createCanvas(configured, { kind: 'new' });
+    const first = addCanvasTask(canvas, configured);
+    useUsualModel(canvas, configured, capabilityKey(configured.capabilities[0]), false);
+    configured.authoring[0].generation = 4;
+    const next = addCanvasTask(canvas, configured);
+    expect(first.definition.capability.id).toBe(''); expect(next.contractGeneration).toBe(3); expect(canvas.usualModel?.generation).toBe(3);
+  });
+  it('preserves an unfinished physical wire and resolves only an advertised default after model choice', () => {
+    const configured = session(), canvas = createCanvas(configured, { kind: 'new' });
+    const a = addCanvasTask(canvas, configured), b = addCanvasTask(canvas, configured);
+    const wire = addConnection(canvas, configured, a.id, b.id);
+    expect(wire.input).toBeNull(); expect(wire.output).toBeNull(); expect(projectGraph(canvas, null).edges[0].unfinished).toBe(true);
+    useUsualModel(canvas, configured, capabilityKey(configured.capabilities[0]), true);
+    expect(wire.output).toBe('model_response'); expect(wire.input).toBe(`input_${wire.id}`);
+    expect(a.definition.outputs).toEqual({}); expect(b.definition.inputs).toEqual({}); expect(b.definition.dependencies).toEqual({});
+  });
+  it('does not choose between equally meaningful output or input ports', () => {
+    const configured = session(); configured.authoring[0].default_output = null;
+    configured.authoring[0].allows_additional_inputs = false;
+    configured.authoring[0].inputs = ['question', 'context'].map((name) => ({ name, label: name, required: false, media_type: 'text/plain', max_bytes: 1024, accepts_artifacts: true }));
+    const canvas = createCanvas(configured, { kind: 'new' }); useUsualModel(canvas, configured, capabilityKey(configured.capabilities[0]), false);
+    const a = addCanvasTask(canvas, configured), b = addCanvasTask(canvas, configured), wire = addConnection(canvas, configured, a.id, b.id);
+    expect(wire.input).toBeNull(); expect(wire.output).toBeNull();
+    wire.output = 'final_text'; wire.input = 'context'; resolveConnections(canvas, configured);
+    expect(wire.output).toBe('final_text'); expect(wire.input).toBe('context');
+    configured.authoring[0].outputs = []; resolveConnections(canvas, configured); expect(wire.output).toBe('final_text');
+  });
+  it('round-trips incomplete cards, sources and wires without storing viewport or duplicating admitted definitions', () => {
+    const configured = session(), original = createCanvas(configured, { kind: 'new' });
+    const task = addCanvasTask(original, configured), source = addSource(original, 'Notes'); updateSource(original, source, 'A useful question', 1024);
+    addConnection(original, configured, source.id, task.id); original.accepted = { former_card: 'accepted-task' };
+    const document = canvasDocument(original), restored = createCanvas(configured, { kind: 'new' }); adoptAuthoring(restored, document);
+    expect(canvasDocument(restored)).toEqual(document); expect(document).not.toHaveProperty('camera'); expect(document).not.toHaveProperty('positions'); expect(restored.tasks).toHaveLength(1);
+  });
+  it('edits a source once while all wires retain the same source identity', () => {
+    const configured = session(), canvas = createCanvas(configured, { kind: 'new' });
+    const source = addSource(canvas), a = addCanvasTask(canvas, configured), b = addCanvasTask(canvas, configured);
+    addConnection(canvas, configured, source.id, a.id); addConnection(canvas, configured, source.id, b.id);
+    updateSource(canvas, source, 'Updated shared context', 1024);
+    expect(canvasDocument(canvas).sources[0].value).toEqual({ kind: 'text', text: 'Updated shared context' }); expect(canvas.connections.map((wire) => wire.source)).toEqual([source.id, source.id]);
+    expect(a.definition.inputs).toEqual({}); expect(b.definition.inputs).toEqual({});
+  });
+  it('materializes existing candidate connections using daemon-projected legacy predicates', () => {
+    const configured = session(), canvas = createCanvas(configured, { kind: 'new' }), original = acceptedTask();
+    original.definition.dependencies = ['producer']; original.definition.inputs = { result: { kind: 'task_output', task: 'producer', output: 'report', optional: true } };
+    canvas.topology = topology([original]); canvas.topology.tasks[0].dependencies = { producer: 'settled' }; canvas.topology.tasks[0].dependencies_legacy = true;
+    const draft = reviseTask(canvas, original, configured);
+    expect(draft.definition.inputs).toEqual({}); expect(draft.definition.dependencies).toEqual({});
+    expect(canvas.connections.map((wire) => wire.kind)).toEqual(['data', 'after_completion']);
+    canvas.connections = canvas.connections.filter((wire) => wire.kind !== 'data');
+    expect(canvas.connections[0].kind).toBe('after_completion'); expect(original.definition.inputs.result.kind).toBe('task_output');
+  });
+  it('retains admitted source placement only while its exact authoritative binding matches', () => {
+    const configured = session(), canvas = createCanvas(configured, { kind: 'new' }), task = acceptedTask();
+    const source = addSource(canvas, 'Notes', { kind: 'text', text: 'Original context' });
+    task.definition.inputs = { context: { kind: 'inline', value: { kind: 'text', text: 'Original context' } } };
+    canvas.accepted.old = task.id; canvas.topology = topology([task]); canvas.topology.tasks[0].inputs.context = { kind: 'inline', source: `inline:${task.id}:context`, output: null, optional: false, preview: null }; cacheTask(canvas, task);
+    canvas.connections = [{ id: 'retained', source: source.id, target: 'old', input: 'context', output: null, kind: 'data', optional: false, outcome: false }];
+    let graph = projectGraph(canvas, workflow([task]));
+    expect(graph.edges).toHaveLength(1); expect(graph.edges[0]).toMatchObject({ source: source.id, target: task.id, draft: false });
+    expect(graph.nodes.filter((node) => node.kind === 'source')).toHaveLength(1);
+    source.value = { kind: 'text', text: 'Prospective replacement' };
+    graph = projectGraph(canvas, workflow([task])); expect(graph.edges[0].source).toBe(`inline:${task.id}:context`);
+    source.value = { kind: 'text', text: 'Original context' };
+    reviseTask(canvas, task, configured);
+    expect(canvas.connections).toHaveLength(1); expect(canvas.connections[0].source).toBe(source.id); expect(canvas.connections[0].target).toBe(task.id);
+  });
+  it('matches an uploaded source by authorized artifact identity without requiring its content', () => {
+    const canvas = createCanvas(session(), { kind: 'new' }), task = acceptedTask();
+    const source = addSource(canvas, 'Captured file', { input_id: 'captured-1', kind: 'uploaded' });
+    canvas.topology = topology([task]); canvas.topology.tasks[0].inputs.context = { kind: 'inline', source: `inline:${task.id}:context`, output: null, optional: false, preview: { availability: 'available', value: { restricted: false, kind: 'artifact', name: 'Input.txt', text: 'truncated', text_truncated: true, digest: 'digest', artifact_id: 'captured-1' } } };
+    canvas.connections = [{ id: 'retained', source: source.id, target: task.id, input: 'context', output: null, kind: 'data', optional: false, outcome: false }];
+    expect(projectGraph(canvas, workflow([task])).edges[0].source).toBe(source.id);
+    canvas.topology.tasks[0].inputs.context.preview = null;
+    expect(projectGraph(canvas, workflow([task])).edges[0].source).toBe(`inline:${task.id}:context`);
+  });
+  it('refuses editing frozen work and an unreviewed topology version without losing current drafts', () => {
+    const canvas = createCanvas(session(), { kind: 'new' }), original = acceptedTask(); addCanvasTask(canvas, session());
+    expect(() => reviseTask(canvas, original, session())).toThrow('Refresh');
+    original.started_at = 10; expect(() => reviseTask(canvas, original, session())).toThrow('already started'); expect(canvas.tasks).toHaveLength(1);
+  });
+  it('retains daemon-advertised draft bounds independently of the smaller Run action limit', () => {
+    const configured = session(); configured.authoring_bounds.pending_tasks = 35;
     const canvas = createCanvas(configured, { kind: 'new' });
-    expect(() => freezeCanvas(canvas, configured)).toThrow('Add a task');
-    const task = addCanvasTask(canvas, configured);
-    updateInstructions(canvas, task, 'Research a question');
-    expect(task.definition.capability.id).toBe('');
-    expect(() => freezeCanvas(canvas, configured)).toThrow('Choose a model');
-    chooseCapability(task, configured, capabilityKey(configured.capabilities[0]));
-    expect(freezeCanvas(canvas, configured).request).toMatchObject({ tasks: [{ definition: { authoring_generation: 3 } }] });
+    for (let index = 0; index < 35; index++) addCanvasTask(canvas, configured);
+    expect(canvas.tasks).toHaveLength(35); expect(() => addCanvasTask(canvas, configured)).toThrow('35 pending');
+    expect(canvas.tasks).toHaveLength(35);
+  });
+  it('retains content after an oversized edit and derives a readable bounded title', () => {
+    const configured = session(), canvas = createCanvas(configured, { kind: 'new' }), task = addCanvasTask(canvas, configured);
+    updateInstructions(canvas, task, 'A useful question\nDetails'); expect(task.definition.title).toBe('A useful question');
+    const before = copy(task.definition); canvas.bounds.document_bytes = 1024;
+    expect(() => updateDefinition(canvas, task, { ...task.definition, instructions: 'x'.repeat(3000) })).toThrow('draft limit'); expect(task.definition).toEqual(before);
+  });
+  it('projects current pause and off-page sources without requiring task result reads', () => {
+    const task = acceptedTask(), snapshot = workflow([task]), canvas = createCanvas(session(), { kind: 'new' });
+    task.reason = 'Project is in use'; snapshot.tasks[0].reason = task.reason; snapshot.wait_question = 'Wait for review';
+    canvas.topology = topology([task]); canvas.topology.tasks[0].inputs = { context: { kind: 'task_output', source: 'outside', output: 'report', optional: false, preview: null } };
+    const graph = projectGraph(canvas, snapshot); expect(canvas.details).toEqual([]); expect(graph.nodes.find((node) => node.id === task.id)?.detail).toBe('Workflow paused'); expect(graph.nodes.find((node) => node.id === 'outside')?.kind).toBe('boundary');
+    cacheTask(canvas, task); expect(canvas.details[0].reason).toBe('Project is in use');
+  });
+  it('projects only the visible consumer page and its actual off-page references', () => {
+    const consumer = acceptedTask('consumer'), producer = acceptedTask('producer'), unrelated = acceptedTask('unrelated');
+    const canvas = createCanvas(session(), { kind: 'new' }); canvas.topology = topology([consumer, producer, unrelated]);
+    canvas.topology.tasks[0].inputs.context = { kind: 'task_output', source: producer.id, output: 'report', optional: false, preview: null };
+    canvas.topology.tasks[2].inputs.secret = { kind: 'supplied', source: 'supplied:unrelated', output: null, optional: false, preview: null };
+    const graph = projectGraph(canvas, workflow([consumer]));
+    expect(graph.nodes.map((node) => node.id)).toEqual(['consumer', 'producer']); expect(graph.edges).toHaveLength(1);
+  });
+  it('retains restricted and expired shared-input status instead of replacing it with a generic label', () => {
+    const task = acceptedTask(), canvas = createCanvas(session(), { kind: 'new' }); canvas.topology = topology([task]);
+    for (const availability of ['restricted', 'expired'] as const) {
+      canvas.topology.tasks[0].inputs.context = { kind: 'supplied', source: 'supplied:private', output: null, optional: false, preview: { availability, value: null } };
+      expect(projectGraph(canvas, workflow([task])).nodes.find((node) => node.id === 'supplied:private')).toMatchObject({ label: 'Task input', detail: availability === 'restricted' ? 'Access restricted' : 'Input expired' });
+    }
+  });
+  it('frees full alias and wire envelopes while retaining pending endpoints, changes and standalone ideas', () => {
+    const visible = acceptedTask('visible'), candidate = acceptedTask('old_2'), snapshot = workflow([visible]);
+    const canvas = createCanvas(session(), { kind: 'new' }); canvas.topology = topology([visible, candidate]); cacheTask(canvas, candidate);
+    reviseTask(canvas, candidate, session());
+    const pending = addCanvasTask(canvas, session()), shared = addSource(canvas, 'Still useful'), obsolete = addSource(canvas, 'Earlier input'), idea = addSource(canvas, 'Unconnected idea');
+    pending.definition.corrective_of = 'old_30';
+    for (let index = 0; index < 600; index++) canvas.accepted[`alias_${index}`] = `old_${index}`;
+    const wire = (id: string, source: string, target: string) => ({ id, source, target, input: 'context', output: 'report', kind: 'data' as const, optional: false, outcome: false });
+    canvas.connections = [wire('pending', 'alias_1', pending.id), wire('candidate', shared.id, 'alias_2'), wire('shared-old', shared.id, 'alias_3'), wire('visible', shared.id, visible.id)];
+    for (let index = 4; index < 1024; index++) canvas.connections.push(wire(`oldwire_${index}`, obsolete.id, `alias_${5 + index % 595}`));
+    canvas.changes = [{ kind: 'adopt_correction', task: 'old_0', correction: 'old_10', redirects: [{ consumer: 'old_20', expected_version: 1, input: 'context' }] }];
+    canvas.positions[candidate.id] = { x: 333, y: 444 }; canvas.positions[obsolete.id] = { x: 7, y: 8 }; canvas.positions.old_50 = { x: 50, y: 50 }; canvas.positions.old_20 = { x: 20, y: 20 };
+    const accepted = copy({ snapshot, topology: canvas.topology, details: canvas.details }), tasks = copy(canvas.tasks), changes = copy(canvas.changes), keptPositions = copy(canvas.positions);
+    expect(Object.keys(canvas.accepted)).toHaveLength(600); expect(canvas.connections).toHaveLength(1024);
+    removeUnusedCanvasReferences(canvas, snapshot);
+    expect(canvas.connections.map((entry) => entry.id)).toEqual(['pending', 'candidate', 'visible']);
+    expect(canvas.sources.map((source) => source.id)).toEqual([shared.id, idea.id]);
+    expect(Object.keys(canvas.accepted).sort()).toEqual(['alias_0', 'alias_1', 'alias_10', 'alias_2', 'alias_20', 'alias_30']);
+    expect(canvas.tasks).toEqual(tasks); expect(canvas.changes).toEqual(changes); expect({ snapshot, topology: canvas.topology, details: canvas.details }).toEqual(accepted);
+    expect(canvas.positions[obsolete.id]).toBeUndefined(); expect(canvas.positions.old_50).toBeUndefined(); expect(canvas.positions.old_20).toEqual(keptPositions.old_20);
+    for (const id of [pending.id, candidate.id, shared.id, idea.id]) expect(canvas.positions[id]).toEqual(keptPositions[id]);
+    expect(() => addConnection(canvas, session(), idea.id, pending.id)).not.toThrow();
   });
 
-  it('submits three research tasks and a connected composition in one exact creation', () => {
-    const canvas = createCanvas(session(), { kind: 'new' });
-    const research = ['Motion', 'Training', 'Rendering'].map((title) => { const task = addCanvasTask(canvas, session()); updateInstructions(canvas, task, title); task.definition.outputs.model_response = { required: true, media_type: 'application/json', max_bytes: 1048576 }; return task; });
-    const compose = addCanvasTask(canvas, session()); updateInstructions(canvas, compose, 'Compare these approaches');
-    for (const source of research) connectBinding(canvas, compose, { kind: 'task_output', task: source.id, output: 'model_response', optional: false }, session());
-    const frozen = freezeCanvas(canvas, session());
-    expect(frozen.path).toBe('/v1/workflows');
-    expect('tasks' in frozen.request && frozen.request.tasks).toHaveLength(4);
-    expect(compose.definition.dependencies).toEqual(research.map((task) => task.id));
-    const request = JSON.stringify(frozen.request);
-    updateInstructions(canvas, research[0], 'Changed later');
-    expect(JSON.stringify(frozen.request)).toBe(request);
-  });
-
-  it('keeps exact workflow identity and generation in a pending edit', () => {
-    const canvas = createCanvas(session(), { kind: 'existing', workflowId: 'original/workflow', title: 'Original', generation: 7 });
-    const task = addCanvasTask(canvas, session()); updateInstructions(canvas, task, 'Only add here');
-    const frozen = freezeCanvas(canvas, session()); canvas.target = { kind: 'existing', workflowId: 'different', title: 'Different', generation: 9 };
-    expect(frozen.path).toBe('/v1/workflows/original%2Fworkflow/changes');
-    expect(frozen.request).toMatchObject({ expected_generation: 7, changes: [{ kind: 'add', definition: { instructions: 'Only add here' } }] });
-  });
-
-  it('uses a configured process slot without asking for its mechanical name', () => {
-    const configured = session(); const capability = { id: 'cargo-reader', operation: 'process.run' };
-    configured.capabilities = [capability]; configured.authoring = [{ capability, category: 'process', generation: 9, label: 'Read Cargo manifest', inputs: [{ name: 'manifest', label: 'Cargo manifest', required: true, media_type: 'text/plain', max_bytes: 16384, accepts_artifacts: true }], outputs: [], allows_additional_inputs: false, default_output: null }];
-    const canvas = createCanvas(configured, { kind: 'new' }), task = addCanvasTask(canvas, configured);
-    updateInstructions(canvas, task, 'Inspect this manifest');
-    expect(() => freezeCanvas(canvas, configured)).toThrow('needs Cargo manifest');
-    const source = addSource(canvas, 'Cargo.toml', { kind: 'uploaded', input_id: 'captured-input' });
-    expect(connectBinding(canvas, task, sourceBinding(source), configured, undefined, source.id)).toBe('manifest');
-    expect(task.definition.inputs).toEqual({ manifest: { kind: 'inline', value: { kind: 'uploaded', input_id: 'captured-input' } } });
-    expect(() => freezeCanvas(canvas, configured)).not.toThrow();
-    task.definition.inputs.other = { kind: 'inline', value: { kind: 'text', text: 'wrong slot' } };
-    expect(() => freezeCanvas(canvas, configured)).toThrow('connections do not match');
-  });
-
-  it('refuses stale capability metadata and changed authenticated ownership', () => {
-    const original = session(), canvas = createCanvas(original, { kind: 'new' }), task = addCanvasTask(canvas, original);
-    updateInstructions(canvas, task, 'Research');
-    const changed = session(); changed.authoring[0].generation++;
-    expect(() => freezeCanvas(canvas, changed)).toThrow('changed');
-    expect(() => freezeCanvas(canvas, { ...original, actor_id: 'other-actor' })).toThrow('another authenticated');
-    chooseCapability(task, changed, capabilityKey(changed.capabilities[0]));
-    expect(() => freezeCanvas(canvas, changed)).not.toThrow();
-  });
-
-  it('does not remove an ordering prerequisite needed by another input or explicit ordering', () => {
-    const canvas = createCanvas(session(), { kind: 'new' }), task = addCanvasTask(canvas, session());
-    const first = connectBinding(canvas, task, { kind: 'task_output', task: 'producer', output: 'model_response', optional: false }, session());
-    const second = connectBinding(canvas, task, { kind: 'task_output', task: 'producer', output: 'final_text', optional: true }, session());
-    removeConnection(task, first); expect(task.definition.dependencies).toEqual(['producer']);
-    task.explicitDependencies = ['producer']; synchronizeDependencies(task);
-    removeConnection(task, second); expect(task.definition.dependencies).toEqual(['producer']);
-  });
-
-  it('keeps source edits local to connected tasks and allocates distinct missing inputs', () => {
-    const canvas = createCanvas(session(), { kind: 'new' }), first = addCanvasTask(canvas, session()), second = addCanvasTask(canvas, session());
-    const a = addSource(canvas, 'A'), b = addSource(canvas, 'B', null);
-    connectBinding(canvas, first, sourceBinding(a), session(), undefined, a.id);
-    connectBinding(canvas, second, sourceBinding(b), session(), undefined, b.id);
-    updateSource(canvas, a, 'Only A gets this', 16384);
-    expect(Object.values(first.definition.inputs)).toEqual([{ kind: 'inline', value: { kind: 'text', text: 'Only A gets this' } }]);
-    expect(Object.values(second.definition.inputs)).toEqual([{ kind: 'supplied', name: b.id, optional: false }]);
-  });
-
-  it('refuses the thirty-third change without splitting or losing the drawing', () => {
-    const canvas = createCanvas(session(), { kind: 'existing', workflowId: 'a', title: 'A', generation: 1 });
-    for (let index = 0; index < 32; index++) stageChange(canvas, { kind: 'wait', question: `Decision ${index}` });
-    expect(() => stageChange(canvas, { kind: 'continue' })).toThrow('at most 32');
-    expect(canvas.changes).toHaveLength(32);
-    expect('changes' in freezeCanvas(canvas, session()).request).toBe(true);
-  });
-
-  it('reserves a single stop identity and refuses a ninth dirty drawing while allowing observation', () => {
-    const canvas = createCanvas(session(), { kind: 'existing', workflowId: 'a', title: 'A', generation: 1 });
-    cacheTask(canvas, acceptedTask()); stageChange(canvas, { kind: 'stop', task: 'accepted-task' });
-    expect(freezeCanvas(canvas, session()).request.request_id).toBe('stop-accepted-task');
-    const readonly = createCanvas(session(), { kind: 'existing', workflowId: 'b', title: 'B', generation: 1 }); readonly.capacityBlocked = true;
-    expect(() => addCanvasTask(readonly, session())).toThrow('8 drafts');
-    expect(() => cacheTask(readonly, acceptedTask())).not.toThrow();
-  });
-
-  it('keeps complete draft content when a text input exceeds its byte allowance', () => {
-    const canvas = createCanvas(session(), { kind: 'new' }), source = addSource(canvas);
-    updateSource(canvas, source, 'Kept', 8);
-    expect(() => updateSource(canvas, source, '🦀🦀🦀', 8)).toThrow('byte limit');
-    expect(source.text).toBe('Kept');
-  });
-
-  it('rolls back a large shared draft source after counting every connected copy', () => {
-    const canvas = createCanvas(session(), { kind: 'new' }), source = addSource(canvas);
-    for (let index = 0; index < 32; index++) { const task = addCanvasTask(canvas, session()); connectBinding(canvas, task, sourceBinding(source), session(), undefined, source.id); }
-    expect(() => updateSource(canvas, source, 'x'.repeat(70000), 100000)).toThrow('2 MiB');
-    expect(source.text).toBe('');
-    expect(canvas.tasks.every((task) => Object.values(task.definition.inputs).every((input) => input.kind === 'inline' && input.value.kind === 'text' && input.value.text === ''))).toBe(true);
-    const before = canvas.changes.length;
-    expect(() => stageChange(createCanvas(session(), { kind: 'new' }), { kind: 'wait', question: 'x'.repeat(2097152) })).toThrow('2 MiB');
-    expect(canvas.changes).toHaveLength(before);
-  });
-
-  it('preserves accepted prerequisites when a result connection is removed after reconnect', () => {
-    const original = acceptedTask(); original.definition.dependencies = ['producer']; original.definition.inputs.answer = { kind: 'task_output', task: 'producer', output: 'answer', optional: false };
-    const canvas = createCanvas(session(), { kind: 'existing', workflowId: 'workflow-a', title: 'A', generation: 1 });
-    const draft = reviseTask(canvas, original, session()); removeConnection(draft, 'answer');
-    expect(draft.definition.dependencies).toEqual(['producer']);
-    expect(projectGraph(canvas, workflow([original])).edges).toContainEqual(expect.objectContaining({ source: 'producer', label: 'Run after' }));
-  });
-
-  it('refuses an output port left over from an incompatible executor selection', () => {
-    const canvas = createCanvas(session(), { kind: 'new' }), task = addCanvasTask(canvas, session()); updateInstructions(canvas, task, 'Changed producer');
-    task.definition.outputs.report = { required: true, media_type: 'text/plain', max_bytes: 1024 };
-    expect(() => freezeCanvas(canvas, session())).toThrow('result is not published');
-    expect(task.definition.outputs.report).toBeTruthy();
-  });
-});
-
-describe('authoritative canvas projections', () => {
-  it('shows current shared input separately from an older frozen start', () => {
-    const task = acceptedTask(); task.definition.inputs.document = { kind: 'supplied', name: 'shared-document', optional: false };
-    task.frozen = { capability_generation: 3, actor_id: 'actor-a', grant_id: 'grant', grant_revision: 1, entered: true, inputs: { document: { restricted: false, kind: 'text', name: null, text: 'Older frozen content', text_truncated: false, digest: 'old', artifact_id: null } } };
-    const snapshot = workflow([task]); snapshot.supplied_inputs['shared-document'] = { availability: 'available', value: { restricted: false, kind: 'text', name: null, text: 'Current shared content', text_truncated: false, digest: 'new', artifact_id: null } };
-    const canvas = createCanvas(session(), { kind: 'existing', workflowId: snapshot.id, title: snapshot.title, generation: 5 }); cacheTask(canvas, task);
-    const source = projectGraph(canvas, snapshot).nodes.find((node) => node.id === 'supplied:shared-document');
-    expect(source?.detail).toBe('Current shared content');
-    expect(canvas.details[0].frozen?.inputs.document.text).toBe('Older frozen content');
-  });
-
-  it('reconstructs captured filenames before a queued task starts', () => {
-    const task = acceptedTask(); task.definition.inputs.manifest = { kind: 'inline', value: { kind: 'uploaded', input_id: 'upload-a' } };
-    task.inline_inputs.manifest = { availability: 'available', value: { restricted: false, kind: 'text_file', name: 'Cargo.toml', text: '[package]', text_truncated: false, digest: 'file', artifact_id: null } };
-    const canvas = createCanvas(session(), { kind: 'existing', workflowId: 'a', title: 'A', generation: 1 }); cacheTask(canvas, task);
-    expect(projectGraph(canvas, workflow([task])).nodes.find((node) => node.kind === 'source')).toMatchObject({ label: 'Cargo.toml', detail: '[package]' });
-  });
-
-  it('keeps off-page producers distinct from absent inputs and preserves duplicate task identities', () => {
-    const first = acceptedTask('a'), second = acceptedTask('b'); first.definition.dependencies = ['outside']; first.definition.inputs.result = { kind: 'task_output', task: 'outside', output: 'answer', optional: false };
-    const canvas = createCanvas(session(), { kind: 'existing', workflowId: 'a', title: 'A', generation: 1 }); cacheTask(canvas, first); cacheTask(canvas, second);
-    const projection = projectGraph(canvas, workflow([first, second]));
-    expect(projection.nodes.filter((node) => node.kind === 'task')).toHaveLength(2);
-    expect(projection.nodes.find((node) => node.id === 'outside')).toMatchObject({ kind: 'boundary', label: 'Task outside this page' });
-    expect(projection.edges).toHaveLength(1);
-  });
-
-  it('labels restricted, expired and missing sources without replacing them with empty text', () => {
-    const task = acceptedTask();
-    for (const name of ['restricted', 'expired', 'missing']) task.definition.inputs[name] = { kind: 'supplied', name, optional: false };
-    const snapshot = workflow([task]); snapshot.supplied_inputs = { restricted: { availability: 'restricted', value: null }, expired: { availability: 'expired', value: null } };
-    const canvas = createCanvas(session(), { kind: 'existing', workflowId: 'a', title: 'A', generation: 1 }); cacheTask(canvas, task);
-    expect(projectGraph(canvas, snapshot).nodes.filter((node) => node.kind === 'source').map((node) => node.detail)).toEqual(['Access restricted', 'Input expired', 'Missing required input']);
-  });
-});
-
-
-it('refuses oversized definition additions while preserving the prior draft', () => {
-  const configured = session(), canvas = createCanvas(configured, { kind: 'new' }), task = addCanvasTask(canvas, configured);
-  updateInstructions(canvas, task, 'Preserve this draft');
-  const previous = task.definition;
-  expect(() => updateDefinition(canvas, task, { ...task.definition, paths: [{ path: `/${'x'.repeat(2 * 1024 * 1024)}`, write: false }] })).toThrow('2 MiB');
-  expect(task.definition).toBe(previous);
-  expect(task.definition.instructions).toBe('Preserve this draft');
-});
-
-
-it('keeps source content unchanged while an exact submission is unconfirmed', () => {
-  const configured = session(), canvas = createCanvas(configured, { kind: 'new' }), task = addCanvasTask(canvas, configured);
-  updateInstructions(canvas, task, 'Keep this context');
-  const source = addSource(canvas, 'Evidence', { kind: 'text', text: 'Original' });
-  connectBinding(canvas, task, sourceBinding(source), configured, undefined, source.id);
-  canvas.pending = freezeCanvas(canvas, configured);
-  expect(() => updateSource(canvas, source, 'Changed', configured.input_limit_bytes)).toThrow('Recover');
-  expect(source.text).toBe('Original');
-  expect(task.definition.inputs[source.id]).toEqual({ kind: 'inline', value: { kind: 'text', text: 'Original' } });
-});
-
-
-it('pins the observed executor generation when revising accepted work', () => {
-  const configured = session(), canvas = createCanvas(configured, { kind: 'existing', workflowId: 'workflow', title: 'Work', generation: 1 });
-  const draft = reviseTask(canvas, acceptedTask(), configured);
-  expect(draft.contractGeneration).toBe(configured.authoring[0].generation);
-  const changed = session(); changed.authoring[0].generation++;
-  expect(() => freezeCanvas(canvas, changed)).toThrow('changed. Reselect it');
 });

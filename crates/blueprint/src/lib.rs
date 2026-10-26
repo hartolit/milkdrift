@@ -4,9 +4,11 @@
 //! invalid references and cycles refuse the entire edit before persistence. Runtime owns
 //! start freezing, execution and results; clients share these contracts without scheduling.
 
+pub mod authoring;
 mod identity;
 mod project;
 mod task;
+mod task_ordering;
 mod task_project;
 
 pub use identity::{IdentityError, NodeId, RevisionId, TaskId, WorkflowId};
@@ -18,4 +20,5 @@ pub use task::{
     TaskInputValue, TaskOutputDeclaration, TaskPathAccess, TaskTool, WorkflowCreate,
     WorkflowLimits, validate_task_set,
 };
+pub use task_ordering::{TaskDependencies, TaskOrderCondition};
 pub use task_project::{TaskExecution, TaskProjectAccess, TaskProjectBinding, TaskProjectFolder};

@@ -42,6 +42,24 @@ impl Owner {
             .collect();
         let metadata = self.daemon_metadata(session)?;
         Ok(TaskSessionDto {
+            authoring_bounds: milkdrift_control_protocol::authoring::AuthoringBoundsDto {
+                document_bytes: u32::try_from(
+                    milkdrift_blueprint::authoring::MAX_AUTHORING_DOCUMENT_BYTES,
+                )
+                .map_err(failure)?,
+                pending_tasks: u32::try_from(milkdrift_blueprint::authoring::MAX_AUTHORING_TASKS)
+                    .map_err(failure)?,
+                sources: u32::try_from(milkdrift_blueprint::authoring::MAX_AUTHORING_SOURCES)
+                    .map_err(failure)?,
+                connections: u32::try_from(
+                    milkdrift_blueprint::authoring::MAX_AUTHORING_CONNECTIONS,
+                )
+                .map_err(failure)?,
+                positions: u32::try_from(milkdrift_persistence::MAX_WORKFLOW_POSITIONS)
+                    .map_err(failure)?,
+                run_actions: u32::try_from(milkdrift_blueprint::MAX_TASK_BATCH_ACTIONS)
+                    .map_err(failure)?,
+            },
             authoring: self.task_authoring(session)?,
             project_roots: Self::task_project_roots(session),
             input_limit_bytes: u32::try_from(milkdrift_blueprint::MAX_TASK_TEXT_BYTES)
@@ -832,7 +850,7 @@ fn task_summary(workflow: &str, task: &TaskRecord) -> TaskSummaryDto {
         dependencies: task
             .definition
             .dependencies
-            .iter()
+            .references()
             .map(ToString::to_string)
             .collect(),
         state: state(task),

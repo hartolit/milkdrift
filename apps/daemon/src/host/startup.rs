@@ -440,7 +440,8 @@ impl Owner {
                         clock.runtime_adapter(),
                         store.clone(),
                     )
-                    .with_projects(store.clone()),
+                    .with_projects(store.clone())
+                    .with_authoring_store(store.clone()),
                     tasks,
                 })
             } else {

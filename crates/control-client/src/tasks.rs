@@ -1,4 +1,6 @@
 //! Thin ordinary task operations. Lost mutation replies require receipt lookup or exact replay.
+mod authoring;
+mod topology;
 use super::{ClientError, ControlClient, path_segment};
 use milkdrift_control_protocol::tasks::{
     ChangeWorkflowRequest, CreateWorkflowRequest, TaskReadDto, TaskResultDto, TaskSessionDto,

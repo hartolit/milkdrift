@@ -93,7 +93,10 @@ fn capability_window_bounds_both_items_and_encoded_bytes() -> Result<(), Box<dyn
         feed.after(299).ok_or("replay absent")?,
         vec![(300, vec![value.clone()])]
     );
-    value.trust_zones = vec!["x".repeat(8_000); 16];
+    const ZONE_BYTES: usize = 8_000;
+    // Each snapshot consumes more than one eighth of the current byte budget, so this
+    // sequence must evict by bytes even when the protocol envelope limit changes.
+    value.trust_zones = vec!["x".repeat(ZONE_BYTES); MAX_DOCUMENT_BYTES / (8 * ZONE_BYTES) + 1];
     for generation in 301..=320 {
         value.generation = generation;
         record_capability_snapshot(&mut feed, &[value.clone()]).map_err(|()| "snapshot refused")?;
@@ -102,7 +105,7 @@ fn capability_window_bounds_both_items_and_encoded_bytes() -> Result<(), Box<dyn
     assert!(feed.entries.len() < CAPABILITY_FEED_ITEMS);
     assert_eq!(feed.next_position, 321);
     assert!(feed.after(300).is_none());
-    value.trust_zones = vec!["x".repeat(8_000); 200];
+    value.trust_zones = vec!["x".repeat(ZONE_BYTES); MAX_DOCUMENT_BYTES / ZONE_BYTES + 1];
     assert!(record_capability_snapshot(&mut feed, &[value]).is_err());
     assert_eq!(
         feed.next_position, 321,

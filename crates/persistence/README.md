@@ -27,11 +27,24 @@ Discovery uses bounded pages and requires no previously retained workflow ID. Th
 filters those pages against current grants. Storage cursors and recorded actor identities do not
 grant access, and corruption remains an error rather than an empty result.
 
+Unfinished canvas content uses the same task persistence boundary through
+[`WorkflowAuthoringSnapshot`](src/task/authoring.rs). Semantic checkpoints replace only the latest
+bounded document and protected sources; positions have an independent generation. These saves
+have no command key or historical receipt. A stale generation refuses, and a lost reply is recovered
+by reading the current generation, digest and content. An existing workflow without saved content
+reads as generation zero. Run may conditionally replace authoring in the accepted-work transaction,
+so its draft-to-task mapping and exact command result cannot diverge.
+
+Latest encoded authoring and equal replacement headroom use the retained-history allowance, separate
+from capacity already reserved for accepted execution. Removing a saved source releases only that
+document's protection; it cannot remove another producer, task or receipt's ownership.
+
 ## Select the durable owner
 
 | Operation | Contract and consequence |
 | --- | --- |
 | Accept or change ordinary work | [`WorkflowStore`](src/task.rs) saves one generation and its exact command result atomically. |
+| Preserve unfinished work | [`WorkflowStore`](src/task.rs) replaces the current authoring document and source protection conditionally; positions have an independent version. |
 | Name the daemon | [`DaemonMetadataStore`](src/daemon.rs) binds one shared display name to the installation, with guarded changes and exact actor-scoped replay. A startup seed never overwrites an accepted rename. |
 | Register a project | [`ProjectStore`](src/project.rs) saves pinned user folders, guarded execution defaults, exact creation intent/recovery and workflow association. Removing a registration never deletes files. |
 | Publish or read artifact content | [`ArtifactStore`](src/artifact.rs) owns resumable chunks, verified publication, accounting and bounded reads. Content integrity and read authorization are separate requirements. |

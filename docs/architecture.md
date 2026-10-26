@@ -11,14 +11,15 @@ from the later methods and retention assignments. The ordinary graph, revision,
 proposal, controller and published-workflow engines have been retired. Existing stores are not
 converted into task workflows. Their readers remain in the preservation checkpoints.
 
-[ADR 0052](decisions/0052-canvas-authoring-and-method-experience.md) selects the next saved-authoring
+[ADR 0052](decisions/0052-canvas-authoring-and-method-experience.md) selects the saved-authoring
 and method experience. Its [side sprint](development/virtual-office/canvas-experience/README.md)
-starts with the lifecycle repair described below; saved authoring and methods remain planned.
-Mutable non-executable authoring will use bounded conditional snapshots;
-deliberate admission retains exact command receipts. Existing workflow/control/persistence owners
-own that distinction, while the client owns the tree, gestures and right inspector. Planned changes
-also separate data-derived readiness from independent ordering and clarify method activation and
-export release. The current implementation facts below remain qualified by status until adoption.
+implements lifecycle repair and saved authoring; methods remain a later assignment.
+Mutable non-executable authoring uses bounded conditional snapshots and independently versioned
+positions. Deliberate admission atomically records the exact command receipt and remaining sketch
+with accepted aliases. Existing workflow/control/persistence owners own that distinction, while the
+client owns the tree, gestures and right inspector. Shared control constructs definitions from
+physical wire intentions. Runtime distinguishes data readiness from independent success/settlement
+order and preserves historical predicates. Method activation and export release remain planned.
 
 ## Terminology
 
@@ -230,12 +231,12 @@ uses one durable high-water owner for request and worker paths, avoiding clock r
 queue lock inversion.
 
 Unsupported configuration, protocol and store formats are refused explicitly. The current reader
-can adopt physical schemas 19 and 20 only with internal document format 22 and their exact valid table sets.
-One transaction adds the required metadata/project tables and changes the physical marker to 21 without
+can adopt physical schemas 19, 20 and 21 only with internal document format 22 and their exact valid table sets.
+One transaction adds absent metadata/project tables and the authoring/position tables, changing the physical marker to 22 without
 rewriting workflow, receipt or installation-identity rows. Earlier graph/task formats still require
 a separate fresh root; this narrow addition does not restore their readers or change frozen grants.
 Daemon configuration stays at version 14 because the optional name seed preserves existing reads;
-control protocol 3.5 requires coordinated client upgrades. Do not stop existing services, reset a
+control protocol 3.6 requires coordinated client upgrades. Do not stop existing services, reset a
 store or repoint an existing installation merely to try the new task client. See
 [operation](operations/daemon.md), [authority](operations/authority.md) and the
 [public API](reference/control-api.md) for configuration and transport details.

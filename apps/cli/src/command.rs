@@ -49,6 +49,20 @@ impl Cli {
                 crate::workflow_args::WorkflowCommand::Stop { .. } => "workflow.stop",
                 crate::workflow_args::WorkflowCommand::Upload { .. } => "workflow.upload",
                 crate::workflow_args::WorkflowCommand::Capabilities => "workflow.capabilities",
+                crate::workflow_args::WorkflowCommand::Authoring { .. } => "workflow.authoring",
+                crate::workflow_args::WorkflowCommand::SaveAuthoring { .. } => {
+                    "workflow.authoring.save"
+                }
+                crate::workflow_args::WorkflowCommand::ReviewAuthoring { .. } => {
+                    "workflow.authoring.review"
+                }
+                crate::workflow_args::WorkflowCommand::RunAuthoring { .. } => {
+                    "workflow.authoring.run"
+                }
+                crate::workflow_args::WorkflowCommand::Positions { .. } => "workflow.positions",
+                crate::workflow_args::WorkflowCommand::SavePositions { .. } => {
+                    "workflow.positions.save"
+                }
             },
             TopCommand::Resource(_) => "resource.manage",
             TopCommand::Invocation { command } => match command {

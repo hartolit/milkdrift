@@ -116,7 +116,7 @@ pub(super) async fn scenario(root: &Path, release: bool) -> EvidenceResult {
             "title":title,"description":"Wait for the external fixture release","instructions":"Record one actual entry and wait for release.",
             "capability":{"id":"canvas-hold","operation":"process.execute"},
             "execution":{"kind":"project","expected_generation":project.generation},
-            "inputs":{},"outputs":{},"dependencies":[],"required":true,"corrective_of":null,"paths":[],"tools":[],"actions":null
+            "inputs":{},"outputs":{},"dependencies":{},"required":true,"corrective_of":null,"paths":[],"tools":[],"actions":null
         })
     };
     let title = "Lifecycle review: competing project writers";

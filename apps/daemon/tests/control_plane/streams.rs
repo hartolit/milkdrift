@@ -93,6 +93,50 @@ async fn task_stream_cursor_is_actor_bound_and_resynchronizes_after_restart() ->
 type Subscription =
     Pin<Box<dyn futures_util::Stream<Item = Result<ObservationEnvelope, ClientError>> + Send>>;
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn task_stream_announces_shared_name_only_after_its_generation_changes() -> TestResult {
+    let directory = TempDir::new()?;
+    let daemon = start(configuration(&directory, 32)?, CONTROLLER_TOKEN).await?;
+    let initial = daemon.client.daemon_metadata().await?;
+    // A reader without workflow visibility still sees the installation name under metadata scope.
+    let mut response = reqwest::Client::new()
+        .get(daemon.endpoint.join("v1/workflows/stream")?)
+        .header("x-milkdrift-daemon", &initial.daemon_id)
+        .bearer_auth(OBSERVER_TOKEN)
+        .send()
+        .await?;
+    let first = task_event(&mut response).await?;
+    assert!(first.contains("event: workflow_changed"));
+    assert!(!first.contains("event: metadata_changed"));
+    let unchanged = task_event(&mut response).await?;
+    assert!(unchanged.contains("event: workflow_changed"));
+    assert!(!unchanged.contains("event: metadata_changed"));
+    let receipt = daemon
+        .client
+        .rename_daemon(&milkdrift_control_protocol::RenameDaemonRequest {
+            request_id: "stream-shared-name".into(),
+            expected_generation: initial.generation,
+            name: "Shared stream name".into(),
+        })
+        .await?;
+    let mut changed = false;
+    for _ in 0..3 {
+        let event = task_event(&mut response).await?;
+        if event.contains("event: metadata_changed") {
+            assert!(event.contains(&format!("\"generation\":{}", receipt.generation)));
+            changed = true;
+            break;
+        }
+    }
+    assert!(changed, "shared name change was never announced");
+    for _ in 0..2 {
+        let event = task_event(&mut response).await?;
+        assert!(!event.contains("event: metadata_changed"));
+    }
+    drop(response);
+    daemon.stop().await
+}
+
 async fn next(stream: &mut Subscription) -> TestResult<ObservationEnvelope> {
     tokio::time::timeout(Duration::from_secs(5), stream.next())
         .await?

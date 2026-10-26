@@ -112,7 +112,7 @@ pub(super) async fn coding(client: &ControlClient, parent: &Path) -> EvidenceRes
                 "title":"Create, edit and test Rust","instructions":"Project fixture: Rust code\nCreate a small Rust library, correct its addition function, inspect it and run its tests in the selected project.",
                 "description":"","capability":{"id":"controlled-model","operation":"model.generate"},
                 "execution":{"kind":"project","expected_generation":project.generation},
-                "inputs":{},"outputs":{},"dependencies":[],"required":true,"corrective_of":null,"paths":[],"tools":[],"actions":null
+                "inputs":{},"outputs":{},"dependencies":{},"required":true,"corrective_of":null,"paths":[],"tools":[],"actions":null
             }}],"inputs":{},"finish_when_settled":true,"limits":null
         }))?;
         let workflow = client.create_workflow(&request).await?;

@@ -275,12 +275,28 @@ impl TaskRuntime {
                 })
                 .collect::<Result<Vec<_>, _>>()?,
         );
-        let resolved = self.executor.resolve_authorized(
+        let resolution = self.executor.resolve_authorized(
             &task.definition.capability,
             &context,
             self.authority.as_ref(),
             now.get(),
-        )?;
+        );
+        let resolved = match resolution {
+            Err(
+                crate::ExecutorError::ResolutionMismatch { .. }
+                | crate::ExecutorError::UnavailableGeneration { .. },
+            ) if task.definition.capability_generation.is_some() => {
+                return Err(crate::ExecutorError::Unavailable("The selected model or agent is unavailable or changed. Review its current choices before starting this task.".into()).into());
+            }
+            outcome => outcome?,
+        };
+        if task
+            .definition
+            .capability_generation
+            .is_some_and(|expected| expected != resolved.snapshot().descriptor_revision())
+        {
+            return Err(crate::ExecutorError::Unavailable("The selected model or agent changed. Review its current input and output choices before starting this task.".into()).into());
+        }
         let authorization = resolved
             .authorization()
             .ok_or_else(|| invalid("executor omitted exact selection authorization"))?

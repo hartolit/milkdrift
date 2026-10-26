@@ -25,6 +25,96 @@ use std::{
 
 struct SourceAuthority(AtomicBool);
 
+#[test]
+fn retained_legacy_optional_failure_keeps_its_original_result_after_reopen() -> TestResult {
+    use milkdrift_persistence::{WorkflowCommit, WorkflowStore};
+    let root = tempfile::tempdir()?;
+    let authority = Arc::new(InvocationAllowance(Some(8)));
+    let clock = Arc::new(ManualClock::new(1000));
+    let (workflow, consumer, reference, definition_bytes) = {
+        let (runtime, executor, control, store) =
+            runtime_and_store(root.path(), authority.clone(), clock.clone(), 32)?;
+        let mut create = request()?;
+        create.finish_when_settled = false;
+        let producer = create.tasks.first_mut().ok_or("producer absent")?;
+        producer.definition.inputs.clear();
+        let workflow = control
+            .create(&context()?, "old-optional", create)?
+            .workflow;
+        let reference = publish(store.as_ref(), "old-partial", "text/plain", b"partial")?;
+        output(&executor, &reference, true)?;
+        runtime.execute(runtime.tick(1)?.pop().ok_or("producer start absent")?)?;
+        let record = runtime.workflow(&workflow)?.ok_or("workflow absent")?;
+        let producer = record.tasks.values().next().ok_or("producer absent")?;
+        let producer_id = producer.id.clone();
+        let mut definition = producer.definition.clone();
+        definition.inputs = BTreeMap::from([(
+            "source".into(),
+            TaskInputBinding::TaskOutput {
+                task: producer_id.clone(),
+                output: "report".into(),
+                optional: true,
+            },
+        )]);
+        control.edit(
+            &context()?,
+            "old-optional-consumer",
+            &workflow,
+            TaskBatch {
+                expected_generation: record.generation,
+                changes: vec![TaskChange::Add {
+                    alias: TaskId::new("consumer")?,
+                    definition,
+                }],
+            },
+        )?;
+        let mut record = runtime.workflow(&workflow)?.ok_or("workflow absent")?;
+        let consumer = record
+            .tasks
+            .values_mut()
+            .find(|task| task.id != producer_id)
+            .ok_or("consumer absent")?;
+        consumer.definition.dependencies =
+            milkdrift_blueprint::TaskDependencies::Legacy(std::collections::BTreeSet::from([
+                producer_id,
+            ]));
+        let definition_bytes = serde_json::to_vec(&consumer.definition)?;
+        let consumer = consumer.id.clone();
+        let mut snapshot = store.workflow(&workflow)?.ok_or("snapshot absent")?;
+        let prior = snapshot.generation;
+        snapshot.generation += 1;
+        record.generation = snapshot.generation;
+        snapshot.document = serde_json::to_value(record)?;
+        store.commit_workflow(WorkflowCommit {
+            authoring: None,
+            project_guard: None,
+            project_id: None,
+            expected_generation: Some(prior),
+            snapshot,
+            command: None,
+        })?;
+        (workflow, consumer, reference, definition_bytes)
+    };
+    let (runtime, _, _, _) = runtime_and_store(root.path(), authority, clock, 32)?;
+    runtime.execute(
+        runtime
+            .tick(1)?
+            .pop()
+            .ok_or("old optional consumer start absent")?,
+    )?;
+    let record = runtime.workflow(&workflow)?.ok_or("workflow absent")?;
+    let consumer = record.tasks.get(&consumer).ok_or("consumer absent")?;
+    assert_eq!(serde_json::to_vec(&consumer.definition)?, definition_bytes);
+    assert_eq!(
+        consumer
+            .frozen
+            .as_ref()
+            .and_then(|start| start.inputs.get("source")),
+        Some(&TaskInputValue::Artifact { reference })
+    );
+    Ok(())
+}
+
 impl milkdrift_authority::AuthorityEvaluator for SourceAuthority {
     fn evaluate(
         &self,
@@ -189,7 +279,10 @@ fn historical_publication_binds_after_restart_and_freezes_without_a_declaration(
     let (runtime, executor, control, store) = runtime_and_store(root.path(), authority, clock, 32)?;
     let record = runtime.workflow(&workflow)?.ok_or("workflow absent")?;
     let mut consumer = original.definition.clone();
-    consumer.dependencies.insert(producer_id.clone());
+    consumer.dependencies = milkdrift_blueprint::TaskDependencies::Ordered(BTreeMap::from([(
+        producer_id.clone(),
+        milkdrift_blueprint::TaskOrderCondition::Success,
+    )]));
     consumer.inputs = BTreeMap::from([(
         "source".into(),
         TaskInputBinding::TaskOutput {
@@ -291,7 +384,10 @@ fn failed_historical_output_blocks_until_a_compatible_larger_correction_is_adopt
         assert!(original.definition.outputs.is_empty());
         let mut consumer = original.definition.clone();
         consumer.title = "Future consumer".into();
-        consumer.dependencies.insert(original.id.clone());
+        consumer.dependencies = milkdrift_blueprint::TaskDependencies::Ordered(BTreeMap::from([(
+            original.id.clone(),
+            milkdrift_blueprint::TaskOrderCondition::Success,
+        )]));
         consumer.inputs = BTreeMap::from([(
             "source".into(),
             TaskInputBinding::TaskOutput {
@@ -301,6 +397,7 @@ fn failed_historical_output_blocks_until_a_compatible_larger_correction_is_adopt
             },
         )]);
         let mut optional = consumer.clone();
+        optional.dependencies = Default::default();
         optional.title = "Optional historical result".into();
         optional.required = false;
         if let Some(TaskInputBinding::TaskOutput { optional, .. }) =
@@ -356,9 +453,7 @@ fn failed_historical_output_blocks_until_a_compatible_larger_correction_is_adopt
                 .frozen
                 .as_ref()
                 .and_then(|start| start.inputs.get("source")),
-            Some(&TaskInputValue::Artifact {
-                reference: source.clone()
-            })
+            Some(&TaskInputValue::Absent)
         );
         let consumer = before
             .tasks
@@ -465,7 +560,10 @@ fn source_admission_checks_current_permission_real_publication_and_byte_scope_at
         let before = runtime.workflow(&workflow)?.ok_or("workflow absent")?;
         let producer = before.tasks.values().next().ok_or("producer absent")?;
         let mut consumer = producer.definition.clone();
-        consumer.dependencies.insert(producer.id.clone());
+        consumer.dependencies = milkdrift_blueprint::TaskDependencies::Ordered(BTreeMap::from([(
+            producer.id.clone(),
+            milkdrift_blueprint::TaskOrderCondition::Success,
+        )]));
         consumer.inputs = BTreeMap::from([(
             "source".into(),
             TaskInputBinding::TaskOutput {

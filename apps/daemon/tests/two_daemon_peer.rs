@@ -497,7 +497,7 @@ async fn submit_remote(
             "title":format!("Inspect repository on {host}"),"description":"Physical placement fixture","instructions":"Inspect the repository assigned to this exact host",
             "capability":{"id":selected.capability_id,"operation":"process.execute"},"inputs":{},"outputs":{},
             "execution":{"kind":"explicit","expected_generation":project.generation,"settings":{"environment":{"kind":"host"},"allow_changes":false},"access":"none","tools":[]},
-            "dependencies":if index==0 {Vec::<String>::new()} else {vec![format!("repository-{}",index-1)]},"required":true,"corrective_of":null,"paths":[]
+            "dependencies":if index==0 {std::collections::BTreeMap::<String,String>::new()} else {std::collections::BTreeMap::from([(format!("repository-{}",index-1),"success".into())])},"required":true,"corrective_of":null,"paths":[]
         }}))
     }).collect::<TestResult<Vec<_>>>()?;
     let request: CreateWorkflowRequest = serde_json::from_value(

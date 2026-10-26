@@ -47,6 +47,9 @@ owns the JSON request shapes; the [Svelte client](../web/README.md) provides the
 | Recover a lost acceptance reply | `workflow receipt REQUEST_ID`; replay the exact create/edit document if necessary |
 | Change future work | `workflow edit WORKFLOW FILE` with an exact request ID and observed generation |
 | Review a complete future batch without submitting | `workflow edit WORKFLOW FILE --preview` |
+| Read or conditionally save unfinished canvas work | `workflow authoring WORKFLOW`; `workflow save-authoring WORKFLOW FILE` |
+| Review saved work, then admit its exact scope | `workflow review-authoring WORKFLOW FILE`; `workflow run-authoring WORKFLOW FILE` |
+| Read or conditionally save separate card positions | `workflow positions WORKFLOW`; `workflow save-positions WORKFLOW FILE` |
 | Request cancellation | `workflow stop WORKFLOW TASK`; inspect the resulting state to establish whether it stopped |
 | Inspect the installation | `daemon readiness`, `health`, `authority`, `capability`, `provider` |
 | Read the shared daemon name and its generation | `daemon name` |

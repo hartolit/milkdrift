@@ -3,7 +3,8 @@ use crate::{
     error, json,
     schema::{
         NATIVE_PATH_CLAIMS, PEER_EXECUTION_TOMBSTONES, PEER_EXECUTIONS, TASK_ACCOUNTING,
-        TASK_ACTION_OWNERS, TASK_OUTPUT_USAGE, TASK_RECEIPTS, WORKSPACE_BUDGETS, WORKSPACE_USAGE,
+        TASK_ACTION_OWNERS, TASK_AUTHORING, TASK_OUTPUT_USAGE, TASK_POSITIONS, TASK_RECEIPTS,
+        TASK_WORKFLOWS, WORKSPACE_BUDGETS, WORKSPACE_USAGE,
     },
 };
 use milkdrift_persistence::PersistenceError;
@@ -54,6 +55,54 @@ pub(super) fn scan(context: &mut ScanContext<'_, '_>) -> Result<(), PersistenceE
         "task_output_usage",
         |_, bytes| crate::task::validate_output_usage(bytes),
     )?;
+    let authoring_validator: fn(&str, &[u8]) -> Result<(), PersistenceError> =
+        crate::task::validate_authoring_row;
+    for (phase, table, component, validate) in [
+        (5, TASK_AUTHORING, "task_authoring", authoring_validator),
+        (
+            6,
+            TASK_POSITIONS,
+            "task_positions",
+            crate::task::validate_positions_row,
+        ),
+    ] {
+        context.string_bytes(
+            phase,
+            &read.open_table(table).map_err(error::redb)?,
+            component,
+            |key, bytes| {
+                validate(key, bytes)?;
+                if read
+                    .open_table(TASK_WORKFLOWS)
+                    .map_err(error::redb)?
+                    .get(key)
+                    .map_err(error::redb)?
+                    .is_none()
+                {
+                    return Err(error::corruption("saved authoring lost its workflow"));
+                }
+                if phase == 5 {
+                    let saved: milkdrift_persistence::WorkflowAuthoringSnapshot =
+                        json::decode(bytes, "workflow authoring")?;
+                    let metadata = read
+                        .open_table(crate::schema::ARTIFACT_METADATA)
+                        .map_err(error::redb)?;
+                    for source in saved.protected_sources {
+                        if metadata
+                            .get(source.as_str())
+                            .map_err(error::redb)?
+                            .is_none()
+                        {
+                            return Err(error::corruption(
+                                "saved authoring lost its protected source",
+                            ));
+                        }
+                    }
+                }
+                Ok(())
+            },
+        )?;
+    }
     for (phase, table, component) in [
         (12, WORKSPACE_USAGE, "artifact_owner_usage"),
         (13, WORKSPACE_BUDGETS, "artifact_owner_budget"),

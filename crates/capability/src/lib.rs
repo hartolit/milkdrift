@@ -22,6 +22,7 @@
 //! in `milkdrift-capability-host`.
 
 mod admission;
+mod authoring;
 mod bounded;
 mod descriptor;
 mod document;
@@ -36,6 +37,7 @@ pub use admission::{
     AdmissionBound, AdmissionMonetaryBound, AdmissionUnit, InvocationAdmissionEnvelope,
     InvocationCounts, NestedWorkUsage,
 };
+pub use authoring::{TaskAuthoringContract, TaskAuthoringPort, TaskInputMedia};
 pub use bounded::{BoundedJson, ContractError, MAX_DOCUMENT_BYTES};
 pub use descriptor::{
     AdmissionConstraints, CancellationBehavior, CapabilityCategory, CapabilityDescriptor,

@@ -19,8 +19,21 @@ const DAEMON_METADATA: TableDefinition<'static, &'static str, &'static [u8]> =
 const DAEMON_RECEIPTS: TableDefinition<'static, &'static str, &'static [u8]> =
     TableDefinition::new("milkdrift.v1.daemon.rename_receipts");
 
+fn delete_authoring_tables(
+    write: &redb::WriteTransaction,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for name in [
+        "milkdrift.v1.tasks.authoring",
+        "milkdrift.v1.tasks.positions",
+    ] {
+        assert!(write.delete_table(TableDefinition::<&str, &[u8]>::new(name))?);
+    }
+    Ok(())
+}
+
 fn task_commit() -> Result<WorkflowCommit, Box<dyn std::error::Error>> {
     Ok(WorkflowCommit {
+        authoring: None,
         project_guard: None,
         project_id: None,
         expected_generation: None,
@@ -55,6 +68,7 @@ fn create_previous(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     drop(store);
     let db = Database::open(root.join("milkdrift.redb"))?;
     let write = db.begin_write()?;
+    delete_authoring_tables(&write)?;
     assert!(write.delete_table(DAEMON_METADATA)?);
     assert!(write.delete_table(DAEMON_RECEIPTS)?);
     assert!(write.delete_table(TableDefinition::<&str, &[u8]>::new(
@@ -115,7 +129,7 @@ fn prompt03_adoption_preserves_task_bytes_receipts_and_installation()
     create_previous(root.path())?;
     let before = task_bytes(root.path())?;
     let store = RedbStore::open(root.path())?;
-    assert_eq!(store.schema_info()?.stored_version, 21);
+    assert_eq!(store.schema_info()?.stored_version, 22);
     let host = PeerId::new("host:original")?;
     assert_eq!(
         store
@@ -168,7 +182,7 @@ fn interrupted_adoption_is_wholly_old_or_new_and_reopens_without_losing_tasks()
             let expected = if point == FaultPoint::BeforeDaemonSchemaAdoptionCommit {
                 (19, 44)
             } else {
-                (21, 49)
+                (22, 51)
             };
             assert_eq!(
                 read.open_table(METADATA)?
@@ -180,7 +194,7 @@ fn interrupted_adoption_is_wholly_old_or_new_and_reopens_without_losing_tasks()
             assert_eq!(read.list_tables()?.count(), expected.1);
         }
         let store = RedbStore::open(root.path())?;
-        assert_eq!(store.schema_info()?.stored_version, 21);
+        assert_eq!(store.schema_info()?.stored_version, 22);
         assert!(
             store
                 .workflow_receipt("alice", "original-command")?
@@ -257,6 +271,84 @@ fn malformed_previous_tables_or_accounting_are_refused_before_source_writes()
 mod fault;
 
 #[test]
+fn canvas_adoption_preserves_current_task_rows_and_receipts_atomically()
+-> Result<(), Box<dyn std::error::Error>> {
+    for point in [
+        None,
+        Some(FaultPoint::BeforeDaemonSchemaAdoptionCommit),
+        Some(FaultPoint::AfterDaemonSchemaAdoptionCommit),
+    ] {
+        let root = tempfile::tempdir()?;
+        let store = RedbStore::open(root.path())?;
+        store.commit_workflow(task_commit()?)?;
+        drop(store);
+        let db = Database::open(root.path().join("milkdrift.redb"))?;
+        let write = db.begin_write()?;
+        delete_authoring_tables(&write)?;
+        // Zero authoring fields stay absent so the supported previous accounting shape
+        // remains byte-identical, including its internal checksum, until the first save.
+        let table = TableDefinition::<&str, &[u8]>::new("milkdrift.v1.tasks.accounting");
+        let accounting = write.open_table(table)?;
+        let raw = accounting
+            .get("global")?
+            .ok_or("missing accounting")?
+            .value()
+            .to_vec();
+        let value: serde_json::Value = serde_json::from_slice(&raw)?;
+        let object = value
+            .get("payload")
+            .and_then(serde_json::Value::as_object)
+            .ok_or("accounting payload is not object")?;
+        assert!(!object.contains_key("authoring_bytes"));
+        assert!(!object.contains_key("authoring_replacement_bytes"));
+        drop(accounting);
+        write
+            .open_table(METADATA)?
+            .insert("storage_schema_version", 21)?;
+        write.commit()?;
+        drop(db);
+        let before = task_bytes(root.path())?;
+        if let Some(point) = point {
+            assert!(
+                RedbStore::open_with_config(
+                    RedbStoreConfig::new(root.path())
+                        .with_fault_injector(std::sync::Arc::new(fault::FailOnce::new(point)))
+                )
+                .is_err()
+            );
+            let db = Database::open(root.path().join("milkdrift.redb"))?;
+            let read = db.begin_read()?;
+            let (version, tables) = if point == FaultPoint::BeforeDaemonSchemaAdoptionCommit {
+                (21, 49)
+            } else {
+                (22, 51)
+            };
+            assert_eq!(
+                read.open_table(METADATA)?
+                    .get("storage_schema_version")?
+                    .ok_or("marker missing")?
+                    .value(),
+                version
+            );
+            assert_eq!(read.list_tables()?.count(), tables);
+        }
+        let store = RedbStore::open(root.path())?;
+        let saved = store
+            .workflow_authoring(&WorkflowId::new("workflow:preserved")?)?
+            .ok_or("workflow missing")?;
+        assert_eq!(saved.generation, 0);
+        assert_eq!(saved.document, serde_json::Value::Null);
+        assert!(matches!(
+            store.commit_workflow(task_commit()?)?,
+            WorkflowCommitOutcome::Replay(_)
+        ));
+        drop(store);
+        assert_eq!(task_bytes(root.path())?, before);
+    }
+    Ok(())
+}
+
+#[test]
 fn prompt02d_adoption_preserves_existing_workflow_and_rename_receipt_bytes()
 -> Result<(), Box<dyn std::error::Error>> {
     use milkdrift_authority::ActorRef;
@@ -273,6 +365,7 @@ fn prompt02d_adoption_preserves_existing_workflow_and_rename_receipt_bytes()
     let before = task_bytes(root.path())?;
     let db = Database::open(root.path().join("milkdrift.redb"))?;
     let write = db.begin_write()?;
+    delete_authoring_tables(&write)?;
     assert!(write.delete_table(TableDefinition::<&str, &[u8]>::new(
         "milkdrift.v1.projects.registrations"
     ))?);
@@ -288,7 +381,7 @@ fn prompt02d_adoption_preserves_existing_workflow_and_rename_receipt_bytes()
     write.commit()?;
     drop(db);
     let store = RedbStore::open(root.path())?;
-    assert_eq!(store.schema_info()?.stored_version, 21);
+    assert_eq!(store.schema_info()?.stored_version, 22);
     assert_eq!(
         store.daemon_rename_receipt(&host, &actor, "rename-original")?,
         receipt

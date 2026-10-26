@@ -70,13 +70,21 @@ impl TaskControlService {
         context: &ActorAuthorityContext,
         definition: &TaskDefinition,
     ) -> Result<(), ControlError> {
+        let Some(binding) = definition.execution.binding() else {
+            return Ok(());
+        };
+        self.authorize_project_binding(context, binding)
+    }
+
+    pub(super) fn authorize_project_binding(
+        &self,
+        context: &ActorAuthorityContext,
+        binding: &TaskProjectBinding,
+    ) -> Result<(), ControlError> {
         use milkdrift_authority::{
             AccessMode, AuthorityBudget, AuthorityExecutionProvenance, AuthorityOperation,
             AuthorityRequest, BoundaryTimeMillis, DecisionId, FilesystemScope,
             RequestedResourceFacts,
-        };
-        let Some(binding) = definition.execution.binding() else {
-            return Ok(());
         };
         let mut resources = RequestedResourceFacts::empty();
         for path in [&binding.folder.requested, &binding.folder.physical] {
@@ -356,6 +364,7 @@ mod tests {
     }
     fn definition(execution: TaskExecution) -> Result<TaskDefinition, Box<dyn std::error::Error>> {
         Ok(TaskDefinition {
+            capability_generation: None,
             execution,
             actions: None,
             title: "Inspect".into(),

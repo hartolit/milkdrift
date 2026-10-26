@@ -12,3 +12,4 @@ pub use command::ActorAuthorityContext;
 pub use error::ControlError;
 pub use preset::{AuthorityPreset, GrantTemplate};
 pub use tasks::TaskControlService;
+pub use tasks::authoring::{AuthoringIssue, AuthoringReview, AuthoringScope};

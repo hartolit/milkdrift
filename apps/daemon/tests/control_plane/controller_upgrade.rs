@@ -116,6 +116,7 @@ fn save_previous_work(
         tasks: vec![NewTask {
             alias: TaskId::new(&original.alias)?,
             definition: TaskDefinition {
+                capability_generation: None,
                 execution: milkdrift_blueprint::TaskExecution::Legacy,
                 title: definition.title.clone(),
                 description: definition.description.clone(),

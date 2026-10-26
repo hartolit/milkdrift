@@ -31,6 +31,26 @@ pub enum StorageFailureClass {
 /// explains how to recover a result when an error may have arrived after commit.
 #[derive(Debug, Error)]
 pub enum PersistenceError {
+    /// A saved authoring checkpoint changed after the caller read it.
+    #[error("authoring generation conflict for {workflow}: expected {expected}, actual {actual}")]
+    AuthoringGenerationConflict {
+        /// Workflow whose authoring changed.
+        workflow: milkdrift_blueprint::WorkflowId,
+        /// Author's observed generation.
+        expected: u64,
+        /// Current saved generation.
+        actual: u64,
+    },
+    /// Presentation positions changed without altering semantic authoring or runtime state.
+    #[error("position generation conflict for {workflow}: expected {expected}, actual {actual}")]
+    PositionsGenerationConflict {
+        /// Workflow whose saved positions changed.
+        workflow: milkdrift_blueprint::WorkflowId,
+        /// Author's observed position generation.
+        expected: u64,
+        /// Current saved position generation.
+        actual: u64,
+    },
     /// A validated native-directory claim overlaps an existing reader or writer.
     /// No part of the requested claim was accepted. The existing owner stays protected;
     /// the caller may retry this same pre-entry claim after contention clears.

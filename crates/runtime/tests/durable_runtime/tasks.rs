@@ -1,5 +1,5 @@
 //! Ordinary-task admission and entry use the production redb owner and executor boundary.
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -49,6 +49,9 @@ mod lifecycle;
 #[path = "lifecycle_faults.rs"]
 mod lifecycle_faults;
 
+#[path = "canvas_semantics.rs"]
+mod canvas_semantics;
+
 fn request() -> TestResult<WorkflowCreate> {
     Ok(WorkflowCreate {
         project_id: None,
@@ -57,6 +60,7 @@ fn request() -> TestResult<WorkflowCreate> {
         tasks: vec![NewTask {
             alias: TaskId::new("inspect")?,
             definition: TaskDefinition {
+                capability_generation: None,
                 execution: milkdrift_blueprint::TaskExecution::Legacy,
                 title: "Read Cargo manifest".into(),
                 description: String::new(),
@@ -70,7 +74,7 @@ fn request() -> TestResult<WorkflowCreate> {
                         optional: false,
                     },
                 )]),
-                dependencies: BTreeSet::new(),
+                dependencies: Default::default(),
                 outputs: BTreeMap::new(),
                 required: true,
                 corrective_of: None,
@@ -749,10 +753,6 @@ fn optional_output_waits_for_producer_settlement_then_supplies_typed_absence() -
     let mut consumer = create.tasks.first().ok_or("producer absent")?.clone();
     let producer_alias = consumer.alias.clone();
     consumer.alias = TaskId::new("consume-optional")?;
-    consumer
-        .definition
-        .dependencies
-        .insert(producer_alias.clone());
     consumer.definition.inputs = BTreeMap::from([(
         "optional_result".into(),
         TaskInputBinding::TaskOutput {
@@ -1105,10 +1105,11 @@ fn correction_adoption_redirects_only_named_future_binding_and_rejects_competiti
         );
     let mut consumer = create.tasks.first().ok_or("original absent")?.clone();
     consumer.alias = TaskId::new("consumer")?;
-    consumer
-        .definition
-        .dependencies
-        .insert(TaskId::new("inspect")?);
+    consumer.definition.dependencies =
+        milkdrift_blueprint::TaskDependencies::Ordered(BTreeMap::from([(
+            TaskId::new("inspect")?,
+            milkdrift_blueprint::TaskOrderCondition::Success,
+        )]));
     consumer.definition.inputs = BTreeMap::from([(
         "review".into(),
         TaskInputBinding::TaskOutput {
@@ -1125,7 +1126,7 @@ fn correction_adoption_redirects_only_named_future_binding_and_rejects_competiti
     let original = record
         .tasks
         .values()
-        .find(|task| task.definition.dependencies.is_empty())
+        .find(|task| task.definition.dependencies.references().next().is_none())
         .ok_or("original absent")?;
     let original_id = original.id.clone();
     let mut correction = original.definition.clone();
@@ -1134,7 +1135,7 @@ fn correction_adoption_redirects_only_named_future_binding_and_rejects_competiti
     let consumer = record
         .tasks
         .values()
-        .find(|task| !task.definition.dependencies.is_empty())
+        .find(|task| task.definition.dependencies.references().next().is_some())
         .ok_or("consumer absent")?
         .id
         .clone();
@@ -1192,7 +1193,7 @@ fn correction_adoption_redirects_only_named_future_binding_and_rejects_competiti
         .clone();
     let change = TaskChange::AdoptCorrection {
         task: original_id.clone(),
-        correction: correction.clone(),
+        correction,
         redirects: vec![milkdrift_blueprint::TaskBindingRedirect {
             consumer: consumer.clone(),
             expected_version: 1,
@@ -1214,7 +1215,13 @@ fn correction_adoption_redirects_only_named_future_binding_and_rejects_competiti
     let edited = record.tasks.get(&consumer).ok_or("consumer absent")?;
     assert_eq!(edited.version, 2);
     assert_eq!(edited.previous_definitions.len(), 1);
-    assert_eq!(edited.definition.dependencies, BTreeSet::from([correction]));
+    assert_eq!(
+        edited.definition.dependencies,
+        milkdrift_blueprint::TaskDependencies::Ordered(BTreeMap::from([(
+            original_id.clone(),
+            milkdrift_blueprint::TaskOrderCondition::Success
+        )]))
+    );
     assert!(
         control
             .edit(
@@ -1393,7 +1400,6 @@ fn oversized_dynamic_settled_outcomes_fail_before_external_entry() -> TestResult
     producer.definition.inputs.clear();
     let mut consumer = producer.definition.clone();
     consumer.title = "Inspect settled outcome".into();
-    consumer.dependencies.insert(TaskId::new("inspect")?);
     consumer.inputs = (0..8)
         .map(|index| {
             Ok((
@@ -1486,6 +1492,7 @@ fn discovery_fields_cannot_contradict_the_authoritative_workflow_document() -> T
             _ => unreachable!(),
         }
         store.commit_workflow(WorkflowCommit {
+            authoring: None,
             project_guard: None,
             project_id: None,
             expected_generation: Some(expected),

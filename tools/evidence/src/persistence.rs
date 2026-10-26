@@ -88,6 +88,7 @@ fn commit_measurement(items: u32) -> EvidenceResult<ScenarioMeasurement> {
     let store = RedbStore::open(directory.path())?;
     let snapshot = workflow_snapshot("commit", 1, items)?;
     store.commit_workflow(WorkflowCommit {
+        authoring: None,
         project_guard: None,
         project_id: None,
         expected_generation: None,
@@ -133,6 +134,7 @@ pub fn workflow_read_page() -> EvidenceResult<ScenarioMeasurement> {
     let store = RedbStore::open(directory.path())?;
     for index in 0..64 {
         store.commit_workflow(WorkflowCommit {
+            authoring: None,
             project_guard: None,
             project_id: None,
             expected_generation: None,
@@ -174,6 +176,7 @@ pub fn workflow_snapshot_reopen() -> EvidenceResult<ScenarioMeasurement> {
     let store = RedbStore::open(directory.path())?;
     let mut snapshot = workflow_snapshot("reopen", 1, 32)?;
     store.commit_workflow(WorkflowCommit {
+        authoring: None,
         project_guard: None,
         project_id: None,
         expected_generation: None,
@@ -187,6 +190,7 @@ pub fn workflow_snapshot_reopen() -> EvidenceResult<ScenarioMeasurement> {
             .get_mut("generation")
             .ok_or("workflow snapshot generation absent")? = serde_json::json!(generation);
         store.commit_workflow(WorkflowCommit {
+            authoring: None,
             project_guard: None,
             project_id: None,
             expected_generation: Some(generation.saturating_sub(1)),
@@ -403,6 +407,7 @@ pub fn peer_observation_paths() -> EvidenceResult<ScenarioMeasurement> {
 
 fn receipt_commit(index: u32) -> EvidenceResult<WorkflowCommit> {
     Ok(WorkflowCommit {
+        authoring: None,
         project_guard: None,
         project_id: None,
         expected_generation: None,

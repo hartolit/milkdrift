@@ -35,7 +35,7 @@ fn format_for_open(database: &Database, allow_previous: bool) -> Result<bool, Pe
             .map_err(error::redb)?
             .ok_or_else(|| error::corruption("storage format marker is missing"))?
             .value();
-        if key == SCHEMA_VERSION_KEY && allow_previous && matches!(found, 19 | 20) {
+        if key == SCHEMA_VERSION_KEY && allow_previous && matches!(found, 19..=21) {
             previous = true;
             physical = found;
         } else if found != supported {
@@ -51,6 +51,8 @@ fn format_for_open(database: &Database, allow_previous: bool) -> Result<bool, Pe
         crate::schema::validate_previous_tables(&read)?;
     } else if physical == 20 {
         crate::schema::validate_daemon_tables(&read)?;
+    } else if physical == 21 {
+        crate::schema::validate_project_tables(&read)?;
     } else {
         crate::schema::validate_tables(&read)?;
     }
@@ -72,15 +74,15 @@ pub(crate) fn validate_for_open(database: &Database) -> Result<bool, Persistence
     if physical >= 20 {
         crate::daemon::validate(&database.begin_read().map_err(error::redb)?)?;
     }
-    if !previous {
+    if physical >= 21 {
         crate::project::validate(&read)?;
     }
     Ok(previous)
 }
 
-/// Only schema 19 or 20/internal 22 is adoptable. Existing row bytes are untouched;
-/// missing project/daemon families and the physical marker appear in one transaction.
-pub(crate) fn adopt_daemon_metadata(
+/// Only schemas 19 through 21/internal 22 are adoptable. Existing row bytes are untouched;
+/// missing task-authoring, project and daemon families appear with the marker atomically.
+pub(crate) fn adopt_supported_schema(
     database: &Database,
     faults: &dyn FaultInjector,
 ) -> Result<(), PersistenceError> {
@@ -90,6 +92,7 @@ pub(crate) fn adopt_daemon_metadata(
     let write = database.begin_write().map_err(error::redb)?;
     crate::schema::initialize_daemon_tables(&write)?;
     crate::schema::initialize_project_tables(&write)?;
+    crate::schema::initialize_authoring_tables(&write)?;
     write
         .open_table(METADATA)
         .map_err(error::redb)?

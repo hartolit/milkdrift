@@ -30,7 +30,7 @@ test.describe('public API canvas review cases', () => {
   });
 
   const panel = (page: Page) => page.getByRole('complementary', { name: 'Selected item', exact: true });
-  const apply = (page: Page) => page.locator('.drawing-actions').getByRole('button', { name: /^(Add task|Apply changes)$/ });
+  const apply = (page: Page) => page.locator('.drawing-actions').getByRole('button', { name: /^(Run pending plan|Apply changes)$/ });
 
   async function read<T>(page: Page, path: string): Promise<T> {
     const response = await page.request.get(`${config.a.url}${path}`, { headers: { authorization: `Bearer ${config.a.token}`, 'x-milkdrift-daemon': config.a.identity } });
@@ -81,13 +81,14 @@ test.describe('public API canvas review cases', () => {
       await test.step(`refuse ${label} without changing the workflow`, async () => {
         const before = await workflow(page, seed.workflow);
         await stageCorrection(page, correction);
-        const rejected = page.waitForResponse((response) => response.url().endsWith(`/workflows/${seed.workflow}/changes`) && response.request().method() === 'POST');
+        const rejected = page.waitForResponse((response) => response.url().endsWith(`/workflows/${seed.workflow}/authoring/run`) && response.request().method() === 'POST');
         await apply(page).click();
         expect((await rejected).status()).toBe(400);
         await expect(page.getByRole('alert')).toBeVisible();
         expect((await workflow(page, seed.workflow)).generation).toBe(before.generation);
         expect((await task(page, seed.workflow, seed.consumer)).definition).toEqual(consumer.definition);
-        await page.getByRole('button', { name: 'Discard drawing', exact: true }).click();
+        await page.locator('.drawing-review summary').click();
+        await page.locator('.drawing-review').getByRole('button', { name: 'Undo', exact: true }).click();
       });
     }
     await stageCorrection(page, seed.compatible);
@@ -111,14 +112,16 @@ test.describe('public API canvas review cases', () => {
     const before = await workflow(page, seed.workflow);
     expect(before.wait_question).toBe(seed.wait_question);
     await page.getByRole('button', { name: '+ Add task', exact: true }).click();
+    await select(page, 'New task');
     await page.getByLabel('What should this task do?', { exact: true }).fill('Reviewed repair awaiting the separate budget decision');
     await page.getByRole('combobox', { name: 'Model or agent', exact: true }).selectOption(JSON.stringify(['controlled-model', 'model.generate']));
     await select(page, 'Rejected follow-up proposal');
     await page.getByRole('button', { name: 'Dismiss reviewed proposal', exact: true }).click();
-    const submitted = page.waitForRequest((request) => request.url().endsWith(`/workflows/${seed.workflow}/changes`) && request.method() === 'POST');
+    const submitted = page.waitForRequest((request) => request.url().endsWith(`/workflows/${seed.workflow}/authoring/run`) && request.method() === 'POST');
     await apply(page).click();
-    const body = (await submitted).postDataJSON() as { changes: Array<{ kind: string }> };
-    expect(body.changes.map((change) => change.kind)).toEqual(['add', 'dismiss_admission']);
+    const body = (await submitted).postDataJSON() as { tasks: string[]; changes: number[] };
+    expect(body.tasks).toHaveLength(1);
+    expect(body.changes).toEqual([0]);
     await expect.poll(async () => (await workflow(page, seed.workflow)).task_count).toBe(before.task_count + 1);
     const after = await workflow(page, seed.workflow);
     expect(after.wait_question).toBe(seed.wait_question);
@@ -147,11 +150,12 @@ test.describe('public API canvas review cases', () => {
     await expect(page.locator('.list-node').filter({ hasText: 'Task outside this page' })).toBeVisible();
     await select(page, 'Paged consumer');
     await panel(page).getByRole('button', { name: 'Edit task', exact: true }).click();
-    await panel(page).locator('.inspector-connections').getByRole('button').filter({ hasText: 'Required input' }).click();
+    await panel(page).locator('.inspector-connections').getByRole('button').filter({ hasText: 'review-hold' }).click();
     await panel(page).getByRole('button', { name: 'Remove connection', exact: true }).click();
     await page.getByRole('button', { name: 'Workflow', exact: true }).click();
     await page.getByRole('button', { name: 'Clear cached details', exact: true }).click();
-    await expect(page.locator('.drawing-actions')).toContainText('1 unsaved change');
+    await expect(apply(page)).toBeVisible();
+    await expect(page.locator('.save-state')).toHaveText('Saved');
     await select(page, 'Paged consumer');
     await expect(page.getByLabel('What should this task do?', { exact: true })).toHaveValue(before.definition.instructions);
     await apply(page).click();
@@ -191,7 +195,7 @@ test.describe('public API canvas review cases', () => {
     await page.getByRole('button', { name: '+ Add task', exact: true }).click();
     await expect(page.getByRole('alert')).toContainText('project before adding a task');
     await expect(page.getByRole('combobox', { name: 'Task project access', exact: true })).toHaveCount(0);
-    await expect(page.getByRole('navigation', { name: 'Projects', exact: true })).not.toContainText('Animation project');
+    await expect(page.getByRole('navigation', { name: 'Daemons, projects and workflows', exact: true })).not.toContainText('Animation project');
     await page.locator('.canvas-list article').filter({ has: page.locator('.list-node').filter({ hasText: 'Access restricted' }) }).getByRole('button', { name: 'Connect to…', exact: true }).click();
     await page.getByRole('combobox', { name: 'Destination task', exact: true }).selectOption({ label: 'Awaiting authorized context' });
     await panel(page).getByRole('button', { name: 'Connect', exact: true }).click();

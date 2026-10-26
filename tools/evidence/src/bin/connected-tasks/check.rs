@@ -37,7 +37,7 @@ fn request(
             "capability":{"id":capability,"operation":operation},
             "execution":{"kind":"explicit","expected_generation":project.generation,"settings":{"environment":{"kind":"host"},"allow_changes":false},"access":"none","tools":[]},
             "inputs":{"brief":{"kind":"supplied","name":"brief","optional":false},"file":{"kind":"supplied","name":"file","optional":false}},
-            "dependencies":[],"required":true,"corrective_of":null,"paths":[]
+            "dependencies":{},"required":true,"corrective_of":null,"paths":[]
         }}],
         "inputs":{"brief":{"kind":"text","text":"private-brief-sentinel"},"file":{"kind":"uploaded","input_id":input}},
         "finish_when_settled":true,"limits":null

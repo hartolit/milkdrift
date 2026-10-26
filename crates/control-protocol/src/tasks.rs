@@ -112,6 +112,8 @@ pub struct TaskOutputPortDto {
 #[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
 #[serde(deny_unknown_fields)]
 pub struct TaskCapabilityAuthoringDto {
+    /// Media interpretation supported by configured inputs, including extra context.
+    pub input_media: TaskInputMediaDto,
     /// Exact executor selected by the task.
     pub capability: TaskCapability,
     /// Registered immutable configuration generation.
@@ -129,6 +131,17 @@ pub struct TaskCapabilityAuthoringDto {
     pub outputs: Vec<TaskOutputPortDto>,
     /// Preferred real publication, if the adapter defines one.
     pub default_output: Option<String>,
+}
+
+/// Adapter-owned rule for interpreting a connected result's media.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
+pub enum TaskInputMediaDto {
+    /// Configured operation accepts arbitrary bytes.
+    Any,
+    /// Context accepts text, JSON and images; other binary formats need conversion.
+    TextJsonOrImage,
 }
 
 /// Filesystem scope already granted to this actor; selecting it does not grant permission.
@@ -186,6 +199,34 @@ pub struct TaskBindingRedirectDto {
     pub input: String,
 }
 
+/// Independent ordering before a task may start.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
+pub enum TaskOrderConditionDto {
+    /// Successful predecessor or an explicitly adopted successful correction.
+    Success,
+    /// A settled predecessor, including failure or proven stop.
+    Settled,
+}
+
+/// New authoring uses an object of independent conditions; arrays preserve historical meaning.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
+#[serde(untagged)]
+pub enum TaskDependenciesDto {
+    /// Retained merged edges. Fresh submissions must choose explicit conditions instead.
+    Legacy(Vec<String>),
+    /// Independent order edges; data wires derive their own prerequisites.
+    Ordered(BTreeMap<String, TaskOrderConditionDto>),
+}
+
+impl Default for TaskDependenciesDto {
+    fn default() -> Self {
+        Self::Ordered(BTreeMap::new())
+    }
+}
+
 /// Editable content until the owning runtime freezes the task's start.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
@@ -197,8 +238,8 @@ pub struct TaskDefinitionDto {
         skip_serializing_if = "crate::task_execution::TaskExecutionDto::is_legacy"
     )]
     pub execution: crate::task_execution::TaskExecutionDto,
-    /// Optional admission guard for the authoring contract observed while composing this task.
-    /// It is not retained as a second capability selector in the accepted definition.
+    /// Optional configuration generation reviewed while composing this task. A newer current
+    /// generation requires review before admission or first start; frozen starts retain theirs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "web-codegen", ts(optional, type = "number"))]
     pub authoring_generation: Option<u64>,
@@ -221,8 +262,8 @@ pub struct TaskDefinitionDto {
     /// Named immutable outputs available to future consumers.
     #[serde(default)]
     pub outputs: BTreeMap<String, TaskOutputDeclarationDto>,
-    /// Explicit producer IDs or batch aliases.
-    pub dependencies: Vec<String>,
+    /// Independent conditions for new work; arrays occur only in retained historical definitions.
+    pub dependencies: TaskDependenciesDto,
     /// Whether completion requires success or adopted correction.
     #[serde(default = "required_by_default")]
     pub required: bool,
@@ -324,6 +365,13 @@ pub struct CreateWorkflowRequest {
 #[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TaskChangeDto {
+    /// Rename the workflow without revising task content.
+    Rename {
+        /// Bounded workflow title.
+        title: String,
+        /// Bounded workflow description.
+        description: String,
+    },
     /// Close a rejected response decision, optionally alongside reviewed future edits.
     DismissAdmission {
         /// Source task whose response was reviewed.
@@ -485,7 +533,8 @@ pub struct TaskPublishedOutputDto {
 #[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
 #[serde(deny_unknown_fields)]
 pub struct TaskSuppliedInputDto {
-    /// Available, restricted by authority, or expired; an absent map key means missing.
+    /// Available, restricted by authority, or expired. Task/workflow maps omit missing values;
+    /// topology previews explicitly use `missing` when the supplied value is known to be absent.
     pub availability: String,
     /// Bounded captured value when readable.
     pub value: Option<FrozenInputDto>,
@@ -728,6 +777,8 @@ pub struct WorkflowPageDto {
 #[cfg_attr(feature = "web-codegen", derive(ts_rs::TS))]
 #[serde(deny_unknown_fields)]
 pub struct TaskSessionDto {
+    /// Saved authoring and single-admission operational envelope advertised by the Rust owner.
+    pub authoring_bounds: crate::authoring::AuthoringBoundsDto,
     /// Safe real connector choices for the permitted current executor generations.
     #[serde(default)]
     pub authoring: Vec<TaskCapabilityAuthoringDto>,
@@ -736,7 +787,8 @@ pub struct TaskSessionDto {
     pub project_roots: Vec<TaskProjectRootDto>,
     /// Maximum UTF-8 bytes in a supplied text value or captured file.
     pub input_limit_bytes: u32,
-    /// Aggregate declared output allowance per task. Zero means an older server omitted it.
+    /// Aggregate actual output allowance per task; each port retains its own stable ceiling.
+    /// Zero means an older server omitted it.
     #[serde(default)]
     #[cfg_attr(feature = "web-codegen", ts(type = "number"))]
     pub task_output_limit_bytes: u64,

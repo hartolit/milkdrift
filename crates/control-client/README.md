@@ -38,6 +38,20 @@ retained result through `task_result`. A bounded text preview exposes its trunca
 metadata and bounded ranges remain the complete immutable download path. A task read may expose
 lifecycle metadata while marking result content restricted under the caller's current grant.
 
+Use `workflow_authoring` and `checkpoint_workflow_authoring` to read and conditionally replace a
+workflow's latest unfinished canvas. The position methods version layout separately. These writes
+do not have command receipts and are not automatically retried: after an uncertain reply, compare
+current content before deciding whether to submit the newer candidate. `review_workflow_authoring`
+exposes repairs and required predecessors; `run_workflow_authoring` uses an exact canonical request
+and the ordinary receipt recovery path to admit only the reviewed scope.
+
+`workflow_topology` reads accepted ports, data connections and exact ordering conditions without
+loading task instructions or result text. Its continuation is separate from the task-summary cursor
+and binds the workflow generation as well as the daemon and current viewing authority. Continue
+while `truncated` is true; if that generation changes, reload the connection view. A null input
+preview means it was not included, not that the source is absent. Fetch the selected source/task
+when an action needs its exact content rather than copying a bounded display preview.
+
 `change_workflow` sends a generation-guarded atomic batch. Started task definitions remain frozen;
 corrections are separate future tasks. `workflow_receipt` recovers exact durable acceptance after
 a reply is lost. Mutations do not retry automatically. Replaying the same exact request returns

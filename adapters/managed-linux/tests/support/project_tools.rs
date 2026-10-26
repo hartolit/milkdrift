@@ -490,13 +490,14 @@ pub(super) fn run(
             tasks: vec![NewTask {
                 alias: TaskId::new("model")?,
                 definition: TaskDefinition {
+                    capability_generation: None,
                     execution: TaskExecution::Bound { binding },
                     title: "Edit attached project".into(),
                     description: String::new(),
                     instructions: "Use the configured tool once, then finish.".into(),
                     capability: CapabilityRequirement::new(OperationId::new("model.generate")?),
                     inputs: BTreeMap::new(),
-                    dependencies: BTreeSet::new(),
+                    dependencies: Default::default(),
                     outputs: BTreeMap::new(),
                     required: true,
                     corrective_of: None,

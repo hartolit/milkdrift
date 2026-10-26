@@ -151,6 +151,7 @@ pub(super) fn require_history_capacity(
     let physical = crate::artifact::validate_artifact_state(write)?.committed_content_bytes;
     let used = [
         accounting.history_bytes,
+        accounting.authoring_replacement_bytes,
         accounting.reserved_bytes,
         accounting.artifact_reserved_bytes,
         accounting.pending_artifact_bytes,

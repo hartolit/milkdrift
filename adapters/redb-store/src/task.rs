@@ -20,7 +20,9 @@ const MAX_RECEIPT_RESULT_BYTES: usize = 64 * 1024;
 // One oversized valid snapshot may be returned alone; combining records stays below this target.
 const MAX_WORKFLOW_PAGE_BYTES: usize = 4 * 1024 * 1024;
 
+mod authoring;
 mod capacity;
+pub(crate) use authoring::{validate_authoring_row, validate_positions_row};
 pub(crate) use capacity::{begin_artifact, commit_artifact, release_artifact};
 pub(crate) use capacity::{release_task_output, reserve_task_output, validate_output_usage};
 
@@ -28,6 +30,10 @@ pub(crate) use capacity::{release_task_output, reserve_task_output, validate_out
 #[serde(deny_unknown_fields)]
 struct Accounting {
     history_bytes: u64,
+    #[serde(default, skip_serializing_if = "zero")]
+    authoring_bytes: u64,
+    #[serde(default, skip_serializing_if = "zero")]
+    authoring_replacement_bytes: u64,
     receipt_bytes: u64,
     receipt_entries: u64,
     reserved_bytes: u64,
@@ -36,7 +42,41 @@ struct Accounting {
     pending_artifact_bytes: u64,
 }
 
+fn zero(value: &u64) -> bool {
+    *value == 0
+}
+
 impl WorkflowStore for RedbStore {
+    fn workflow_authoring(
+        &self,
+        workflow: &WorkflowId,
+    ) -> Result<Option<milkdrift_persistence::WorkflowAuthoringSnapshot>, PersistenceError> {
+        authoring::read_authoring(self, workflow)
+    }
+
+    fn checkpoint_workflow_authoring(
+        &self,
+        workflow: &WorkflowId,
+        checkpoint: milkdrift_persistence::WorkflowAuthoringCommit,
+    ) -> Result<milkdrift_persistence::WorkflowAuthoringSnapshot, PersistenceError> {
+        authoring::checkpoint_authoring(self, workflow, checkpoint)
+    }
+
+    fn workflow_positions(
+        &self,
+        workflow: &WorkflowId,
+    ) -> Result<Option<milkdrift_persistence::WorkflowPositionsSnapshot>, PersistenceError> {
+        authoring::read_positions(self, workflow)
+    }
+
+    fn checkpoint_workflow_positions(
+        &self,
+        workflow: &WorkflowId,
+        checkpoint: milkdrift_persistence::WorkflowPositionsCommit,
+    ) -> Result<milkdrift_persistence::WorkflowPositionsSnapshot, PersistenceError> {
+        authoring::checkpoint_positions(self, workflow, checkpoint)
+    }
+
     fn workflow_storage_usage(
         &self,
     ) -> Result<milkdrift_persistence::WorkflowStorageUsage, PersistenceError> {
@@ -59,6 +99,8 @@ impl WorkflowStore for RedbStore {
             json::decode(a_bytes.value(), "artifact accounting")?;
         Ok(milkdrift_persistence::WorkflowStorageUsage {
             history_bytes: a.history_bytes,
+            authoring_bytes: a.authoring_bytes,
+            authoring_replacement_bytes: a.authoring_replacement_bytes,
             receipt_bytes: a.receipt_bytes,
             receipt_entries: a.receipt_entries,
             reserved_bytes: a.reserved_bytes,
@@ -264,6 +306,19 @@ impl WorkflowStore for RedbStore {
             .map(|value| json::decode(value.value(), "task accounting"))
             .transpose()?
             .ok_or_else(|| error::corruption("task accounting is missing"))?;
+        if let Some(checkpoint) = commit.authoring {
+            if receipt.is_none() {
+                return Err(bounds(
+                    "atomic authoring admission requires an exact command receipt",
+                ));
+            }
+            authoring::replace_authoring(
+                &write,
+                &commit.snapshot.workflow,
+                checkpoint,
+                &mut accounting,
+            )?;
+        }
         if accounting.receipt_entries != receipts.len().map_err(error::redb)? {
             return Err(error::corruption(
                 "task receipt count differs from accounting",
@@ -462,6 +517,7 @@ pub(crate) fn validate_snapshot_row(key: &str, bytes: &[u8]) -> Result<(), Persi
     }
     let expected_generation = snapshot.generation.checked_sub(1).filter(|n| *n != 0);
     validate(&WorkflowCommit {
+        authoring: None,
         project_guard: None,
         project_id: None,
         expected_generation,

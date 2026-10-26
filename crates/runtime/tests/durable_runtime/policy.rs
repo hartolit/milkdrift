@@ -391,7 +391,6 @@ fn settled_outcome_does_not_waive_sibling_required_success_input() -> TestResult
     consumer.title = "Needs successful output and settled outcome".into();
     consumer.outputs.clear();
     consumer.required = true;
-    consumer.dependencies.insert(TaskId::new("inspect")?);
     consumer.inputs = BTreeMap::from([
         (
             "required".into(),
@@ -459,7 +458,8 @@ fn settled_outcome_does_not_waive_sibling_required_success_input() -> TestResult
             .and_then(|result| result.outputs.get("partial"))
             .is_some()
     );
-    // A human can explicitly opt this future binding into the producer's partial result.
+    // A human may accept settled absence; the separate outcome input remains the explicit
+    // source of failure evidence. Optional data never silently imports failed result bytes.
     let mut definition = consumer.definition.clone();
     if let Some(TaskInputBinding::TaskOutput { optional, .. }) =
         definition.inputs.get_mut("required")
@@ -487,8 +487,21 @@ fn settled_outcome_does_not_waive_sibling_required_success_input() -> TestResult
             .get(&consumer.id)
             .and_then(|task| task.frozen.as_ref())
             .and_then(|start| start.inputs.get("required")),
-        Some(TaskInputValue::Artifact { .. })
+        Some(TaskInputValue::Absent)
     ));
+    let Some(TaskInputValue::Json { value }) = record
+        .tasks
+        .get(&consumer.id)
+        .and_then(|task| task.frozen.as_ref())
+        .and_then(|start| start.inputs.get("outcome"))
+    else {
+        return Err("settled outcome absent".into());
+    };
+    assert_eq!(
+        value.get("state").and_then(serde_json::Value::as_str),
+        Some("failed")
+    );
+    assert!(value.pointer("/result/outputs/partial").is_some());
     runtime.execute(dispatch)?;
     Ok(())
 }

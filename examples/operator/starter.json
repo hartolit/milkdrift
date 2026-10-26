@@ -29,7 +29,7 @@
           }
         },
         "outputs": {},
-        "dependencies": [],
+        "dependencies": {},
         "required": true,
         "corrective_of": null,
         "paths": []

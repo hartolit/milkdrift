@@ -6,6 +6,9 @@ use thiserror::Error;
 /// A checked request failed without bypassing authority or durable admission.
 #[derive(Debug, Error)]
 pub enum ControlError {
+    /// The reviewed saved sketch needs bounded, object-local repairs before admission.
+    #[error("saved work requires review before it can run")]
+    AuthoringIssues(Vec<crate::AuthoringIssue>),
     /// The supplied control facts violate a bounded contract.
     #[error("invalid control contract: {0}")]
     InvalidContract(String),

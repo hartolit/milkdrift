@@ -1,6 +1,6 @@
 //! Controlled external work exercises the production duration ledger, entry and recovery owner.
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -331,13 +331,14 @@ fn context() -> TestResult<ActorAuthorityContext> {
 
 fn definition() -> TestResult<TaskDefinition> {
     Ok(TaskDefinition {
+        capability_generation: None,
         execution: milkdrift_blueprint::TaskExecution::Legacy,
         title: "Controlled duration".into(),
         description: String::new(),
         instructions: "Use only the admitted execution duration.".into(),
         capability: CapabilityRequirement::new(OperationId::new("model.generate")?),
         inputs: BTreeMap::new(),
-        dependencies: BTreeSet::new(),
+        dependencies: Default::default(),
         outputs: BTreeMap::new(),
         required: true,
         corrective_of: None,
@@ -716,6 +717,7 @@ fn missing_enforceable_duration_refuses_entry_and_old_document_version_refuses_m
     fixture
         .store
         .commit_workflow(milkdrift_persistence::WorkflowCommit {
+            authoring: None,
             project_guard: None,
             project_id: None,
             expected_generation: Some(prior),

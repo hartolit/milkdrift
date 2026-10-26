@@ -32,6 +32,18 @@ pub(crate) enum WorkflowCommand {
     },
     /// Submit a typed JSON task request; the daemon allocates all identities.
     Create { file: PathBuf },
+    /// Read the current saved, non-executable sketch.
+    Authoring { workflow: String },
+    /// Conditionally save an entire sketch; read current content after a lost reply.
+    SaveAuthoring { workflow: String, file: PathBuf },
+    /// Review a named saved scope and necessary new predecessors without running it.
+    ReviewAuthoring { workflow: String, file: PathBuf },
+    /// Run exactly a reviewed saved scope, retaining the ordinary exact receipt.
+    RunAuthoring { workflow: String, file: PathBuf },
+    /// Read separately versioned canvas positions.
+    Positions { workflow: String },
+    /// Conditionally save canvas positions without changing execution meaning.
+    SavePositions { workflow: String, file: PathBuf },
     /// Apply a complete typed, generation-guarded future-work batch.
     Edit {
         workflow: String,

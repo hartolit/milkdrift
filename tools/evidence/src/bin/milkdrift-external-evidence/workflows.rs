@@ -179,7 +179,7 @@ pub(crate) fn definition(
         },
         inputs: BTreeMap::new(),
         outputs: BTreeMap::new(),
-        dependencies: vec![],
+        dependencies: Default::default(),
         required: true,
         corrective_of: None,
         paths: Vec::new(),
@@ -227,7 +227,11 @@ pub(crate) fn process_request(
         Some(repository),
         project,
     );
-    verify.dependencies.push("coding".into());
+    verify.dependencies =
+        milkdrift_control_protocol::tasks::TaskDependenciesDto::Ordered(BTreeMap::from([(
+            "coding".into(),
+            milkdrift_control_protocol::tasks::TaskOrderConditionDto::Success,
+        )]));
     output(
         &mut verify,
         "verification_result",
@@ -253,7 +257,11 @@ pub(crate) fn process_request(
         Some(repository),
         project,
     );
-    review.dependencies.push("verify".into());
+    review.dependencies =
+        milkdrift_control_protocol::tasks::TaskDependenciesDto::Ordered(BTreeMap::from([(
+            "verify".into(),
+            milkdrift_control_protocol::tasks::TaskOrderConditionDto::Success,
+        )]));
     review.inputs.insert(
         "verification".into(),
         InputBinding::SettledOutcome {
@@ -318,10 +326,22 @@ pub(crate) fn model_request(
         );
         source.inputs.insert("payload".into(), text(payload));
         if alias == "evidence-b" {
-            source.dependencies.push("evidence-a".into());
+            source.dependencies =
+                milkdrift_control_protocol::tasks::TaskDependenciesDto::Ordered(BTreeMap::from([
+                    (
+                        "evidence-a".into(),
+                        milkdrift_control_protocol::tasks::TaskOrderConditionDto::Success,
+                    ),
+                ]));
         }
         if alias == "unselected" {
-            source.dependencies.push("evidence-b".into());
+            source.dependencies =
+                milkdrift_control_protocol::tasks::TaskDependenciesDto::Ordered(BTreeMap::from([
+                    (
+                        "evidence-b".into(),
+                        milkdrift_control_protocol::tasks::TaskOrderConditionDto::Success,
+                    ),
+                ]));
         }
         output(&mut source, "evidence", Some("text/plain"), 65_536);
         tasks.push(NewTaskDto {
@@ -337,7 +357,6 @@ pub(crate) fn model_request(
         project,
     );
     for name in ["evidence-a", "evidence-b"] {
-        model.dependencies.push(name.into());
         model.inputs.insert(
             name.into(),
             InputBinding::TaskOutput {

@@ -237,8 +237,10 @@ pub trait CapabilityAdapter: Send + Sync + 'static {
     /// direct authoring is unavailable, not that the client may guess input or output keys.
     fn task_authoring(
         &self,
-    ) -> std::collections::BTreeMap<milkdrift_capability::OperationId, crate::TaskAuthoringContract>
-    {
+    ) -> std::collections::BTreeMap<
+        milkdrift_capability::OperationId,
+        milkdrift_capability::TaskAuthoringContract,
+    > {
         std::collections::BTreeMap::new()
     }
 

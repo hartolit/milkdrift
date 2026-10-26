@@ -31,7 +31,6 @@ pub use adapter::{
     HostAdapterContractError, NativePathScope, PreparedAdapterExecution, ProjectProcessAccess,
     ProjectProcessKind, WorkflowExecutionContext,
 };
-pub use authoring::{TaskAuthoringContract, TaskAuthoringPort};
 pub use materialization::{
     InputMaterialization, InvocationDataAccess, InvocationDataError,
     MATERIALIZATION_SCHEMA_VERSION_V1, MaterializationLimits, MaterializedExecution,

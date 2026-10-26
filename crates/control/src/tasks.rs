@@ -1,4 +1,5 @@
 //! Shared scoped admission for human, CLI, browser and model-proposed ordinary task changes.
+pub(crate) mod authoring;
 mod model_actions;
 mod projects;
 mod sources;
@@ -16,6 +17,7 @@ use std::sync::Arc;
 
 /// All ordinary edits enter through the same evaluator and runtime transaction owner.
 pub struct TaskControlService {
+    authoring_store: Option<Arc<dyn milkdrift_persistence::WorkflowStore>>,
     projects: Option<Arc<dyn milkdrift_persistence::ProjectStore>>,
     runtime: Arc<TaskRuntime>,
     authority: Arc<dyn AuthorityEvaluator>,
@@ -67,6 +69,7 @@ impl TaskControlService {
         artifacts: Arc<dyn milkdrift_persistence::ArtifactStore>,
     ) -> Self {
         Self {
+            authoring_store: None,
             projects: None,
             runtime,
             authority,
@@ -80,6 +83,16 @@ impl TaskControlService {
     #[must_use]
     pub fn with_projects(mut self, projects: Arc<dyn milkdrift_persistence::ProjectStore>) -> Self {
         self.projects = Some(projects);
+        self
+    }
+
+    /// Uses the same workflow store for conditional sketches and atomic Run mapping updates.
+    #[must_use]
+    pub fn with_authoring_store(
+        mut self,
+        store: Arc<dyn milkdrift_persistence::WorkflowStore>,
+    ) -> Self {
+        self.authoring_store = Some(store);
         self
     }
 

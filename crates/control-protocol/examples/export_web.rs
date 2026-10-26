@@ -1,4 +1,10 @@
 //! Regenerate the standalone client's transport types from their Rust owner.
+use milkdrift_control_protocol::authoring::{
+    AuthoringBoundsDto, AuthoringConnectionDto, AuthoringConnectionKindDto, AuthoringDocumentDto,
+    AuthoringIssueDto, AuthoringModelDto, AuthoringReviewDto, AuthoringSnapshotDto,
+    AuthoringSourceDto, AuthoringTaskDto, CanvasPositionDto, CheckpointAuthoringRequest,
+    PositionsSnapshotDto, PutPositionsRequest, ReviewAuthoringRequest, RunAuthoringRequest,
+};
 use milkdrift_control_protocol::projects::{
     ProjectCommandDto, ProjectCommandRequest, ProjectDirectoryDto, ProjectDirectoryPageDto,
     ProjectDto, ProjectEnvironmentChoiceDto, ProjectEnvironmentDto, ProjectEnvironmentPageDto,
@@ -11,11 +17,14 @@ use milkdrift_control_protocol::tasks::{
     ChangeWorkflowRequest, CreateWorkflowRequest, FrozenInputDto, FrozenTaskDto, InputBinding,
     InputValue, ModelAdmissionDto, NewTaskDto, PathAccess, TaskActionPolicyDto,
     TaskBindingRedirectDto, TaskCapability, TaskCapabilityAuthoringDto, TaskChangeDto,
-    TaskDefinitionDto, TaskInputSlotDto, TaskOutputDeclarationDto, TaskOutputPortDto,
-    TaskProjectRootDto, TaskPublishedOutputDto, TaskReadDto, TaskResultDto, TaskSessionDto,
-    TaskStateDto, TaskSummaryDto, TaskSuppliedInputDto, TaskToolDto, TaskUploadReceipt,
-    TaskUploadRequest, WorkflowLimitsDto, WorkflowPageDto, WorkflowReadDto, WorkflowReceipt,
-    WorkflowSummaryDto,
+    TaskDefinitionDto, TaskDependenciesDto, TaskInputMediaDto, TaskInputSlotDto,
+    TaskOrderConditionDto, TaskOutputDeclarationDto, TaskOutputPortDto, TaskProjectRootDto,
+    TaskPublishedOutputDto, TaskReadDto, TaskResultDto, TaskSessionDto, TaskStateDto,
+    TaskSummaryDto, TaskSuppliedInputDto, TaskToolDto, TaskUploadReceipt, TaskUploadRequest,
+    WorkflowLimitsDto, WorkflowPageDto, WorkflowReadDto, WorkflowReceipt, WorkflowSummaryDto,
+};
+use milkdrift_control_protocol::topology::{
+    TopologyInputDto, TopologyTaskDto, WorkflowTopologyDto,
 };
 use milkdrift_control_protocol::{DaemonMetadataDto, RenameDaemonReceipt, RenameDaemonRequest};
 use ts_rs::TS;
@@ -23,6 +32,25 @@ use ts_rs::TS;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = ts_rs::Config::default();
     let declarations = [
+        TopologyInputDto::decl(&config),
+        TopologyTaskDto::decl(&config),
+        WorkflowTopologyDto::decl(&config),
+        AuthoringBoundsDto::decl(&config),
+        AuthoringModelDto::decl(&config),
+        AuthoringTaskDto::decl(&config),
+        AuthoringSourceDto::decl(&config),
+        AuthoringConnectionKindDto::decl(&config),
+        AuthoringConnectionDto::decl(&config),
+        AuthoringDocumentDto::decl(&config),
+        AuthoringSnapshotDto::decl(&config),
+        CheckpointAuthoringRequest::decl(&config),
+        CanvasPositionDto::decl(&config),
+        PositionsSnapshotDto::decl(&config),
+        PutPositionsRequest::decl(&config),
+        ReviewAuthoringRequest::decl(&config),
+        AuthoringIssueDto::decl(&config),
+        AuthoringReviewDto::decl(&config),
+        RunAuthoringRequest::decl(&config),
         ProjectEnvironmentDto::decl(&config),
         ProjectSettingsDto::decl(&config),
         ProjectDto::decl(&config),
@@ -44,6 +72,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         TaskInputSlotDto::decl(&config),
         TaskOutputPortDto::decl(&config),
         TaskCapabilityAuthoringDto::decl(&config),
+        TaskDependenciesDto::decl(&config),
+        TaskOrderConditionDto::decl(&config),
+        TaskInputMediaDto::decl(&config),
         TaskProjectRootDto::decl(&config),
         TaskPublishedOutputDto::decl(&config),
         TaskSuppliedInputDto::decl(&config),

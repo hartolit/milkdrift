@@ -30,6 +30,10 @@ mod required_inputs;
 mod resources;
 #[path = "control_plane/roles.rs"]
 mod roles;
+#[path = "control_plane/saved_authoring.rs"]
+mod saved_authoring;
+#[path = "control_plane/saved_authoring_sources.rs"]
+mod saved_authoring_sources;
 #[path = "control_plane/streams.rs"]
 mod streams;
 #[path = "control_plane/support.rs"]
@@ -38,3 +42,5 @@ mod support;
 mod task_projects;
 #[path = "control_plane/tasks.rs"]
 mod tasks;
+#[path = "control_plane/topology.rs"]
+mod topology;

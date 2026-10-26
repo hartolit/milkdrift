@@ -300,6 +300,7 @@ impl Fixture {
                 tasks: vec![NewTask {
                     alias: TaskId::new("work")?,
                     definition: TaskDefinition {
+                        capability_generation: None,
                         execution: milkdrift_blueprint::TaskExecution::Legacy,
                         title: key.into(),
                         description: String::new(),

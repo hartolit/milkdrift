@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use milkdrift_capability::OperationId;
-use milkdrift_capability_host::{TaskAuthoringContract, TaskAuthoringPort};
+use milkdrift_capability::{TaskAuthoringContract, TaskAuthoringPort};
 use milkdrift_model::MODEL_GENERATE_OPERATION;
 
 use super::{RESPONSE_MEDIA, STRUCTURED_MEDIA};
@@ -42,6 +42,7 @@ pub(super) fn contract(profile: &EndpointProfile) -> BTreeMap<OperationId, TaskA
     BTreeMap::from([(
         operation,
         TaskAuthoringContract {
+            input_media: milkdrift_capability::TaskInputMedia::TextJsonOrImage,
             label: profile.model().into(),
             inputs: Vec::new(),
             allows_additional_inputs: true,

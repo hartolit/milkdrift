@@ -4,13 +4,13 @@ This adapter implements Milkdrift's [persistence contracts](../../crates/persist
 one redb database and owned artifact directories. Runtime decides what task transitions mean; this
 package makes accepted snapshots, receipts, resource holds and artifacts durable.
 
-The current task format uses internal document format 22 and physical schema 21. Earlier task
+The current task format uses internal document format 22 and physical schema 22. Earlier task
 documents lack the enforced-duration reservations and elapsed-time watermarks required by runtime.
 Existing databases are locked through a read-only
 handle and copied privately for the format check before redb can open the source for housekeeping
-writes. Exact physical schemas 19 and 20 with internal format 22 gain three empty project families
-and the new physical marker in one transaction; schema 19 also receives its missing daemon
-metadata tables. Existing task, receipt and host
+writes. Exact physical schemas 19 through 21 with internal format 22 gain two empty authoring
+families and the new physical marker in one transaction. Schemas 19 and 20 also receive their missing
+project families; schema 19 receives its missing daemon metadata tables. Existing task, receipt and host
 identity rows keep their exact bytes. Unexpected tables, partial adoption and invalid accounting
 refuse before the source opens for writes. Other older formats are refused without migration.
 Keep preserved generations with their matching
@@ -66,6 +66,21 @@ stop controls reserve 8 KiB and one receipt entry each. The stable server-issued
 its slot once; ordinary requests cannot use those reserved slots. Exact request replay succeeds before
 new capacity checks, including after reopening. No task record or accepted key is evicted to admit work.
 Artifact bytes retain their charge after a workflow settles, while unused reservations are released.
+
+[`task/authoring.rs`](src/task/authoring.rs) conditionally replaces one latest non-executable document
+per workflow and independently versions its positions. A missing row reads as generation zero;
+an absent workflow remains absent. Checkpoints create no command receipts. Their content digests
+let a caller recover a lost reply by reading current content, while a stale generation always refuses.
+Run can atomically commit its document-to-task mapping with accepted work and the exact command receipt.
+
+The semantic document is limited to 2 MiB, its source-protection list to 400 artifact identities,
+and positions to 600 finite coordinates. Shared control owns the task, source and wire meaning and
+their finer limits. Latest encoded authoring bytes and equally sized replacement headroom count
+against retained history; replacement releases old bytes and cannot spend accepted-work reservations.
+Source protection is replaced with the document after checking committed metadata and its manifest.
+Removing this protection never removes the artifact's existing producer or accepted-work ownership.
+Current orphan cleanup already retains committed content; future content retention must also honor
+the latest authoring protection set.
 
 Native-directory claims use a separate bounded table. Whole-set acquisition checks equal and nested
 physical paths in the same transaction. Overlapping readers may coexist; any overlapping writer

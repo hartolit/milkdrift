@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use milkdrift_capability_host::{TaskAuthoringContract, TaskAuthoringPort};
+use milkdrift_capability::{TaskAuthoringContract, TaskAuthoringPort};
 
 use crate::config::{ProcessProfile, StdinMode, SubstitutionSource};
 
@@ -61,6 +61,7 @@ impl ProcessProfile {
             _ => None,
         };
         TaskAuthoringContract {
+            input_media: milkdrift_capability::TaskInputMedia::Any,
             label: self.profile_id.replace(['_', '-'], " "),
             inputs: inputs
                 .into_iter()

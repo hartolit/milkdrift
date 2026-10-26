@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use thiserror::Error;
 
+/// Conditional saved sketches and deliberate admission contracts.
+pub mod authoring;
 mod metadata;
 /// Project registration and recovery contracts.
 pub mod projects;
@@ -22,6 +24,7 @@ mod read;
 pub mod task_execution;
 /// Ordinary task commands and projections used by every public client.
 pub mod tasks;
+pub mod topology;
 mod upload;
 pub use metadata::{DaemonMetadataDto, RenameDaemonReceipt, RenameDaemonRequest};
 pub use read::{
@@ -33,10 +36,10 @@ pub use upload::{InputUploadRequest, MAX_INPUT_UPLOAD_BYTES};
 /// Supported control protocol major version.
 const PROTOCOL_MAJOR: u16 = 3;
 /// Supported control protocol minor version.
-const PROTOCOL_MINOR: u16 = 5;
+const PROTOCOL_MINOR: u16 = 6;
 const AUTHENTICATED_CURSOR_SCHEMA_VERSION: u8 = 2;
 /// Maximum JSON request or response envelope size.
-pub const MAX_DOCUMENT_BYTES: usize = 1_310_720;
+pub const MAX_DOCUMENT_BYTES: usize = 3 * 1024 * 1024;
 /// Maximum printable ASCII bytes in the HTTP correlation identity.
 pub const MAX_REQUEST_ID_BYTES: usize = 128;
 /// Maximum returned items in a single page.

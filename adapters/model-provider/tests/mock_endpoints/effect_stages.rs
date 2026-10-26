@@ -478,7 +478,7 @@ fn failed_refusal_commit_preserves_unentered_frozen_start_on_restart() -> TestRe
     let dispatch = claim(&fixture)?;
     fault.arm(1);
     assert!(fixture.runtime.execute(dispatch.clone()).is_err());
-    assert_eq!(fixture.state()?.state, TaskState::Running);
+    assert_eq!(fixture.state()?.state, TaskState::Queued);
     assert!(!entered(&fixture)?);
     assert!(fixture.state()?.result.is_none());
     assert_released(&fixture)?;
@@ -487,11 +487,16 @@ fn failed_refusal_commit_preserves_unentered_frozen_start_on_restart() -> TestRe
         fixture.state()?.frozen.ok_or("frozen start")?.dispatch,
         dispatch
     );
-    let recovered = fixture.runtime.recover()?;
+    fixture.runtime.recover()?;
+    assert_eq!(fixture.state()?.state, TaskState::Queued);
+    let recovered = fixture.runtime.tick(1)?;
     assert_eq!(recovered, vec![dispatch.clone()]);
-    fixture.runtime.execute(dispatch)?;
+    fixture.runtime.execute(dispatch.clone())?;
     assert_eq!(fixture.state()?.state, TaskState::Failed);
     assert!(!entered(&fixture)?);
+    assert!(fixture.runtime.execute(dispatch).is_err());
+    assert!(fixture.runtime.tick(1)?.is_empty());
+    assert_released(&fixture)?;
     no_connections(&listener)
 }
 #[test]

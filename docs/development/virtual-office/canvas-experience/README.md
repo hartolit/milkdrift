@@ -1,8 +1,8 @@
 # Canvas experience side sprint
 
-**S01 complete locally — 2026-10-24.** The user explicitly assigned
-[S01](S01-preserve-future-work.md) after the October 23 consolidation. Its focused checks and
-public-client/browser evidence are complete. S02–S05 remain prepared and
+**S02 complete locally — 2026-10-26.** The assigned [S01](S01-preserve-future-work.md) lifecycle
+repairs and [S02](S02-saved-canvas-authoring.md) saved-authoring implementation have completed their
+focused Rust, public-client and browser checks. S03–S05 remain prepared and
 unassigned. The [handoff](handoff.md) records the current implementation and evidence boundary.
 
 ## Readiness judgment and selected scope
@@ -64,7 +64,7 @@ separately open and is not established by a frontend redesign or a controlled fi
 
 ## Assignments and verification schedule
 
-Only S01 has been assigned, and it is complete. An instruction to execute a phase authorizes its complete
+S01 and S02 are complete locally. An instruction to execute a phase authorizes its complete
 owned boundary, not its successor. An explicit assignment of the whole side sprint may proceed
 in order, stopping honestly when actual-user participation or other required evidence is unavailable.
 One coordinator owns shared edits and Cargo jobs. Use agents for independent implementation/review
@@ -73,7 +73,7 @@ boundaries, not a second production owner.
 | Phase | Full prompt | Owner and delivered boundary |
 | --- | --- | --- |
 | S01 — complete | [Preserve future work](S01-preserve-future-work.md) | Runtime/host/control owner: trustworthy pause, recovery and temporary contention through public clients. |
-| S02 | [Saved canvas authoring](S02-saved-canvas-authoring.md) | Authoring and client owner: retained sketches, direct connections and coherent deliberate admission end to end. |
+| S02 — complete | [Saved canvas authoring](S02-saved-canvas-authoring.md) | Authoring and client owner: retained sketches, direct connections and coherent deliberate admission end to end. |
 | S03 | [Early user review and repair](S03-early-user-review.md) | Review coordinator with affected owners: actual useful journey and repairs; closes main 02 only with evidence. |
 | S04 | [Reusable methods](S04-reusable-methods.md) | Method responsibility across established owners: complete library, visual definition/use, expansion, local edits and transfer. |
 | S05 | [Final review, gate and handoff](S05-final-review-and-gate.md) | Acceptance coordinator: actual method reuse, full current gate, repair and a usable main-05 handoff. |
@@ -131,9 +131,10 @@ phase assigned when the side finishes.
 
 The next prepared instruction, requiring a new assignment, is:
 
-> Execute S02 in `docs/development/virtual-office/canvas-experience/S02-saved-canvas-authoring.md`
-> under this side sprint's schedule, starting from the S01 handoff. Preserve accepted work and
-> complete the saved-authoring and canvas boundary before the S03 user-review assignment.
+> Execute S03 in `docs/development/virtual-office/canvas-experience/S03-early-user-review.md`
+> under this side sprint's schedule, starting from the S02 handoff. Prepare useful input-dependent
+> work for the actual user's review, preserve accepted work, and complete the resulting repairs.
+> Automated evidence alone cannot close this checkpoint or authorize S04.
 
 The planning assessment used Mira, Tarin and Hazel's actual closure reviews plus the coordinator's
 source/document review. Their agreement supports the consistency of this packet, not usability or

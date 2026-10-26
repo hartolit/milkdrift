@@ -264,8 +264,11 @@ fn ordinary_process_tool_uses_registered_profile_and_returns_exact_stdout() -> T
 #[test]
 fn legacy_fixed_process_tool_claim_conflicts_before_model_entry() -> TestResult {
     use milkdrift_persistence::{NativePathClaim, NativePathClaimStore};
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    listener.set_nonblocking(true)?;
+    let address = listener.local_addr()?.to_string();
     let fixture = ModelFixture::with_tools(
-        endpoint("127.0.0.1:9")?,
+        endpoint(&address)?,
         "Run the configured process.",
         Arc::new(Allow),
         Arc::new(NoFaults),
@@ -290,22 +293,41 @@ fn legacy_fixed_process_tool_claim_conflicts_before_model_entry() -> TestResult 
         .tick(1)?
         .pop()
         .ok_or("model task not ready")?;
-    fixture.runtime.execute(dispatch)?;
-    let state = fixture.state()?;
-    assert_eq!(state.state, milkdrift_runtime::TaskState::Failed);
-    assert!(!state.frozen.ok_or("frozen start absent")?.entered);
-    assert!(
-        state
-            .reason
-            .as_deref()
-            .is_some_and(|reason| reason.contains("native"))
-    );
+    let frozen = fixture.state()?.frozen.ok_or("frozen start absent")?;
+    for attempt in 0..3 {
+        if attempt != 0 {
+            assert_eq!(fixture.runtime.tick(1)?, vec![dispatch.clone()]);
+        }
+        fixture.runtime.execute(dispatch.clone())?;
+        let state = fixture.state()?;
+        assert_eq!(state.state, milkdrift_runtime::TaskState::Queued);
+        assert_eq!(state.frozen.as_ref(), Some(&frozen));
+        assert!(!frozen.entered);
+        assert_eq!(state.reason.as_deref(), Some("Project is in use"));
+        assert!(state.result.is_none());
+        assert!(
+            fixture
+                .host
+                .generations(
+                    &milkdrift_authority::CapabilityAuthorityScope::allow_any(
+                        SideEffectClass::Unknown,
+                    ),
+                    1000,
+                )?
+                .iter()
+                .all(|generation| generation.active_permits == 0)
+        );
+    }
     assert!(
         fixture
             .store
             .native_path_claim("independent-uncertain-writer")?
             .is_some()
     );
+    assert!(matches!(
+        listener.accept(),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+    ));
     Ok(())
 }
 

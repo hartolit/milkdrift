@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use milkdrift_blueprint::{TaskInputBinding, TaskInputValue};
+use milkdrift_blueprint::{TaskInputBinding, TaskInputValue, TaskOrderCondition};
 
 use super::{TaskRecord, TaskState, WorkflowRecord};
 
@@ -20,18 +20,29 @@ pub(super) fn resolve_inputs(
             "corrected task {original} has not settled; replacement effects cannot enter"
         ));
     }
-    for dependency in &task.definition.dependencies {
+    let legacy = task.definition.dependencies.is_legacy();
+    for (dependency, condition) in task
+        .definition
+        .dependencies
+        .conditions(&task.definition.inputs)
+    {
         let producer = workflow
             .tasks
-            .get(dependency)
+            .get(&dependency)
             .ok_or_else(|| format!("dependency {dependency} is absent"))?;
-        let accepts_settled = task.definition.inputs.values().any(|binding| {
-            matches!(binding, TaskInputBinding::SettledOutcome { task } if task == dependency)
-                || matches!(binding, TaskInputBinding::TaskOutput { task, optional: true, .. } if task == dependency)
-        });
-        if producer.state != TaskState::Completed
-            && !(accepts_settled && producer.state.is_settled())
-        {
+        let satisfied = match condition {
+            TaskOrderCondition::Settled => producer.state.is_settled(),
+            TaskOrderCondition::Success => {
+                producer.state == TaskState::Completed
+                    || !legacy
+                        && producer
+                            .adopted_correction
+                            .as_ref()
+                            .and_then(|id| workflow.tasks.get(id))
+                            .is_some_and(|task| task.state == TaskState::Completed)
+            }
+        };
+        if !satisfied {
             return Err(format!("dependency {dependency} is {:?}", producer.state));
         }
     }
@@ -58,6 +69,12 @@ pub(super) fn resolve_inputs(
                             "required output {task}/{output} needs a successful producer; producer is {:?}",
                             producer.state
                         ));
+                    }
+                    if *optional && !producer.state.is_settled() {
+                        return Err(format!("optional output {task}/{output} is awaiting producer settlement"));
+                    }
+                    if *optional && !legacy && producer.state != TaskState::Completed {
+                        return Ok((name.clone(), TaskInputValue::Absent));
                     }
                     match producer
                         .result

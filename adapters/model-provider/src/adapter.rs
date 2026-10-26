@@ -698,9 +698,7 @@ impl ModelEndpointAdapter {
 }
 
 impl CapabilityAdapter for ModelEndpointAdapter {
-    fn task_authoring(
-        &self,
-    ) -> BTreeMap<OperationId, milkdrift_capability_host::TaskAuthoringContract> {
+    fn task_authoring(&self) -> BTreeMap<OperationId, milkdrift_capability::TaskAuthoringContract> {
         authoring::contract(&self.profile)
     }
 

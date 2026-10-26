@@ -52,6 +52,54 @@ pub(crate) async fn execute(session: &CliSession, args: &WorkflowArgs) -> Result
                 &session.client().create_workflow(&request).await?,
             )
         }
+        WorkflowCommand::Authoring { workflow } => session.output(
+            "workflow.authoring",
+            &session.client().workflow_authoring(workflow).await?,
+        ),
+        WorkflowCommand::Positions { workflow } => session.output(
+            "workflow.positions",
+            &session.client().workflow_positions(workflow).await?,
+        ),
+        WorkflowCommand::SaveAuthoring { workflow, file } => {
+            let request = read_authoring_request(session, file).await?;
+            session.output(
+                "workflow.authoring.save",
+                &session
+                    .client()
+                    .checkpoint_workflow_authoring(workflow, &request)
+                    .await?,
+            )
+        }
+        WorkflowCommand::SavePositions { workflow, file } => {
+            let request = read_authoring_request(session, file).await?;
+            session.output(
+                "workflow.positions.save",
+                &session
+                    .client()
+                    .checkpoint_workflow_positions(workflow, &request)
+                    .await?,
+            )
+        }
+        WorkflowCommand::ReviewAuthoring { workflow, file } => {
+            let request = read_authoring_request(session, file).await?;
+            session.output(
+                "workflow.authoring.review",
+                &session
+                    .client()
+                    .review_workflow_authoring(workflow, &request)
+                    .await?,
+            )
+        }
+        WorkflowCommand::RunAuthoring { workflow, file } => {
+            let request = read_authoring_request(session, file).await?;
+            session.output(
+                "workflow.authoring.run",
+                &session
+                    .client()
+                    .run_workflow_authoring(workflow, &request)
+                    .await?,
+            )
+        }
         WorkflowCommand::Edit {
             workflow,
             file,
@@ -138,6 +186,22 @@ pub(crate) async fn execute(session: &CliSession, args: &WorkflowArgs) -> Result
             &session.client().task_session().await?,
         ),
     }
+}
+
+async fn read_authoring_request<T: serde::de::DeserializeOwned>(
+    session: &CliSession,
+    file: &std::path::Path,
+) -> Result<T, CliError> {
+    serde_json::from_value(
+        session
+            .read_json(
+                file,
+                milkdrift_control_protocol::MAX_DOCUMENT_BYTES,
+                "saved authoring request",
+            )
+            .await?,
+    )
+    .map_err(|error| CliError::Invalid(error.to_string()))
 }
 
 /// Inspection preserves every requested guard; only the daemon can decide admission.

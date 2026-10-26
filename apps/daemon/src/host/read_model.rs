@@ -101,6 +101,14 @@ pub(super) fn internal() -> PublicFailure {
 
 pub(super) fn public_control(error: ControlError) -> PublicFailure {
     match error {
+        ControlError::AuthoringIssues(issues) => {
+            let mut failure =
+                conflict("Saved work needs the highlighted repairs before it can run");
+            if let Ok(issues) = serde_json::to_string(&issues) {
+                failure.details.insert("authoring_issues".into(), issues);
+            }
+            failure
+        }
         ControlError::AuthorizationDenied {
             reasons,
             decision_digest,
@@ -135,6 +143,23 @@ pub(super) fn public_control(error: ControlError) -> PublicFailure {
 
 pub(super) fn public_persistence(error: PersistenceError) -> PublicFailure {
     match error {
+        PersistenceError::AuthoringGenerationConflict {
+            expected, actual, ..
+        }
+        | PersistenceError::PositionsGenerationConflict {
+            expected, actual, ..
+        } => {
+            let mut failure = conflict(
+                "Saved content changed. Keep this candidate and review the current version",
+            );
+            failure
+                .details
+                .insert("expected_generation".into(), expected.to_string());
+            failure
+                .details
+                .insert("actual_generation".into(), actual.to_string());
+            failure
+        }
         PersistenceError::NativePathContention => {
             PublicFailure::new(ErrorCode::Unavailable, "Project is in use", true)
         }

@@ -121,7 +121,7 @@ impl TaskInputValue {
     }
 }
 
-/// A named task input. Output and outcome bindings imply an explicit dependency.
+/// A named task input. Output and outcome bindings derive their own readiness.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TaskInputBinding {
@@ -145,7 +145,8 @@ pub enum TaskInputBinding {
         task: TaskId,
         /// Output name recorded by the producer's capability.
         output: String,
-        /// A settled producer without this output may supply typed absence.
+        /// A settled producer without a successful output supplies typed absence.
+        /// Retained legacy dependency arrays preserve their older failed-output behavior.
         #[serde(default)]
         optional: bool,
     },
@@ -265,15 +266,19 @@ pub struct TaskDefinition {
     pub instructions: String,
     /// Required external operation and explicit selection constraints.
     pub capability: CapabilityRequirement,
+    /// Exact configuration reviewed while choosing ports. A changed generation requires a
+    /// prospective edit before first start; already frozen starts keep their exact dispatch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability_generation: Option<u64>,
     /// Named values selected independently of display order or instruction text.
     #[serde(default)]
     pub inputs: BTreeMap<String, TaskInputBinding>,
     /// Named output obligations checked before successful workflow completion.
     #[serde(default)]
     pub outputs: BTreeMap<String, TaskOutputDeclaration>,
-    /// Producers that must satisfy their declared outcome condition before entry.
+    /// Independent order conditions, or retained historical merged dependencies.
     #[serde(default)]
-    pub dependencies: BTreeSet<TaskId>,
+    pub dependencies: crate::TaskDependencies,
     /// Whether successful completion or explicit successful correction is a workflow obligation.
     #[serde(default = "required_by_default")]
     pub required: bool,
@@ -298,6 +303,11 @@ impl TaskDefinition {
     /// # Errors
     /// Refuses invalid names, paths, bounds, or bindings missing their dependency declaration.
     pub fn validate(&self) -> Result<(), TaskDefinitionError> {
+        if self.capability_generation.is_some_and(|generation| {
+            generation == 0 || self.capability.exact_capability().is_none()
+        }) {
+            return Err(TaskDefinitionError("a reviewed capability generation must be positive and name an exact configured capability".into()));
+        }
         if let Some(binding) = self.execution.binding()
             && (binding.project_id.is_empty()
                 || binding.project_id.len() > 256
@@ -331,7 +341,7 @@ impl TaskDefinition {
             || self.instructions.len() > MAX_TASK_TEXT_BYTES
             || self.inputs.len() > 64
             || self.outputs.len() > 64
-            || self.dependencies.len() > 256
+            || self.dependencies.references().count() > 256
             || self.paths.len() > 32
             || self.tools.len() > 32
         {
@@ -339,7 +349,6 @@ impl TaskDefinition {
                 "task instructions or collection bounds are invalid".into(),
             ));
         }
-        let mut output_bytes = 0_u64;
         let mut tool_keys = BTreeSet::new();
         for tool in &self.tools {
             let key = serde_json::to_string(tool)
@@ -358,6 +367,7 @@ impl TaskDefinition {
         for (name, declaration) in &self.outputs {
             validate_name(name)?;
             if declaration.max_bytes == 0
+                || declaration.max_bytes > MAX_TASK_OUTPUT_BYTES
                 || declaration.media_type.as_ref().is_some_and(|value| {
                     value.is_empty() || value.len() > 255 || value.contains(['\r', '\n'])
                 })
@@ -366,14 +376,6 @@ impl TaskDefinition {
                     "output declaration needs a positive byte bound and valid media type".into(),
                 ));
             }
-            output_bytes = output_bytes
-                .checked_add(declaration.max_bytes)
-                .ok_or_else(|| TaskDefinitionError("output byte bound overflow".into()))?;
-        }
-        if output_bytes > MAX_TASK_OUTPUT_BYTES {
-            return Err(TaskDefinitionError(
-                "task declared output allowance exceeds 2 MiB".into(),
-            ));
         }
         for (name, binding) in &self.inputs {
             validate_name(name)?;
@@ -387,14 +389,18 @@ impl TaskDefinition {
                 TaskInputBinding::Supplied { name, .. } => validate_name(name)?,
                 TaskInputBinding::TaskOutput { task, output, .. } => {
                     validate_name(output)?;
-                    if !self.dependencies.contains(task) {
+                    if let crate::TaskDependencies::Legacy(dependencies) = &self.dependencies
+                        && !dependencies.contains(task)
+                    {
                         return Err(TaskDefinitionError(format!(
                             "output binding requires dependency {task}"
                         )));
                     }
                 }
                 TaskInputBinding::SettledOutcome { task } => {
-                    if !self.dependencies.contains(task) {
+                    if let crate::TaskDependencies::Legacy(dependencies) = &self.dependencies
+                        && !dependencies.contains(task)
+                    {
                         return Err(TaskDefinitionError(format!(
                             "outcome binding requires dependency {task}"
                         )));
@@ -554,6 +560,13 @@ impl WorkflowLimits {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TaskChange {
+    /// Rename this workflow without creating or revising a task obligation.
+    Rename {
+        /// Bounded human-readable workflow name.
+        title: String,
+        /// Optional bounded workflow explanation.
+        description: String,
+    },
     /// Close a rejected model proposal after inspecting it; edits can accompany this action.
     DismissAdmission {
         /// Exact source task whose immutable response remains retained.
@@ -695,7 +708,7 @@ pub fn validate_task_set<'a>(
         definition.validate()?;
         if definition
             .dependencies
-            .iter()
+            .references()
             .any(|dependency| dependency == id || !tasks.contains_key(dependency))
         {
             return Err(TaskDefinitionError(format!(
@@ -754,7 +767,19 @@ pub fn validate_task_set<'a>(
                 }
             }
         }
-        let mut waits_for = definition.dependencies.clone();
+        let mut waits_for: BTreeSet<_> = definition.dependencies.references().cloned().collect();
+        for binding in definition.inputs.values() {
+            if let TaskInputBinding::TaskOutput { task, .. }
+            | TaskInputBinding::SettledOutcome { task } = binding
+            {
+                if task == id || !tasks.contains_key(task) {
+                    return Err(TaskDefinitionError(format!(
+                        "task {id} has a missing or self input source"
+                    )));
+                }
+                waits_for.insert(task.clone());
+            }
+        }
         if let Some(corrected) = &definition.corrective_of {
             waits_for.insert(corrected.clone());
         }

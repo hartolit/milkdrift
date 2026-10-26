@@ -575,7 +575,8 @@ impl CapabilityAdapter for ModelToolLoopAdapter {
 
     fn task_authoring(
         &self,
-    ) -> BTreeMap<milkdrift_capability::OperationId, crate::TaskAuthoringContract> {
+    ) -> BTreeMap<milkdrift_capability::OperationId, milkdrift_capability::TaskAuthoringContract>
+    {
         self.model.task_authoring()
     }
 

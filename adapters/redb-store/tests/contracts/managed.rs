@@ -223,6 +223,7 @@ fn commit(store: &RedbStore, mut snapshot: WorkflowSnapshot) -> TestResult {
     let expected_generation = (snapshot.generation > 0).then_some(snapshot.generation);
     snapshot.generation += 1;
     store.commit_workflow(WorkflowCommit {
+        authoring: None,
         project_guard: None,
         project_id: None,
         expected_generation,

@@ -1,6 +1,6 @@
 use redb::TableDefinition;
 
-pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 21;
+pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 22;
 pub(crate) const SCHEMA_VERSION_KEY: &str = "storage_schema_version";
 pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION: u64 = 22;
 pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION_KEY: &str = "internal_document_format_version";
@@ -22,11 +22,12 @@ macro_rules! physical_tables {
             $(drop(write.open_table($table).map_err(crate::error::redb)?);)*
             initialize_daemon_tables(write)?;
             initialize_project_tables(write)?;
+            initialize_authoring_tables(write)?;
             Ok(())
         }
 
         pub(crate) fn validate_tables(read: &redb::ReadTransaction) -> Result<(), milkdrift_persistence::PersistenceError> {
-            validate_table_membership(read, 21)
+            validate_table_membership(read, STORAGE_SCHEMA_VERSION)
         }
 
         pub(crate) fn validate_previous_tables(read: &redb::ReadTransaction) -> Result<(), milkdrift_persistence::PersistenceError> {
@@ -35,6 +36,10 @@ macro_rules! physical_tables {
 
         pub(crate) fn validate_daemon_tables(read: &redb::ReadTransaction) -> Result<(), milkdrift_persistence::PersistenceError> {
             validate_table_membership(read, 20)
+        }
+
+        pub(crate) fn validate_project_tables(read: &redb::ReadTransaction) -> Result<(), milkdrift_persistence::PersistenceError> {
+            validate_table_membership(read, 21)
         }
 
         fn validate_table_membership(read: &redb::ReadTransaction, version: u64) -> Result<(), milkdrift_persistence::PersistenceError> {
@@ -50,10 +55,15 @@ macro_rules! physical_tables {
                 drop(read.open_table(PROJECT_OPERATIONS).map_err(crate::error::redb)?);
                 drop(read.open_table(WORKFLOW_PROJECTS).map_err(crate::error::redb)?);
             }
+            if version >= 22 {
+                drop(read.open_table(TASK_AUTHORING).map_err(crate::error::redb)?);
+                drop(read.open_table(TASK_POSITIONS).map_err(crate::error::redb)?);
+            }
             for table in read.list_tables().map_err(crate::error::redb)? {
                 if !matches!(table.name(), $($name)|*)
                     && !(version >= 20 && matches!(table.name(), DAEMON_METADATA_TABLE | DAEMON_RENAME_RECEIPTS_TABLE))
                     && !(version >= 21 && matches!(table.name(), PROJECTS_TABLE | PROJECT_OPERATIONS_TABLE | WORKFLOW_PROJECTS_TABLE))
+                    && !(version >= 22 && matches!(table.name(), TASK_AUTHORING_TABLE | TASK_POSITIONS_TABLE))
                 {
                     return Err(crate::error::corruption("unexpected physical table"));
                 }
@@ -64,6 +74,29 @@ macro_rules! physical_tables {
             Ok(())
         }
     };
+}
+
+const TASK_AUTHORING_TABLE: &str = "milkdrift.v1.tasks.authoring";
+const TASK_POSITIONS_TABLE: &str = "milkdrift.v1.tasks.positions";
+pub(crate) const TASK_AUTHORING: TableDefinition<'static, &'static str, &'static [u8]> =
+    TableDefinition::new(TASK_AUTHORING_TABLE);
+pub(crate) const TASK_POSITIONS: TableDefinition<'static, &'static str, &'static [u8]> =
+    TableDefinition::new(TASK_POSITIONS_TABLE);
+
+pub(crate) fn initialize_authoring_tables(
+    write: &redb::WriteTransaction,
+) -> Result<(), milkdrift_persistence::PersistenceError> {
+    drop(
+        write
+            .open_table(TASK_AUTHORING)
+            .map_err(crate::error::redb)?,
+    );
+    drop(
+        write
+            .open_table(TASK_POSITIONS)
+            .map_err(crate::error::redb)?,
+    );
+    Ok(())
 }
 
 const PROJECTS_TABLE: &str = "milkdrift.v1.projects.registrations";

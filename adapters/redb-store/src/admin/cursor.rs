@@ -384,6 +384,18 @@ pub(crate) fn index_integrity_cursor_exists(
             .get(string_key()?)
             .map_err(error::redb)
             .map(|row| row.is_some()),
+        5 => read
+            .open_table(crate::schema::TASK_AUTHORING)
+            .map_err(error::redb)?
+            .get(string_key()?)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
+        6 => read
+            .open_table(crate::schema::TASK_POSITIONS)
+            .map_err(error::redb)?
+            .get(string_key()?)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
         12 => read
             .open_table(WORKSPACE_USAGE)
             .map_err(error::redb)?

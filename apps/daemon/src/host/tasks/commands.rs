@@ -106,6 +106,9 @@ impl Owner {
             .into_iter()
             .map(|change| {
                 Ok(match change {
+                    TaskChangeDto::Rename { title, description } => {
+                        TaskChange::Rename { title, description }
+                    }
                     TaskChangeDto::SetLimits { limits } => TaskChange::SetLimits {
                         limits: mapping::domain_limits(limits),
                     },
@@ -232,7 +235,7 @@ impl Owner {
     }
 }
 
-fn public_receipt(
+pub(super) fn public_receipt(
     receipt: milkdrift_persistence::WorkflowCommandReceipt,
 ) -> Result<WorkflowReceipt, PublicFailure> {
     let aliases: BTreeMap<String, String> = serde_json::from_value(

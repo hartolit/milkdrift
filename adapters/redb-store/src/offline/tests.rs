@@ -15,6 +15,7 @@ fn producer() -> BackupProducer {
 }
 fn receipt(command: &str, intent: &[u8]) -> Result<WorkflowCommit, Box<dyn std::error::Error>> {
     Ok(WorkflowCommit {
+        authoring: None,
         project_guard: None,
         project_id: None,
         expected_generation: None,

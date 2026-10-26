@@ -410,6 +410,36 @@ impl CapabilityHost {
 }
 
 impl TaskExecutor for CapabilityHost {
+    fn task_authoring(
+        &self,
+        requirement: &CapabilityRequirement,
+    ) -> Result<
+        Option<(
+            milkdrift_capability::CapabilityDescriptor,
+            milkdrift_capability::TaskAuthoringContract,
+        )>,
+        ExecutorError,
+    > {
+        let Some(capability) = requirement.exact_capability() else {
+            return Ok(None);
+        };
+        let state = self
+            .lock_state()
+            .map_err(|error| ExecutorError::BoundaryBeforeEntry(error.to_string()))?;
+        let Some(revision) = state.current.get(capability) else {
+            return Ok(None);
+        };
+        let key = super::GenerationKey {
+            capability: capability.clone(),
+            revision: *revision,
+        };
+        Ok(state.generations.get(&key).and_then(|generation| {
+            generation
+                .task_authoring
+                .get(requirement.operation())
+                .map(|contract| (generation.descriptor.clone(), contract.clone()))
+        }))
+    }
     fn pin_project_paths(
         &self,
         binding: &milkdrift_blueprint::TaskProjectBinding,

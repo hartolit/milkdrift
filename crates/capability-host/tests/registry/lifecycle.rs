@@ -1,5 +1,5 @@
 use super::*;
-use milkdrift_capability_host::{TaskAuthoringContract, TaskAuthoringPort};
+use milkdrift_capability::{TaskAuthoringContract, TaskAuthoringPort};
 
 fn authoring_contract() -> TaskAuthoringContract {
     let port = TaskAuthoringPort {
@@ -11,6 +11,7 @@ fn authoring_contract() -> TaskAuthoringContract {
         max_bytes: 1024,
     };
     TaskAuthoringContract {
+        input_media: milkdrift_capability::TaskInputMedia::Any,
         label: "Configured model".to_owned(),
         inputs: vec![port.clone()],
         allows_additional_inputs: false,

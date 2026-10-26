@@ -154,6 +154,111 @@ Raw logs use ignored `target/s01-*`; the final browser run uses
 `target/canvas-experience/s01-browser-final-2/`. Exploratory failure artifacts remain preserved
 separately. Fixture roots contain credentials and must not be published.
 
+## Side S02 saved authoring and continuous canvas
+
+The October 24–26 S02 checks exercise saved, non-executable authoring through shared Rust control,
+redb, the actual daemon, native clients and Svelte. These are focused checks under the explicitly
+scheduled S05 full gate. They do not establish actual user acceptance or complete the main sprint.
+The [side handoff](virtual-office/canvas-experience/handoff.md) owns the assignment checkpoint and
+next phase. Checks ran on Linux with Rust 1.95.0, Node 25.2.1 and npm 11.19.1.
+
+The maintained authoring cases prove that empty workflows, incomplete cards and independent
+positions survive reopen without admitting work. Conditional writes reject stale generations and
+retain the current document. A deliberately selected Run commits its exact receipt, accepted aliases
+and remaining ideas atomically. Earlier Run receipts replay unchanged after later checkpoints;
+changed reuse conflicts. Store adoption preserves supported accepted bytes and receipts while adding
+the latest snapshots. Capacity tests exercise replacement headroom, protected sources and refusal.
+
+Control regressions cover capability-catalog authority, project changes and denial, removal of revoked
+sources, prospective shared-input changes, and source reuse by another authorized editor. Newly
+published outputs require current artifact authority even when publication follows the checkpoint;
+their actual media and length govern review. The same check covers settled outcomes, including
+artifacts present only in the terminal result, through canvas Review/Run and programmatic admission.
+Admitting a parent alone now preserves its advertised
+output promises, so a subsequent consumer can use the accepted queued task or explicitly apply its
+candidate changes. The programmatic path also accepts a producer revision and consumer addition in
+one batch, independent of their request order. Stricter accepted output ceilings remain intact.
+
+Runtime tests distinguish data prerequisites from success/settlement ordering, preserve legacy
+accepted predicates, reject cycles and frozen-start changes, and tolerate progress-only observations
+for unrelated human edits. Stable per-port ceilings share one aggregate reservation; actual aggregate
+overflow remains uncertain where publication effects cannot be disproved. Daemon tests cover bounded
+topology pages and previews, cursor scope, exact public recovery and shared-name stream hints.
+
+Executed Rust checks, with `--all-features` unless stated:
+
+| Target | Result |
+| --- | --- |
+| Complete blueprint, capability, capability-host, control, protocol/client, CLI, runtime, local-process and model-provider package suites | Passed. Latest control coverage is 25 tests, including eight authoring-validation regressions; durable runtime has 68 passing cases. |
+| Redb `authoring`, `contracts`, `daemon_schema_adoption`, `projects`, `task_workflows` | 57 passed; the seven authoring cases also passed after the final limit/error refinements. |
+| Persistence package | Six tests and two compile-fail doc tests passed. |
+| Daemon library and `control_plane` | 41 and 63 passed; the control-plane target passed again after the queued-output and outcome-authority repairs. |
+| Daemon `two_daemon_peer` | Two passed; the separate manual release-mode longevity case remained ignored. |
+| Evidence `connected-tasks` fixture | Six passed. |
+| Evidence `repository_contracts` | All 30 passed, including documentation, maintained examples, source boundaries and product dependency resolution. |
+
+Affected all-target default-feature compilation, all-target/all-feature Clippy with `-D warnings`,
+and all-feature rustdoc with `RUSTDOCFLAGS='-D warnings'` pass for the 15 changed owners and consumers.
+Generated TypeScript and the hand-reviewed session fixture agree on control protocol 3.6. Physical
+and internal storage formats are 22/22; supported physical 19/20/21 stores are adopted transactionally.
+Eighteen default/all-feature API inventories under `target/public-api/s02/` cover blueprint,
+capability, persistence, runtime, capability-host, control, protocol/client and redb. Review traces the
+new storage ports, authoring contracts, ordering representation and public methods to maintained
+consumers; later compiler repairs change private implementation only. Existing ts-rs attribute
+notices remain visible and do not fail compilation or scoped Clippy.
+
+The final actual-binary `connected-tasks check` passes at
+`target/canvas-experience/s02-application-final-2/` against the rebuilt daemon and CLI. Its redacted
+report records captured input preservation, exact replay after restart, daemon isolation, public
+discovery and project operations. Controlled model/tool work retains eight tasks and three accepted
+follow-up batches without client continuation. Both project scenarios run actual Rust tests and
+preserve unrelated files. Both fixture daemons shut down before report publication. This establishes
+controlled integration, not real-model quality or positive physical Podman qualification.
+
+Frontend check, lint, 107 unit tests and production build pass. The tests include save coalescing,
+lost/late replies, concurrent edits, separate position-save status, actor/connection isolation,
+blank placement and focus, contextual correction discovery, and connections without prior task
+inspection, plus editable pending changes after an authoritative Run refusal. Capacity recovery
+removes obsolete presentation references and positions while retaining pending work and standalone
+ideas; accepted definitions and results are unchanged.
+
+The first complete browser run passed 28 cases and exposed 16 failures. Repairs address stale form
+selectors, duplicate uploaded-source projection, overwritten restricted-input labels, unrelated
+off-page cards, correction discovery and queued-output admission. The two-workflow camera case's
+overall deadline increased from 60 to 120 seconds: its recorded successful save, execution and navigation steps
+exhausted the original 60 seconds. Individual operation limits and assertions remain unchanged.
+Its timing report and the complete initial artifacts are preserved under
+`target/canvas-experience/s02-browser-1/first-run/`.
+
+The next complete production browser run passed 39 of 44 cases. Its report, screenshots and redacted
+timings remain under `target/canvas-experience/s02-browser-2/full-run/`. Three multi-workflow/reconnect
+scenarios exhausted their 60-second overall budgets after successful individual operations; their
+overall budgets are now 120 seconds, with individual deadlines and exact recovery assertions intact.
+A concurrent-client test now prepares its second client before deliberately holding a review response,
+keeping the actual 30-second transport deadline. The historical-correction case found a real layering
+defect: the right inspector intercepted the staged-change summary. Its panel now remains clickable.
+Render review also prompted a taller narrow-screen inspector with a reachable Done action; global
+canvas actions return when it closes. The fresh 17-case affected run passed 15, including all five
+failures from the complete run. Two test assumptions required correction: the taller inspector no
+longer needed to scroll to the model selector, and a frozen task can truthfully show Preparing during
+a retry before returning to Waiting before entry. The tests now reach a lower control and retain
+explicit no-entry, immutable-start and exact execution-count assertions.
+
+The final four-case run passes enlarged-text editing, two-workflow phone navigation, pause/restart
+and narrow-screen concurrent-save recovery against `index-BhM2prSY.js`. The last production change
+raises actionable narrow-screen messages above the drawer. Hit tests prove the conflict comparison
+and resolution controls remain usable while the candidate stays open. Normal and 200% text renders,
+recorded no-entry timing, desktop results, scoped Run and conflict views were inspected. All 44
+maintained browser cases have passing coverage across the complete run and focused repairs; this
+is not one green 44-case invocation. Final artifacts remain under
+`target/canvas-experience/s02-browser-3/focused-run/` and
+`target/canvas-experience/s02-browser-4/final-run/`.
+
+Raw logs use ignored `target/s02-*`. Browser fixture roots contain credentials and must not be
+published; only explicitly redacted reports are shareable. S03 still requires the actual user;
+S05 owns the full side-sprint gate. These checks establish neither hosted CI, physical-phone use,
+HTTPS/proxy qualification nor later method, remote-tool and retention behavior.
+
 ## Prompt 02e projects and execution environments verification
 
 Implementation checkpoint `bbae7a6` contains the assigned project correction: daemon-owned folder registrations, durable directory-creation

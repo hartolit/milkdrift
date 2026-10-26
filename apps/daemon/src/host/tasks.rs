@@ -4,6 +4,8 @@ mod commands;
 mod execution_mapping;
 mod mapping;
 mod reads;
+mod saved_authoring;
+mod topology;
 
 use super::{Owner, PublicFailure};
 use crate::auth::ActorSession;
@@ -61,6 +63,29 @@ impl Owner {
 /// Public operation adaptation enters the same bounded durable owner queue.
 pub(crate) enum TaskRequest {
     Session,
+    Authoring {
+        workflow: String,
+    },
+    CheckpointAuthoring {
+        workflow: String,
+        request: milkdrift_control_protocol::authoring::CheckpointAuthoringRequest,
+    },
+    Positions {
+        workflow: String,
+    },
+    CheckpointPositions {
+        workflow: String,
+        request: milkdrift_control_protocol::authoring::PutPositionsRequest,
+    },
+    ReviewAuthoring {
+        workflow: String,
+        request: milkdrift_control_protocol::authoring::ReviewAuthoringRequest,
+    },
+    RunAuthoring {
+        workflow: String,
+        request: milkdrift_control_protocol::authoring::RunAuthoringRequest,
+        canonical_request: Vec<u8>,
+    },
     List {
         project_id: Option<String>,
         earlier: bool,
@@ -75,6 +100,10 @@ pub(crate) enum TaskRequest {
     Task {
         workflow: String,
         task: String,
+    },
+    Topology {
+        workflow: String,
+        cursor: Option<String>,
     },
     Result {
         workflow: String,
@@ -106,7 +135,12 @@ impl super::DaemonHost {
     ) -> Result<serde_json::Value, PublicFailure> {
         if matches!(
             &request,
-            TaskRequest::Create { .. } | TaskRequest::Change { .. } | TaskRequest::Upload(_)
+            TaskRequest::Create { .. }
+                | TaskRequest::Change { .. }
+                | TaskRequest::Upload(_)
+                | TaskRequest::CheckpointAuthoring { .. }
+                | TaskRequest::CheckpointPositions { .. }
+                | TaskRequest::RunAuthoring { .. }
         ) && !self.accepting_mutations()
         {
             return Err(PublicFailure::new(
@@ -119,6 +153,31 @@ impl super::DaemonHost {
             owner.check_daemon_identity(expected_host.as_deref())?;
             match request {
                 TaskRequest::Session => serde_json::to_value(owner.task_session(&session)?),
+                TaskRequest::Authoring { workflow } => {
+                    serde_json::to_value(owner.read_authoring(&session, &workflow)?)
+                }
+                TaskRequest::CheckpointAuthoring { workflow, request } => {
+                    serde_json::to_value(owner.checkpoint_authoring(&session, &workflow, request)?)
+                }
+                TaskRequest::Positions { workflow } => {
+                    serde_json::to_value(owner.read_positions(&session, &workflow)?)
+                }
+                TaskRequest::CheckpointPositions { workflow, request } => {
+                    serde_json::to_value(owner.checkpoint_positions(&session, &workflow, request)?)
+                }
+                TaskRequest::ReviewAuthoring { workflow, request } => {
+                    serde_json::to_value(owner.review_authoring(&session, &workflow, request)?)
+                }
+                TaskRequest::RunAuthoring {
+                    workflow,
+                    request,
+                    canonical_request,
+                } => serde_json::to_value(owner.run_authoring(
+                    &session,
+                    &workflow,
+                    request,
+                    &canonical_request,
+                )?),
                 TaskRequest::List {
                     project_id,
                     earlier,
@@ -139,6 +198,9 @@ impl super::DaemonHost {
                 TaskRequest::Task { workflow, task } => {
                     serde_json::to_value(owner.read_task(&session, &workflow, &task)?)
                 }
+                TaskRequest::Topology { workflow, cursor } => serde_json::to_value(
+                    owner.read_task_topology(&session, &workflow, cursor.as_deref())?,
+                ),
                 TaskRequest::Result { workflow, task } => {
                     serde_json::to_value(owner.read_task_result(&session, &workflow, &task)?)
                 }

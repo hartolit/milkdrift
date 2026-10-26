@@ -189,7 +189,7 @@ async fn drained_models_can_be_replaced_individually_through_http_and_cli() -> T
         "title":"Writer","description":"","instructions":"Write the supplied brief",
         "capability":{"id":"writing-model","operation":"model.generate"},
         "inputs":{"brief":{"kind":"supplied","name":"brief","optional":false}},
-        "dependencies":[],"required":true,"corrective_of":null,"paths":[]
+        "dependencies":{},"required":true,"corrective_of":null,"paths":[]
     }))?;
     let request: CreateWorkflowRequest = serde_json::from_value(json!({
         "project_id":project.id,

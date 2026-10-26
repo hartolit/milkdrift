@@ -1,6 +1,7 @@
 # S02 — Saved authoring and a continuous workflow canvas
 
-**Prepared, not assigned.** Prerequisite: S01's lifecycle repairs and focused checks. Deliver the
+**Complete locally 2026-10-26.** The assigned implementation and focused verification are complete;
+[handoff](handoff.md) records the evidence and S03 boundary. Prerequisite: S01's lifecycle repairs and focused checks. Deliver the
 complete saved-authoring experience selected in [ADR 0052](../../../decisions/0052-canvas-authoring-and-method-experience.md),
 through the real daemon and its public clients. This owns the authoring, connection and edit-contract
 changes needed for that experience, not a visual shell over the old semantics. S04 owns methods.

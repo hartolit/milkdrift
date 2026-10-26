@@ -61,7 +61,7 @@ impl RedbStore {
             initialize_schema(&database, config.faults.as_ref(), startup_observation)?;
             sync_owned_directory(&config.root)?;
         } else {
-            super::schema::adopt_daemon_metadata(&database, config.faults.as_ref())?;
+            super::schema::adopt_supported_schema(&database, config.faults.as_ref())?;
             validate_schema(&database)?;
         }
 

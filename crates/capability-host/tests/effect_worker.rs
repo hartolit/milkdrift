@@ -562,6 +562,7 @@ fn create_with_paths(
             tasks: vec![NewTask {
                 alias: TaskId::new("task")?,
                 definition: TaskDefinition {
+                    capability_generation: None,
                     execution: milkdrift_blueprint::TaskExecution::Legacy,
                     title: "Exercise worker".into(),
                     description: String::new(),

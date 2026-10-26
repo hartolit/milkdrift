@@ -765,6 +765,22 @@ impl<'a> PreparedExecution<'a> {
 /// and distinguish failure before entry from loss of an outcome after entry. They must
 /// not append run events, retry effects independently, or substitute a newer generation.
 pub trait TaskExecutor: Send + Sync {
+    /// Returns current exact-operation authoring facts without selecting a substitute executor.
+    /// Callers authorize capability access before exposing these facts to a client.
+    /// # Errors
+    /// Returns host inspection failures; absence means no direct authoring contract is available.
+    fn task_authoring(
+        &self,
+        _requirement: &CapabilityRequirement,
+    ) -> Result<
+        Option<(
+            CapabilityDescriptor,
+            milkdrift_capability::TaskAuthoringContract,
+        )>,
+        ExecutorError,
+    > {
+        Ok(None)
+    }
     /// Captures effective project scopes using the execution host's native identity owner.
     ///
     /// # Errors

@@ -498,7 +498,7 @@ impl CapabilityAdapter for LocalProcessAdapter {
         &self,
     ) -> std::collections::BTreeMap<
         milkdrift_capability::OperationId,
-        milkdrift_capability_host::TaskAuthoringContract,
+        milkdrift_capability::TaskAuthoringContract,
     > {
         std::collections::BTreeMap::from([(
             self.profile.operation.clone(),

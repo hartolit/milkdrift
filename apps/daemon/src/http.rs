@@ -1,8 +1,10 @@
+mod authoring;
 mod browser;
 mod metadata;
 mod projects;
 mod response;
 mod tasks;
+mod topology;
 use response::{
     authenticate, bearer_header, not_found_response, owner_error, protocol_error, success,
 };
@@ -122,7 +124,12 @@ pub(crate) fn router(host: DaemonHost) -> Result<Router, HostError> {
         "/v1/workflows" => get(tasks::list).post(tasks::create), RouteAuthorityMapping::CommandDerived, RouteResourceMapping::Run;
         "/v1/workflows/stream" => get(tasks::stream), RouteAuthorityMapping::StreamDerived, RouteResourceMapping::Run;
         "/v1/workflows/{workflow}" => get(tasks::workflow), RouteAuthorityMapping::QueryDerived, RouteResourceMapping::Run;
+        "/v1/workflows/{workflow}/topology" => get(topology::read), RouteAuthorityMapping::QueryDerived, RouteResourceMapping::Run;
         "/v1/workflows/{workflow}/changes" => post(tasks::change), RouteAuthorityMapping::CommandDerived, RouteResourceMapping::Run;
+        "/v1/workflows/{workflow}/authoring" => get(authoring::read).put(authoring::checkpoint), RouteAuthorityMapping::CommandDerived, RouteResourceMapping::Run;
+        "/v1/workflows/{workflow}/positions" => get(authoring::positions).put(authoring::checkpoint_positions), RouteAuthorityMapping::CommandDerived, RouteResourceMapping::Run;
+        "/v1/workflows/{workflow}/authoring/review" => post(authoring::review), RouteAuthorityMapping::QueryDerived, RouteResourceMapping::Run;
+        "/v1/workflows/{workflow}/authoring/run" => post(authoring::run), RouteAuthorityMapping::CommandDerived, RouteResourceMapping::Run;
         "/v1/workflows/{workflow}/tasks/{task}" => get(tasks::task), RouteAuthorityMapping::QueryDerived, RouteResourceMapping::Run;
         "/v1/workflows/{workflow}/tasks/{task}/result" => get(tasks::result), RouteAuthorityMapping::QueryDerived, RouteResourceMapping::Run;
         "/v1/workflows/{workflow}/tasks/{task}/result/content" => get(tasks::result_content), RouteAuthorityMapping::QueryDerived, RouteResourceMapping::Run;

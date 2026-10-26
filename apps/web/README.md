@@ -27,16 +27,24 @@ changes** when coding work needs it. The selected environment governs file/proce
 or agent** remains a separate choice for inference. Unavailable environments explain their setup
 requirements without silently choosing host execution.
 
-Within a project, choose **New workflow** for an unsaved canvas. **Add task** adds a draft card and opens its compact
-left inspector. Write **What should this task do?**; its editable title is suggested from your
-instructions. Select another task to change the inspector while keeping the canvas and camera.
-**Start workflow** accepts the first task or connected group together. An empty canvas creates no
-durable work. Within an existing workflow, **Add task** or **Apply changes** accepts the drawing
-through one guarded request. Cards and wires remain drafts until that explicit action.
+Within a project, **New workflow** creates an empty saved workspace. **Add task**, or dragging a
+task onto the canvas, places a blank card without opening its details or interrupting the selected
+task. Select the card to open its inspector on the right. Write **What should this task do?**;
+its editable title is suggested from your instructions. Cards, sources and unfinished wires save
+to the daemon without becoming executable work. **Saved**, **Saving…** and **Not saved** distinguish
+the checkpoint state. A failed save retains the local candidate and offers **Retry save**; a
+concurrent save asks which version to retain rather than overwriting another client's work.
 
-The visible **Model or agent** choice comes from this daemon. A sole available choice or the last
-deliberate selection on the same authenticated connection can be preselected. A missing choice
-is never silently replaced. **Models & agents** lists available models and configured processes;
+**Run pending plan** submits the saved plan after daemon review. **Choose tasks to run** selects a
+smaller group while other ideas remain saved. Review includes required predecessors and any
+conflicting candidate choices; **Run reviewed plan** accepts that reviewed selection together.
+Accepted task definitions and receipts remain immutable. The canvas retains its placement and
+selection, and its saved draft identities map to the accepted tasks.
+
+The visible **Model or agent** choice comes from this daemon. New cards have no automatic
+assignment. **Usual model…** deliberately applies a model to unassigned cards and future cards on
+this canvas, with the affected cards highlighted. A missing or changed selection requires review.
+**Models & agents** lists available models and configured processes;
 **Add model or agent** explains the existing operator setup and links its maintained guides.
 Connections are configured once on the daemon computer, then shared with permitted clients.
 The browser does not install agents, load weights or write provider credentials. See the
@@ -51,16 +59,17 @@ keys and task identities are generated. Captured files are UTF-8 and bounded by 
 advertised upload limit, currently 16 KiB; capturing a file grants no daemon filesystem access.
 
 Connect a task's real result to use its successful output. The client offers actual declared or
-retained named outputs, not the combined display preview. It adds the implied prerequisite.
+retained named outputs, not the combined display preview. The daemon derives the result prerequisite.
 **Use the outcome even if it fails** deliberately accepts the settled failure report; optional
 absence is a separate choice. **Run after…** adds ordering without importing a result. Removing a
 wire retains prerequisites still needed by other wires or an explicit ordering relationship.
-New work and its inputs are submitted atomically; drawing a card never starts it before wiring.
-When a draft producer exposes several results, the connection panel shows how they share its
-daemon-advertised output allowance before applying that choice. Existing accepted output contracts
-stay fixed. Accepted prerequisites do not record whether they originally came from a wire or an
-explicit order; removing a result wire therefore retains its **Run after** relationship until you
-deliberately remove that ordering connection too.
+New work and its inputs are submitted atomically; drawing or saving a card never starts it.
+The daemon constructs executable inputs, output declarations and independent ordering from the
+saved drawing and current capability contracts. Existing accepted output contracts stay fixed.
+New ordering distinguishes **After success** from **After completion**. Older accepted dependency
+arrays retain their existing meaning; they do not establish the original author's intent for an
+independent ordering wire. Editing an unstarted task shows the daemon's projected connections so
+removing one has an explicit prospective meaning.
 
 Queued missing inputs appear as sources that can be supplied in place. A shared source names its
 affected future consumers before replacement. Started tasks keep their frozen versions. Missing,
@@ -73,27 +82,37 @@ association; explicitly selecting a project changes only later submissions. Acce
 and original receipts stay unchanged. **All accessible workflows** also discovers work whose
 project settings this connection cannot inspect.
 
-The rail keeps the daemon switcher, workflow creation, recent workflows and **All workflows**
-discovery. Browser Back/Forward restores location without submitting work. Each authenticated
-connection retains up to eight canvas drafts in memory. A canvas bounds its staged changes to 32,
-loaded tasks to 200, sources to 400, edges to 1,024, draft data to 2 MiB and selected-task cache to
-8 MiB. Capacity refusal preserves existing work and offers explicit discard. No automatic splitting
-of a large batch occurs. Disconnect, identity replacement and authority loss dispose of inaccessible
-state. Browser reload loses unsent work; draft content and credentials never enter browser storage
-or URLs. The supplied Milkdrift logo remains unchanged.
-At the eight-draft limit, other workflows remain available as a clean view. **Clear cached details**
-releases loaded detail without discarding drafts or accepted connections; select a task to load it
-again.
+Expand a daemon, then a project, to find its workflows without leaving the canvas. Branches have
+bounded pages, search and an explicit refresh. **All workflows** provides broader discovery;
+**Manage connections** holds removal of saved connection settings. Browser Back/Forward restores
+location without submitting work. Workflow observations refresh workflow data; a separate name
+hint refreshes session metadata without reloading unrelated project forms.
+
+One saved canvas holds up to 200 pending tasks, 400 sources and 1,024 connections in 2 MiB.
+Up to 600 positions save independently, so moving a card does not invalidate a reviewed plan.
+A Run remains bounded to 32 actions and is never silently split. The browser bounds retained
+unsaved or pending canvases to eight; saved canvases can be evicted from its cache and loaded from
+the daemon again. Selected task details have a separate 8 MiB cache. **Clear cached details**
+releases those details without discarding saved work or accepted connections.
+
+Disconnect, identity replacement and authority loss dispose of inaccessible browser state.
+Saved unfinished work survives browser reload and daemon restart; an unconfirmed local checkpoint
+is not promised durable. Credentials and canvas content never enter browser storage or URLs.
+Tree expansion preferences and cached connection settings are local presentation state. The supplied
+Milkdrift logo remains unchanged.
 
 Project setup separately retains at most eight drafts per authenticated connection, one for each
 project or new-project form. Back/Forward restores the matching draft, including an exact request
 whose reply is unconfirmed. **Discard project draft** frees unsent changes; pending requests require
 receipt recovery. Actor changes clear these drafts and invalidate old reads and mutation replies.
-Removing an unused registration preserves unrelated drafts. Unsent drawings for the removed project
-remain available for inspection or discard, with submission blocked. Start new work in a registered project.
+Removing an unused registration preserves unrelated drafts. A saved empty workflow is already
+associated with its project; removing a registration remains subject to the daemon's reference checks.
+Start new work in a registered project.
 
-Pan, zoom, fit and the accessible list operate on the same graph. A closable left inspector stays
-compact at narrow widths. Layout is presentation; the secondary timeline shows recorded acceptance
+Pan, zoom, fit and the accessible list operate on the same graph. At narrow widths, the right inspector
+uses the available height for editing and temporarily hides the canvas toolbar and Run actions.
+**Done** closes it and restores those controls with the same selected card and camera.
+Saved positions remain presentation; the secondary timeline shows recorded acceptance
 and settlement intervals, which can include preparation and waiting. A frozen start can remain
 queued before external entry; its original acceptance time is preserved. Results have bounded previews
 and explicit complete-content downloads; technical facts remain separate from ordinary authoring.
@@ -151,7 +170,7 @@ Choose **Connect a daemon**, enter the daemon origin and
 credential. The client learns the authenticated daemon identity, checks the saved pin on reconnect
 and sends that identity on subsequent requests. Credentials stay in memory. Disconnect aborts requests and
 observation streams, clears the credential and removes that connection's data. Browser storage
-contains only cached daemon names, origins and learned identity pins. A second connection has its
+contains cached daemon names, origins, learned identity pins and tree expansion preferences. A second connection has its
 own actor, requests, cursor, search and selected workflow.
 The client retains at most 16 connections. **Forget** disconnects a connection and removes
 its saved non-secret settings, so another connection can be added without dropping existing connections.
@@ -160,8 +179,8 @@ If a submission reply is lost, use **Find submission receipt** or **Replay exact
 The draft retains the exact destination and request across navigation. A confirmed receipt opens
 its workflow if that draft is still current; it never pulls you away from another workflow or daemon.
 A generation conflict keeps the draft for **Refresh workflow for review** and a new explicit
-submission. After a complete browser restart,
-authenticate and discover the accepted work through the workflow list and search instead.
+submission. After a complete browser restart, authenticate and discover both accepted work and
+saved unfinished canvases through the workflow tree, list and search.
 
 ## Host independently
 
@@ -189,14 +208,14 @@ allow long names to wrap, and preserve draft content when toggling the inspector
 repository root; change its display size in CSS without changing its paths or colors.
 
 Rust owns transport DTOs and protocol negotiation. After changing their declarations in
-`crates/control-protocol/src/tasks.rs`, regenerate from the repository root:
+`crates/control-protocol/src/`, regenerate from the repository root:
 
 ```sh
 cargo run -p milkdrift-control-protocol --example export_web --features web-codegen
 ```
 
 Do not edit `src/lib/protocol.generated.ts` by hand or add a second task semantic validator in
-TypeScript. The client handles presentation, drafts and HTTP/SSE transport; daemon responses decide
+TypeScript. The client handles presentation, checkpoint candidates and HTTP/SSE transport; daemon responses decide
 readiness and outcomes. Fetch-based SSE sends bearer headers, and an expired cursor discards that
 connection's continuation and refreshes its authorized snapshot.
 

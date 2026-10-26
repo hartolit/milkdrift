@@ -60,6 +60,7 @@ impl Owner {
         session: &ActorSession,
         definition: TaskDefinitionDto,
     ) -> Result<TaskDefinition, PublicFailure> {
+        let capability_generation = definition.authoring_generation;
         if let Some(expected) = definition.authoring_generation {
             let current = self
                 .task_authoring(session)?
@@ -76,6 +77,19 @@ impl Owner {
                 ));
             }
         }
+        let mut definition = self
+            .task_draft_definition(session, definition)?
+            .task_definition()
+            .map_err(failure)?;
+        definition.capability_generation = capability_generation;
+        Ok(definition)
+    }
+
+    pub(super) fn task_draft_definition(
+        &self,
+        session: &ActorSession,
+        definition: TaskDefinitionDto,
+    ) -> Result<milkdrift_blueprint::authoring::AuthoringDefinition, PublicFailure> {
         let inputs = definition
             .inputs
             .into_iter()
@@ -103,7 +117,7 @@ impl Owner {
                 Ok((name, value))
             })
             .collect::<Result<BTreeMap<_, _>, PublicFailure>>()?;
-        Ok(TaskDefinition {
+        Ok(milkdrift_blueprint::authoring::AuthoringDefinition {
             execution: super::execution_mapping::domain_execution(definition.execution)?,
             actions: definition
                 .actions
@@ -135,10 +149,10 @@ impl Owner {
             title: definition.title,
             description: definition.description,
             instructions: definition.instructions,
-            capability: CapabilityRequirement::new(
-                OperationId::new(definition.capability.operation).map_err(failure)?,
-            )
-            .exact(CapabilityId::new(definition.capability.id).map_err(failure)?),
+            capability: milkdrift_blueprint::authoring::AuthoringCapability {
+                id: definition.capability.id,
+                operation: definition.capability.operation,
+            },
             outputs: definition
                 .outputs
                 .into_iter()
@@ -154,12 +168,7 @@ impl Owner {
                 })
                 .collect(),
             inputs,
-            dependencies: definition
-                .dependencies
-                .into_iter()
-                .map(TaskId::new)
-                .collect::<Result<_, _>>()
-                .map_err(failure)?,
+            dependencies: domain_dependencies(definition.dependencies)?,
             required: definition.required,
             corrective_of: definition
                 .corrective_of
@@ -190,6 +199,61 @@ pub(super) fn limits(value: &WorkflowLimits) -> WorkflowLimitsDto {
     }
 }
 
+fn domain_dependencies(
+    value: milkdrift_control_protocol::tasks::TaskDependenciesDto,
+) -> Result<milkdrift_blueprint::TaskDependencies, PublicFailure> {
+    use milkdrift_blueprint::{TaskDependencies, TaskOrderCondition};
+    use milkdrift_control_protocol::tasks::{TaskDependenciesDto, TaskOrderConditionDto};
+    Ok(match value {
+        TaskDependenciesDto::Legacy(ids) => TaskDependencies::Legacy(
+            ids.into_iter()
+                .map(TaskId::new)
+                .collect::<Result<_, _>>()
+                .map_err(failure)?,
+        ),
+        TaskDependenciesDto::Ordered(edges) => TaskDependencies::Ordered(
+            edges
+                .into_iter()
+                .map(|(id, condition)| {
+                    Ok((
+                        TaskId::new(id).map_err(failure)?,
+                        match condition {
+                            TaskOrderConditionDto::Success => TaskOrderCondition::Success,
+                            TaskOrderConditionDto::Settled => TaskOrderCondition::Settled,
+                        },
+                    ))
+                })
+                .collect::<Result<_, PublicFailure>>()?,
+        ),
+    })
+}
+
+fn public_dependencies(
+    value: &milkdrift_blueprint::TaskDependencies,
+) -> milkdrift_control_protocol::tasks::TaskDependenciesDto {
+    use milkdrift_blueprint::{TaskDependencies, TaskOrderCondition};
+    use milkdrift_control_protocol::tasks::{TaskDependenciesDto, TaskOrderConditionDto};
+    match value {
+        TaskDependencies::Legacy(ids) => {
+            TaskDependenciesDto::Legacy(ids.iter().map(ToString::to_string).collect())
+        }
+        TaskDependencies::Ordered(edges) => TaskDependenciesDto::Ordered(
+            edges
+                .iter()
+                .map(|(id, condition)| {
+                    (
+                        id.to_string(),
+                        match condition {
+                            TaskOrderCondition::Success => TaskOrderConditionDto::Success,
+                            TaskOrderCondition::Settled => TaskOrderConditionDto::Settled,
+                        },
+                    )
+                })
+                .collect(),
+        ),
+    }
+}
+
 pub(super) fn domain_limits(value: WorkflowLimitsDto) -> WorkflowLimits {
     WorkflowLimits {
         tasks: value.tasks,
@@ -203,6 +267,35 @@ pub(super) fn domain_limits(value: WorkflowLimitsDto) -> WorkflowLimits {
 }
 
 pub(super) fn definition(value: &TaskDefinition) -> Result<TaskDefinitionDto, PublicFailure> {
+    let mut definition = draft_definition(&milkdrift_blueprint::authoring::AuthoringDefinition {
+        title: value.title.clone(),
+        description: value.description.clone(),
+        instructions: value.instructions.clone(),
+        capability: milkdrift_blueprint::authoring::AuthoringCapability {
+            id: value
+                .capability
+                .exact_capability()
+                .ok_or_else(|| failure("task has no exact configured selection"))?
+                .to_string(),
+            operation: value.capability.operation().to_string(),
+        },
+        inputs: value.inputs.clone(),
+        outputs: value.outputs.clone(),
+        dependencies: value.dependencies.clone(),
+        required: value.required,
+        corrective_of: value.corrective_of.clone(),
+        paths: value.paths.clone(),
+        tools: value.tools.clone(),
+        actions: value.actions.clone(),
+        execution: value.execution.clone(),
+    })?;
+    definition.authoring_generation = value.capability_generation;
+    Ok(definition)
+}
+
+pub(super) fn draft_definition(
+    value: &milkdrift_blueprint::authoring::AuthoringDefinition,
+) -> Result<TaskDefinitionDto, PublicFailure> {
     let inputs = value
         .inputs
         .iter()
@@ -246,12 +339,8 @@ pub(super) fn definition(value: &TaskDefinition) -> Result<TaskDefinitionDto, Pu
         description: value.description.clone(),
         instructions: value.instructions.clone(),
         capability: TaskCapability {
-            id: value
-                .capability
-                .exact_capability()
-                .ok_or_else(|| failure("task has no exact configured selection"))?
-                .to_string(),
-            operation: value.capability.operation().to_string(),
+            id: value.capability.id.clone(),
+            operation: value.capability.operation.clone(),
         },
         outputs: value
             .outputs
@@ -268,7 +357,7 @@ pub(super) fn definition(value: &TaskDefinition) -> Result<TaskDefinitionDto, Pu
             })
             .collect(),
         inputs,
-        dependencies: value.dependencies.iter().map(ToString::to_string).collect(),
+        dependencies: public_dependencies(&value.dependencies),
         required: value.required,
         corrective_of: value.corrective_of.as_ref().map(ToString::to_string),
         paths: value
@@ -282,7 +371,7 @@ pub(super) fn definition(value: &TaskDefinition) -> Result<TaskDefinitionDto, Pu
     })
 }
 
-fn input(value: &TaskInputValue) -> Result<InputValue, PublicFailure> {
+pub(super) fn input(value: &TaskInputValue) -> Result<InputValue, PublicFailure> {
     match value {
         TaskInputValue::TextFile {
             source_artifact: Some(input_id),

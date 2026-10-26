@@ -43,8 +43,8 @@ and physical identity before entry. It never repeats an entered or uncertain inv
 project claims make ordinary tasks wait with **Project is in use**. Independent direct/peer serving
 retains its separate pre-entry refusal policy. Native claims coordinate Milkdrift operations, not
 external editors or a filesystem sandbox.
-Physical schema 21 atomically adopts exact physical schemas 19 or 20 with internal format 22 by
-adding the project tables; schema 19 also receives its missing daemon metadata tables. Existing
+Physical schema 22 atomically adopts exact physical schemas 19, 20 or 21 with internal format 22 by
+adding authoring/position tables and any missing project tables; schema 19 also receives its missing daemon metadata tables. Existing
 workflow and receipt encodings remain unchanged; interruption leaves either the original table set
 or the complete adopted format. Older document formats, graph stores and recognized legacy
 directories are refused before writes. Inspect or back up an older store with its matching executable.
@@ -99,15 +99,17 @@ See [web hosting](../../apps/web/README.md) for build commands and connection se
 The client shows the daemon's shared name in its navigation and contextual header. On a narrow
 screen, open **Workspace navigation** to switch daemons or reach **Daemon settings**. Register a
 permitted ordinary folder as a project and review its execution defaults before creating work.
-**New workflow** creates a workflow in that project with its first task; **Add task** submits to the
-selected workflow. Both use a compact composer with instructions, optional context/files and a visible executor. The rail keeps
-current/recent workflows available, while **All workflows** provides discovery and search. Selected task
-details sit beside the timeline on wide screens and below it on narrow screens. Hiding the inspector
-preserves an unfinished edit; it does not stop or change daemon work. Results and technical facts
-use labeled disclosures, while execution state and stop requests remain visible.
-Task drafts remain in memory across navigation, bounded to eight per authenticated connection;
-disconnect or lost authority clears them. See [client authoring and recovery](../../apps/web/README.md)
-for exact replay, advanced editing and draft disposal.
+Expand the daemon → project → workflow tree or search the selected daemon to find work.
+**New workflow** creates an empty saved workflow in its project. **Add task** places a blank card;
+selecting it opens the right inspector without leaving the canvas. Choose a model, enter instructions
+and connect text, files or task results directly. Saved unfinished work survives reconnect without
+running. **Run pending plan** or a deliberately selected scope admits work through the daemon.
+The inspector becomes a drawer on narrow screens, and the list offers the same connection actions.
+Hiding it preserves the edit; it does not stop daemon work. Results and technical facts use labeled
+disclosures, while execution state and stop requests remain visible.
+Client caches are bounded and cleared on disconnect or lost authority; saved authoring remains with
+its daemon. See [client authoring and recovery](../../apps/web/README.md) for checkpoint conflicts,
+exact Run recovery and removal of unwanted pending work.
 
 For phone/LAN use, terminate browser-trusted HTTPS for both the static site and daemon proxy.
 Keep the daemon's listener private, forward bearer/identity headers and disable buffering on the

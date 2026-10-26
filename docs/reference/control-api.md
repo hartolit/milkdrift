@@ -1,4 +1,4 @@
-# Local control API 3.5
+# Local control API 3.6
 
 Use this API to submit ordinary tasks, discover permitted workflows and inspect retained results.
 All clients use the daemon's owner queue. The standalone [Svelte client](../../apps/web/README.md),
@@ -13,7 +13,7 @@ maps that credential to an immutable actor/grant revision. JSON cannot choose an
 negotiates the exact version before use; older graph clients are refused:
 
 ```json
-{"protocol":{"major":3,"minor":5}}
+{"protocol":{"major":3,"minor":6}}
 ```
 
 Send this to `POST /v1/version`. `GET /v1/session` returns `daemon_id`, `daemon_name`,
@@ -23,8 +23,9 @@ The session also projects `authoring` contracts from the configured adapter gene
 executor labels, exact input slots, real output keys, conditional publication, byte bounds and an
 owner-defined default output when one exists. Missing metadata means the client cannot offer direct
 connectors for that executor. These facts contain no argv, environment or secret configuration.
-`task_output_limit_bytes` gives the aggregate declaration allowance shared by a task's selected
-outputs; individual port bounds do not add more allowance. An omitted value from an older server
+`task_output_limit_bytes` bounds the aggregate actual output bytes. Each selected output retains
+its own ceiling; adding another output cannot shrink an existing promise or increase the aggregate
+reservation. An omitted value from an older server
 is unknown (decoded as zero), so clients cannot invent an allocation before refreshing metadata.
 `project_roots` retains the scoped native-root projection for earlier explicit tool definitions.
 Ordinary project setup uses the bounded project directory operations below; choosing a folder never
@@ -47,13 +48,13 @@ collection sizes before dispatch.
 Success bodies use the common envelope:
 
 ```json
-{"protocol":{"major":3,"minor":5},"request_id":"req-1","value":{}}
+{"protocol":{"major":3,"minor":6},"request_id":"req-1","value":{}}
 ```
 
 Errors use a stable code and redacted explanation. They never include credentials or task content:
 
 ```json
-{"protocol":{"major":3,"minor":5},"request_id":"req-1","code":"conflict","message":"workflow generation changed","retryable":false,"details":{}}
+{"protocol":{"major":3,"minor":6},"request_id":"req-1","code":"conflict","message":"workflow generation changed","retryable":false,"details":{}}
 ```
 
 `unauthenticated` means the credential failed, `unauthorized` means the current grant does not
@@ -193,7 +194,7 @@ a read projection, not an empty permission choice: submitting it for authoring i
 | Method and route | Purpose |
 | --- | --- |
 | `GET /v1/workflows?search=&limit=50&cursor=` | Discover permitted workflows without a known ID. |
-| `POST /v1/workflows` | Atomically create a workflow and assign IDs to local task aliases. |
+| `POST /v1/workflows` | Atomically create an empty workflow or assign IDs to up to 32 supplied task aliases. |
 | `GET /v1/workflows/{workflow}?cursor=` | Read workflow state and a bounded page of task summaries. |
 | `POST /v1/workflows/{workflow}/changes` | Apply one generation-guarded atomic edit batch. |
 | `GET /v1/workflows/{workflow}/tasks/{task}` | Inspect a selected task, frozen start and result preview. |
@@ -201,7 +202,7 @@ a read projection, not an empty permission choice: submitting it for authoring i
 | `GET /v1/workflows/{workflow}/tasks/{task}/result/content` | Download complete bounded UTF-8 result text. |
 | `GET /v1/workflow-requests/{request}` | Recover this actor's durable request acceptance. |
 | `POST /v1/task-inputs` | Capture an actor-owned UTF-8 file. |
-| `GET /v1/workflows/stream` | Receive authenticated snapshot invalidation hints. |
+| `GET /v1/workflows/stream` | Receive authenticated snapshot invalidation and daemon-name generation hints. |
 
 The following request creates a finite project-aware process task. Replace the project identity,
 reviewed settings generation and capability with exact choices returned by the connected daemon.
@@ -210,7 +211,7 @@ The daemon assigns workflow/task IDs and returns the `report`
 alias mapping; the alias has no identity outside this request.
 
 ```json
-{"request_id":"project-report-1","project_id":"project:replace-with-project-id","title":"Inspect project","description":"Report the supplied Cargo project","tasks":[{"alias":"report","definition":{"execution":{"kind":"project","expected_generation":1},"title":"Inspect Cargo manifest","description":"Describe targets and dependencies","instructions":"Inspect the supplied file and summarize its package, targets and dependencies.","capability":{"id":"cargo-report","operation":"process.execute"},"inputs":{"brief":{"kind":"supplied","name":"brief","optional":false},"file":{"kind":"supplied","name":"file","optional":false}},"outputs":{},"dependencies":[],"required":true,"corrective_of":null,"paths":[]}}],"inputs":{"brief":{"kind":"text","text":"Give a concise project report."}},"finish_when_settled":true,"limits":null}
+{"request_id":"project-report-1","project_id":"project:replace-with-project-id","title":"Inspect project","description":"Report the supplied Cargo project","tasks":[{"alias":"report","definition":{"execution":{"kind":"project","expected_generation":1},"title":"Inspect Cargo manifest","description":"Describe targets and dependencies","instructions":"Inspect the supplied file and summarize its package, targets and dependencies.","capability":{"id":"cargo-report","operation":"process.execute"},"inputs":{"brief":{"kind":"supplied","name":"brief","optional":false},"file":{"kind":"supplied","name":"file","optional":false}},"outputs":{},"dependencies":{},"required":true,"corrective_of":null,"paths":[]}}],"inputs":{"brief":{"kind":"text","text":"Give a concise project report."}},"finish_when_settled":true,"limits":null}
 ```
 
 This task remains queued because `file` is missing. Capture file bytes with:
@@ -242,7 +243,7 @@ after losing the client entirely, discovery still finds accepted work.
 
 ## Future changes and completion
 
-Changes include `add`, `revise`, `remove`, `bind_input`, `stop`, `wait`, `continue`, `finish`,
+Changes include `add`, `revise`, `remove`, `bind_input`, `rename`, `stop`, `wait`, `continue`, `finish`,
 `adopt_correction`, `set_limits` and `dismiss_admission`. Revise/remove carry the observed task version as well as the batch's workflow
 generation. An already frozen start refuses revision. New definitions never rewrite retained
 history. Required producer output and settled producer outcome are different input bindings;
@@ -251,7 +252,9 @@ missing required output keeps consumers queued. Definitions default to required.
 `wait` pauses new external entry until an authorized `continue` command. Supplying inputs does not
 answer that decision. A singleton `wait`, `continue` or `stop` accepts an observed generation at or
 after the last edit, new start or wait decision, up to the current generation. Progress and retries
-therefore do not obstruct those controls. Ordinary authoring still requires the exact generation.
+therefore do not obstruct those controls. Human edits use the same decision watermark, so ordinary
+progress does not conflict with an unrelated edit. New starts, authoring decisions and changed task
+versions still refuse stale edits. Model-authored batches retain their causal generation checks.
 A request predating a new decision refuses; replay of an earlier accepted Continue returns its exact
 receipt without clearing a later question.
 The browser submits Pause, Continue and Stop independently of unfinished authoring changes.
@@ -342,9 +345,10 @@ sets `text_unavailable` while retaining task state, artifacts and the complete b
 result text permits 2 MiB of artifact content plus bounded separators; individual immutable artifacts use `/v1/artifacts/{artifact}/content` and bounded ranges.
 
 The workflow stream uses authenticated fetch, not native EventSource with a token in its URL.
-It sends `workflow_changed` invalidations every two seconds; clients coalesce a session refresh with
-their visible page and selected workflow refresh. Session refresh also updates the shared name when
-no workflows exist or discovery fails. A checked name generation cannot replace newer metadata,
+It sends bounded `workflow_changed` invalidations; clients coalesce the affected workflow reads.
+A separate `metadata_changed` hint carries only the changed name generation, even when no workflows
+exist or discovery fails. Periodic session/catalog refresh handles other connection changes without
+reloading those catalogs for every workflow hint. A checked name generation cannot replace newer metadata,
 and late responses after disconnect or replacement are discarded. It is not a replayable task
 journal. The connection has a finite lifetime. On reconnect,
 `Last-Event-ID` is checked against actor/grant/daemon binding; an old daemon incarnation yields
@@ -383,6 +387,65 @@ rename commands. The browser retains no credential in that profile.
 
 ## Canvas source reads and authoring guards
 
+An empty workflow is discoverable immediately and cannot become completed before any task has
+been admitted. Save and arrange operations do not admit tasks. The session advertises
+`authoring_bounds`: 2 MiB of document data, 200 pending cards, 400 sources, 1,024 connections,
+600 positions and at most 32 actions per deliberate Run/Apply. These limits describe one latest
+snapshot; clients do not append receipts for keystrokes or pointer movement.
+
+| Method and route | Purpose |
+| --- | --- |
+| `GET /v1/workflows/{workflow}/authoring` | Read the latest authorized document, generation and content digest. |
+| `PUT /v1/workflows/{workflow}/authoring` | Replace that document using `expected_generation`; no task admission. |
+| `GET /v1/workflows/{workflow}/positions` | Read separately versioned card positions. |
+| `PUT /v1/workflows/{workflow}/positions` | Conditionally replace positions without changing semantic generations. |
+| `POST /v1/workflows/{workflow}/authoring/review` | Resolve selected cards/change indices, expose required new predecessors and bounded local repairs. |
+| `POST /v1/workflows/{workflow}/authoring/run` | Accept exactly the reviewed scope with an exact request identity and atomically update its draft aliases. |
+| `GET /v1/workflows/{workflow}/topology?cursor=` | Read up to 200 tasks' connections, order and output metadata without instructions or result bodies. |
+
+The authoring document holds incomplete task fields, source cards, wire intentions, other explicit
+changes, a usual-model preference and daemon-owned accepted aliases. Accepted definitions live only
+in workflow history. Wires retained after admission preserve presentation references; accepted
+topology remains authoritative. A candidate edit projects its complete incoming connections before
+Run. Required new predecessors are included in review; an existing predecessor with candidate edits
+requires an explicit `use_current` choice or selection of that candidate. Inspecting a card never
+changes this scope. Incomplete included work blocks the whole submission.
+A source with a `shared_name` and null `value` deliberately waits for that workflow input to be
+supplied later. With both fields null, the source is unfinished and included work cannot run.
+
+Checkpoint conflicts return the current generation and preserve the last saved document. After a
+lost reply, read current content and compare it to the attempted checkpoint; do not repeat an old
+conditional write as though it were an exact command. Run uses ordinary canonical receipt recovery,
+even after another client saves later changes. Run checks both authoring and semantic workflow
+observations. `details.authoring_issues` is a JSON array of at most 64 typed repairs identifying
+affected cards, connections, sources or changes. Transport error code and retryability remain
+independent of those repair hints.
+
+Latest authoring and position bytes count against workflow capacity, with bounded replacement
+headroom so shortening/removing saved content remains possible. Retained source identities are
+protected and reauthorized before disclosure or admission. One latest document protects at most
+400 distinct retained artifacts, including files and named results; extra references refuse with
+an explicit request to remove unused sources or result connections. Drafts do not expire by age. Topology
+pages share a 64 KiB source-preview budget and a 2 MiB response limit; cursors bind workflow
+generation, actor, authority and daemon identity. A changed generation refuses mixed-page assembly.
+An explicit `missing` topology preview means the supplied value is absent. A null preview means
+no preview was included, for example because the page exhausted its byte budget; clients must not
+infer absence or permission from it. Restricted and expired previews retain those distinct states.
+Another authorized editor can retain an exact source already owned by this workflow. Introducing
+a new uploaded input still requires its uploader's scope. A client with a known checkpoint can
+remove revoked sources even when current authority prevents reading or retaining the old document.
+
+New `dependencies` maps encode independent `success` or `settled` order. Data bindings express
+their own readiness: a successful named output, optional settled absence, or an explicit settled
+outcome. Removing a data wire does not invent independent order. Historical array dependencies
+retain their original predicates; their topology projection marks `dependencies_legacy` and exposes
+the effective conditions. Fresh definitions must use maps, including an empty `{}`. Known media
+mismatches are refused by shared admission, and adapters validate actual bytes at entry.
+Saved-authoring admission declares the reviewed adapter's named outputs before any consumer is
+connected. A later consumer can therefore wait on an accepted queued task's result without silently
+editing that producer. An explicitly selected producer edit can introduce a new promise in the same
+atomic batch as its consumer; existing stricter declarations remain intact.
+
 Workflow reads include bounded `supplied_inputs` previews from the daemon-owned shared values.
 Selected task reads include the currently supplied values referenced by that task, independently
 of its `frozen.inputs`. Each map value distinguishes available, restricted and expired sources;
@@ -398,9 +461,13 @@ Each accessible entry includes the exact artifact, retained media type and byte 
 preview is presentation only and is never an input artifact. An output need not have been declared
 in the historical producer definition; future binding admission still validates the retained
 publication, outcome rule and current authority through the shared task path.
+Selecting a settled outcome requires current access to every artifact it contains, including
+terminal-result references. Review and admission recheck those permissions when publication follows
+an earlier saved connection; an unpublished future outcome remains a valid prerequisite.
 
 A new or revised task may include `authoring_generation` to bind its composition choices to the
 observed registered generation. A stale or unavailable contract refuses the entire request before
-acceptance. The guard does not become another stored capability selector. Exact accepted request
+acceptance. The guard is stored with the accepted definition and checked before start; a changed or
+unavailable capability leaves the task queued for an explicit review rather than selecting a replacement. Exact accepted request
 replay is resolved before rechecking authoring metadata, so upgrading an adapter does not invalidate
 old receipts. Omitting the guard preserves the existing programmatic request shape.

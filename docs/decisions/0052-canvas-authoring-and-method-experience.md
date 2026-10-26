@@ -1,8 +1,8 @@
 # 0052 — Saved canvas authoring and understandable method reuse
 
 **Standing:** selected planning design, 2026-10-23, under the user's request to consolidate the
-debates and prepare a side sprint. S01 lifecycle repairs were assigned on October 24; the remaining
-implementation phases are unassigned. Actual usability acceptance
+debates and prepare a side sprint. S01 lifecycle repairs and S02 saved authoring are implemented,
+with focused verification complete on October 26; S03–S05 remain unassigned. Actual usability acceptance
 remains required. This refines [0051](0051-daemon-task-workflows.md), replacing its in-memory-only
 authoring and left inspector, clarifying method activation and adding the contract changes below.
 It preserves the daemon-owned workflow, ordinary task scheduler, current-at-activation methods,

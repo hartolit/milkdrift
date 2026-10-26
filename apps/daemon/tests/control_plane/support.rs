@@ -362,7 +362,7 @@ pub(super) fn task_definition(capability: &str, operation: &str) -> TaskDefiniti
                 optional: false,
             },
         )]),
-        dependencies: vec![],
+        dependencies: Default::default(),
         outputs: BTreeMap::new(),
         required: true,
         corrective_of: None,

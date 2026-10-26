@@ -6,6 +6,7 @@ mod capacity;
 mod duration;
 mod effects;
 mod inputs;
+mod media;
 mod model_actions;
 mod policy;
 mod recovery;
@@ -368,11 +369,37 @@ impl TaskRuntime {
             .ok_or_else(|| RuntimeError::InvalidCommand("workflow does not exist".into()))
     }
 
+    /// Inspects the selected executor's current authoring contract after control authorizes access.
+    /// # Errors
+    /// Returns host inspection failures. An absent contract never authorizes inferred ports.
+    pub fn task_authoring(
+        &self,
+        requirement: &milkdrift_capability::CapabilityRequirement,
+    ) -> Result<
+        Option<(
+            milkdrift_capability::CapabilityDescriptor,
+            milkdrift_capability::TaskAuthoringContract,
+        )>,
+        RuntimeError,
+    > {
+        Ok(self.executor.task_authoring(requirement)?)
+    }
+
     fn save(
         &self,
         record: &WorkflowRecord,
         expected_generation: Option<u64>,
         command: Option<WorkflowCommandAcceptance>,
+    ) -> Result<WorkflowCommitOutcome, RuntimeError> {
+        self.save_with_authoring(record, expected_generation, command, None)
+    }
+
+    fn save_with_authoring(
+        &self,
+        record: &WorkflowRecord,
+        expected_generation: Option<u64>,
+        command: Option<WorkflowCommandAcceptance>,
+        authoring: Option<milkdrift_persistence::WorkflowAuthoringCommit>,
     ) -> Result<WorkflowCommitOutcome, RuntimeError> {
         let pending = record
             .tasks
@@ -421,6 +448,7 @@ impl TaskRuntime {
             })
             .transpose()?;
         let outcome = self.store.commit_workflow(WorkflowCommit {
+            authoring,
             project_guard: record.admission_project_guard.clone(),
             project_id: if expected_generation.is_none() {
                 record.project_id.clone()
@@ -586,6 +614,7 @@ fn update_workflow_state(workflow: &mut WorkflowRecord) {
     workflow.state = if active {
         WorkflowState::Running
     } else if !unsettled
+        && workflow.admitted_tasks != 0
         && obligations_met
         && workflow.finish_when_settled
         && workflow.wait_question.is_none()

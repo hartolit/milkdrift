@@ -24,6 +24,18 @@ of discovery pages. Result text and frozen input previews declare truncation exp
 binding retained during a text edit. A restricted read withholds inaccessible execution details;
 it is not an authoring choice.
 
+[`authoring`](src/authoring.rs) separates conditional latest-document and position checkpoints from
+exact Run/Apply commands. Empty workflows and incomplete cards can be retained without task admission.
+Review exposes necessary new predecessors and local repairs; Run atomically admits that scope and
+updates its accepted aliases. Bounds come from Rust owners through the session. Clients reconcile
+checkpoint content after a lost reply and recover deliberate commands through their exact receipts.
+
+[`WorkflowTopologyDto`](src/topology.rs) supplies at most 200 accepted task connection rows within
+a 2 MiB page and 64 KiB of serialized source previews. It contains port declarations, current
+authorized publication metadata and original ordering predicates; it excludes instructions and
+result text. Its own generation-bound continuation prevents a client from combining rows from
+different workflow generations. Preview omission leaves the accepted source edge intact.
+
 The session and `DaemonMetadataDto` expose the daemon-owned name independently from its stable
 identity. `RenameDaemonRequest` carries an exact actor-scoped request identity and observed name
 generation; `RenameDaemonReceipt` records the accepted normalized name and generation. The protocol

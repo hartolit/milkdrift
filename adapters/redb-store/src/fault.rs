@@ -27,9 +27,9 @@ pub enum FaultPoint {
     BeforeSchemaCommit,
     /// Immediately after the schema-initialization transaction commits.
     AfterSchemaCommit,
-    /// Before the current task store gains daemon metadata tables and its new marker.
+    /// Before a supported task store gains missing additive tables and its new physical marker.
     BeforeDaemonSchemaAdoptionCommit,
-    /// After daemon metadata table adoption commits, before startup continues.
+    /// After supported additive schema adoption commits, before startup continues.
     AfterDaemonSchemaAdoptionCommit,
     /// Before initial daemon metadata or a rename and its receipt commit together.
     BeforeDaemonMetadataCommit,
@@ -39,6 +39,10 @@ pub enum FaultPoint {
     BeforeCommandCommit,
     /// Immediately after redb has committed a command transaction.
     AfterCommandCommit,
+    /// Before the latest authoring or position checkpoint replaces its predecessor.
+    BeforeAuthoringCommit,
+    /// After a checkpoint commits, before its generation/digest reply is returned.
+    AfterAuthoringCommit,
     /// After peer admission rows and accounting are prepared, before their atomic commit.
     BeforePeerAdmissionCommit,
     /// Immediately after durable peer admission commits, before its response is returned.

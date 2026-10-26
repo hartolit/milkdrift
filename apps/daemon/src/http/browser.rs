@@ -48,7 +48,7 @@ pub(super) async fn allow_origin(
             .headers()
             .get(header::ACCESS_CONTROL_REQUEST_METHOD)
             .and_then(|value| value.to_str().ok())
-            .is_some_and(|value| matches!(value, "GET" | "POST"));
+            .is_some_and(|value| matches!(value, "GET" | "POST" | "PUT"));
         let valid_headers = request
             .headers()
             .get(header::ACCESS_CONTROL_REQUEST_HEADERS)
@@ -76,7 +76,7 @@ pub(super) async fn allow_origin(
             *response.status_mut() = StatusCode::NO_CONTENT;
             response.headers_mut().insert(
                 header::ACCESS_CONTROL_ALLOW_METHODS,
-                HeaderValue::from_static("GET, POST"),
+                HeaderValue::from_static("GET, POST, PUT"),
             );
             response.headers_mut().insert(
                 header::ACCESS_CONTROL_ALLOW_HEADERS,

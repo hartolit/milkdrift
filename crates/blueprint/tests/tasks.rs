@@ -3,7 +3,7 @@ use milkdrift_blueprint::{
     TaskDefinition, TaskId, TaskInputBinding, TaskInputValue, WorkflowLimits, validate_task_set,
 };
 use serde_json::json;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 fn task() -> Result<TaskDefinition, Box<dyn std::error::Error>> {
@@ -54,8 +54,7 @@ fn dependency_and_correction_cycles_are_refused_without_hiding_missing_inputs() 
             optional: false,
         },
     );
-    assert!(consumer.validate().is_err());
-    consumer.dependencies.insert(a.clone());
+    consumer.validate()?;
     let mut definitions = BTreeMap::from([(a.clone(), task()?), (b.clone(), consumer)]);
     assert!(
         validate_task_set(&definitions, &WorkflowLimits::default(), |_, _| None).is_err(),
@@ -74,13 +73,13 @@ fn dependency_and_correction_cycles_are_refused_without_hiding_missing_inputs() 
             },
         );
     validate_task_set(&definitions, &WorkflowLimits::default(), |_, _| None)?;
-    definitions
-        .get_mut(&a)
-        .ok_or("task absent")?
-        .dependencies
-        .insert(b.clone());
+    definitions.get_mut(&a).ok_or("task absent")?.dependencies =
+        milkdrift_blueprint::TaskDependencies::Ordered(BTreeMap::from([(
+            b.clone(),
+            milkdrift_blueprint::TaskOrderCondition::Success,
+        )]));
     assert!(validate_task_set(&definitions, &WorkflowLimits::default(), |_, _| None).is_err());
-    definitions.get_mut(&a).ok_or("task absent")?.dependencies = BTreeSet::new();
+    definitions.get_mut(&a).ok_or("task absent")?.dependencies = Default::default();
     definitions.get_mut(&a).ok_or("task absent")?.corrective_of = Some(b.clone());
     assert!(
         validate_task_set(&definitions, &WorkflowLimits::default(), |_, _| None).is_err(),
@@ -114,6 +113,27 @@ fn captured_bytes_have_verified_identity_and_output_contracts_have_finite_bounds
             .validate()
             .is_err()
     );
+    let mut definition = task()?;
+    for name in ["report", "diagnostic"] {
+        definition.outputs.insert(
+            name.into(),
+            milkdrift_blueprint::TaskOutputDeclaration {
+                required: false,
+                media_type: Some("text/plain".into()),
+                max_bytes: milkdrift_blueprint::MAX_TASK_OUTPUT_BYTES,
+            },
+        );
+    }
+    definition.validate()?;
+    definition.outputs.remove("diagnostic");
+    assert_eq!(
+        definition
+            .outputs
+            .get("report")
+            .ok_or("report missing")?
+            .max_bytes,
+        milkdrift_blueprint::MAX_TASK_OUTPUT_BYTES
+    );
     Ok(())
 }
 
@@ -123,7 +143,6 @@ fn retained_named_outputs_require_complete_bounded_evidence_and_keep_cycles_inva
     let producer = TaskId::new("producer")?;
     let consumer = TaskId::new("consumer")?;
     let mut definition = task()?;
-    definition.dependencies.insert(producer.clone());
     definition.inputs.insert(
         "result".into(),
         TaskInputBinding::TaskOutput {
@@ -160,8 +179,10 @@ fn retained_named_outputs_require_complete_bounded_evidence_and_keep_cycles_inva
     definitions
         .get_mut(&producer)
         .ok_or("producer absent")?
-        .dependencies
-        .insert(consumer);
+        .dependencies = milkdrift_blueprint::TaskDependencies::Ordered(BTreeMap::from([(
+        consumer,
+        milkdrift_blueprint::TaskOrderCondition::Success,
+    )]));
     let reference = milkdrift_capability::ArtifactReference::new(
         "retained-report",
         "0".repeat(64),

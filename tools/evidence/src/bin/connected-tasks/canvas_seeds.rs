@@ -114,7 +114,7 @@ async fn denied_source(client: &ControlClient, project: &ProjectDto) -> Evidence
 }
 
 fn definition(title: &str, capability: &str, project: &ProjectDto) -> Value {
-    json!({"title":title,"description":"Bounded canvas review case","instructions":"Produce the configured finite review output.","capability":{"id":capability,"operation":if capability.starts_with("canvas-") { "process.execute" } else { "model.generate" }},"execution":{"kind":"explicit","expected_generation":project.generation,"settings":{"environment":{"kind":"host"},"allow_changes":false},"access":"none","tools":[]},"inputs":{},"outputs":{},"dependencies":[],"required":true,"corrective_of":null,"paths":[],"tools":[],"actions":null})
+    json!({"title":title,"description":"Bounded canvas review case","instructions":"Produce the configured finite review output.","capability":{"id":capability,"operation":if capability.starts_with("canvas-") { "process.execute" } else { "model.generate" }},"execution":{"kind":"explicit","expected_generation":project.generation,"settings":{"environment":{"kind":"host"},"allow_changes":false},"access":"none","tools":[]},"inputs":{},"outputs":{},"dependencies":{},"required":true,"corrective_of":null,"paths":[],"tools":[],"actions":null})
 }
 
 async fn create(
@@ -252,7 +252,7 @@ async fn offpage(client: &ControlClient, project: &ProjectDto) -> EvidenceResult
         "result",
         json!({"kind":"task_output","task":producer,"output":"model_response","optional":false}),
     )?;
-    field(&mut revised, "dependencies", json!([producer]))?;
+    field(&mut revised, "dependencies", json!({}))?;
     change(client, &initial.workflow_id, "canvas-page-wire", vec![json!({"kind":"revise","task":consumer,"expected_version":current.version,"definition":revised})]).await?;
     Ok(
         json!({"workflow":initial.workflow_id,"title":title,"producer":producer,"consumer":consumer,"task_count":60}),
@@ -292,7 +292,7 @@ async fn historical(client: &ControlClient, project: &ProjectDto) -> EvidenceRes
         "inputs",
         json!({"report":{"kind":"task_output","task":original,"output":"report","optional":false}}),
     )?;
-    field(&mut consumer, "dependencies", json!([original]))?;
+    field(&mut consumer, "dependencies", json!({}))?;
     let mut changes = vec![json!({"kind":"add","alias":"consumer","definition":consumer})];
     for (name, label) in [
         ("compatible", "Compatible correction"),

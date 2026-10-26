@@ -92,7 +92,7 @@ pub enum GenerationHealth {
 #[derive(Clone, Debug, PartialEq)]
 pub struct GenerationView {
     /// Safe task authoring contracts for the operations visible to this authority scope.
-    pub task_authoring: BTreeMap<OperationId, crate::TaskAuthoringContract>,
+    pub task_authoring: BTreeMap<OperationId, milkdrift_capability::TaskAuthoringContract>,
     /// Capability identity.
     pub capability: CapabilityId,
     /// Exact descriptor revision.
@@ -223,7 +223,7 @@ struct GenerationKey {
 }
 
 struct Generation {
-    task_authoring: BTreeMap<OperationId, crate::TaskAuthoringContract>,
+    task_authoring: BTreeMap<OperationId, milkdrift_capability::TaskAuthoringContract>,
     accepts_direct_inputs: bool,
     accepts_project_without_access: bool,
     descriptor: CapabilityDescriptor,

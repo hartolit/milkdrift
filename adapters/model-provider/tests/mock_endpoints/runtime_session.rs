@@ -140,6 +140,7 @@ impl ModelFixture {
             tasks: vec![NewTask {
                 alias: TaskId::new("model")?,
                 definition: TaskDefinition {
+                    capability_generation: None,
                     execution: milkdrift_blueprint::TaskExecution::Legacy,
                     title: "Inspect the captured project".into(),
                     description: String::new(),
@@ -152,7 +153,7 @@ impl ModelFixture {
                             optional: false,
                         },
                     )]),
-                    dependencies: BTreeSet::new(),
+                    dependencies: Default::default(),
                     outputs: BTreeMap::new(),
                     required: true,
                     corrective_of: None,

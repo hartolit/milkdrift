@@ -17,7 +17,7 @@ fn future_batch_preview_preserves_stale_guards_and_never_submits() -> TestResult
         "id":"consumer", "version":4,
         "definition":{"title":"Composition","description":"","instructions":"Compose notes",
             "capability":{"id":"model","operation":"model.generate"},"inputs":{},
-            "outputs":{},"dependencies":[],"required":true,"corrective_of":null,"paths":[]},
+            "outputs":{},"dependencies":{},"required":true,"corrective_of":null,"paths":[]},
         "state":"running","reason":null,"started_at":2,"ended_at":null,
         "stop_requested":false,"stop_request_id":"stop-consumer","frozen":null,"result":null,
         "result_restricted":false

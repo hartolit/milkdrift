@@ -28,6 +28,10 @@ impl Owner {
                     .task_authoring
                     .into_iter()
                     .map(move |(operation, contract)| TaskCapabilityAuthoringDto {
+                        input_media: match contract.input_media {
+                            milkdrift_capability::TaskInputMedia::Any => milkdrift_control_protocol::tasks::TaskInputMediaDto::Any,
+                            milkdrift_capability::TaskInputMedia::TextJsonOrImage => milkdrift_control_protocol::tasks::TaskInputMediaDto::TextJsonOrImage,
+                        },
                         capability: TaskCapability {
                             id: generation.capability.to_string(),
                             operation: operation.to_string(),

@@ -6,11 +6,11 @@ use milkdrift_authority::{
     AuthorityBudget, AuthorityExecutionProvenance, AuthorityOperation, AuthorityRequest,
     BoundaryTimeMillis, DecisionId, RequestedResourceFacts,
 };
-use milkdrift_blueprint::{TaskBatch, TaskChange, TaskId, TaskInputBinding};
+use milkdrift_blueprint::{TaskBatch, TaskChange, TaskId, TaskInputBinding, WorkflowId};
 use milkdrift_capability::ArtifactReference;
 use milkdrift_runtime::WorkflowRecord;
 use milkdrift_workspace::{ArtifactId, RunId};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 impl TaskControlService {
     pub(super) fn authorize_sources(
@@ -19,13 +19,30 @@ impl TaskControlService {
         record: &WorkflowRecord,
         batch: &TaskBatch,
     ) -> Result<(), ControlError> {
+        let revisions = batch
+            .changes
+            .iter()
+            .filter_map(|change| match change {
+                TaskChange::Revise {
+                    task, definition, ..
+                } => Some((task, definition)),
+                _ => None,
+            })
+            .collect::<BTreeMap<_, _>>();
         let mut sources = BTreeMap::new();
+        let mut outcomes = BTreeSet::new();
         for change in &batch.changes {
             match change {
                 TaskChange::Add { definition, .. } | TaskChange::Revise { definition, .. } => {
                     for binding in definition.inputs.values() {
-                        if let TaskInputBinding::TaskOutput { task, output, .. } = binding {
-                            sources.entry((task, output.as_str())).or_insert(false);
+                        match binding {
+                            TaskInputBinding::TaskOutput { task, output, .. } => {
+                                sources.entry((task, output.as_str())).or_insert(false);
+                            }
+                            TaskInputBinding::SettledOutcome { task } => {
+                                outcomes.insert(task);
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -51,12 +68,22 @@ impl TaskControlService {
                 _ => {}
             }
         }
+        for task in outcomes {
+            self.authorize_outcome_source(context, record, task)?;
+        }
         for ((task, output), required) in sources {
             let Some(producer) = record.tasks.get(task) else {
                 // New aliases and absent producers are decided atomically by runtime validation.
                 continue;
             };
-            if !required && producer.definition.outputs.contains_key(output) {
+            let reference = producer
+                .result
+                .as_ref()
+                .and_then(|result| result.outputs.get(output));
+            let definition = revisions.get(task).copied().unwrap_or(&producer.definition);
+            if reference.is_none() && !required && definition.outputs.contains_key(output) {
+                // This batch explicitly introduces the promise on a still-editable producer.
+                // Runtime checks its version/start guards and the entire prospective graph.
                 continue;
             }
             // Denied scope is resolved before looking for publication metadata or revealing it.
@@ -66,26 +93,72 @@ impl TaskControlService {
                 AuthorityOperation::InspectRun,
                 "connect-output",
             )?;
-            let reference = producer
-                .result
-                .as_ref()
-                .and_then(|result| result.outputs.get(output))
-                .ok_or_else(|| invalid("selected output is unavailable"))?;
-            self.authorize_published_output(context, record, task, output, reference)?;
+            let reference = reference.ok_or_else(|| invalid("selected output is unavailable"))?;
+            self.authorize_published_output(context, record, reference)?;
         }
         Ok(())
     }
 
-    fn authorize_published_output(
+    pub(super) fn authorize_outcome_source(
         &self,
         context: &ActorAuthorityContext,
         record: &WorkflowRecord,
         task: &TaskId,
-        output: &str,
+    ) -> Result<(), ControlError> {
+        let Some(result) = record.tasks.get(task).and_then(|task| task.result.as_ref()) else {
+            // Future outcomes remain valid; no retained content is being selected yet.
+            return Ok(());
+        };
+        self.authorize(
+            context,
+            &record.id,
+            AuthorityOperation::InspectRun,
+            "connect-outcome",
+        )?;
+        for reference in result.outputs.values().chain(result.terminal.outputs()) {
+            self.authorize_published_output(context, record, reference)?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn authorize_published_output(
+        &self,
+        context: &ActorAuthorityContext,
+        record: &WorkflowRecord,
         reference: &ArtifactReference,
     ) -> Result<(), ControlError> {
-        let artifact = ArtifactId::new(reference.identity())
-            .map_err(|_| invalid("selected output is unavailable"))?;
+        let metadata =
+            self.authorized_artifact_source(context, &record.id, reference.identity())?;
+        let stored = metadata.reference();
+        if stored.digest().to_hex() != reference.digest()
+            || Some(stored.media_type().as_str()) != reference.media_type()
+            || Some(stored.size_bytes()) != reference.size_bytes()
+        {
+            return Err(invalid(
+                "selected output differs from its retained publication",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn authorize_artifact_source(
+        &self,
+        context: &ActorAuthorityContext,
+        workflow: &WorkflowId,
+        artifact_id: &str,
+    ) -> Result<(), ControlError> {
+        self.authorized_artifact_source(context, workflow, artifact_id)
+            .map(|_| ())
+    }
+
+    fn authorized_artifact_source(
+        &self,
+        context: &ActorAuthorityContext,
+        workflow: &WorkflowId,
+        artifact_id: &str,
+    ) -> Result<milkdrift_workspace::ArtifactMetadata, ControlError> {
+        let artifact =
+            ArtifactId::new(artifact_id).map_err(|_| invalid("selected output is unavailable"))?;
         let metadata = self.artifacts.metadata(&artifact)?.ok_or_else(|| {
             ControlError::AuthorizationDenied {
                 reasons: vec![milkdrift_authority::DecisionReasonCode::ArtifactScopeMismatch],
@@ -93,9 +166,9 @@ impl TaskControlService {
             }
         })?;
         let mut resources = RequestedResourceFacts::empty();
-        resources.workflow = Some(record.id.clone());
+        resources.workflow = Some(workflow.clone());
         resources.run =
-            Some(RunId::new(record.id.as_str()).map_err(|error| invalid(error.to_string()))?);
+            Some(RunId::new(workflow.as_str()).map_err(|error| invalid(error.to_string()))?);
         resources.artifact = Some(artifact);
         resources.artifact_sensitivity = Some(metadata.sensitivity());
         let claim = context.authority();
@@ -104,7 +177,7 @@ impl TaskControlService {
             AuthorityOperation::ReadArtifactContent,
         ] {
             let identity =
-                serde_json::to_vec(&(context.actor(), &record.id, task, output, operation))?;
+                serde_json::to_vec(&(context.actor(), workflow, artifact_id, operation))?;
             let request = AuthorityRequest {
                 decision: DecisionId::new(format!("task_source_{}", blake3::hash(&identity)))?,
                 actor: context.actor().clone(),
@@ -129,16 +202,7 @@ impl TaskControlService {
                 });
             }
         }
-        let stored = metadata.reference();
-        if stored.digest().to_hex() != reference.digest()
-            || Some(stored.media_type().as_str()) != reference.media_type()
-            || Some(stored.size_bytes()) != reference.size_bytes()
-        {
-            return Err(invalid(
-                "selected output differs from its retained publication",
-            ));
-        }
-        Ok(())
+        Ok(metadata)
     }
 }
 

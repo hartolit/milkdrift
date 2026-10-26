@@ -189,7 +189,7 @@ fn definition(
             json!({"final_text":{"required":true,"media_type":"text/plain","max_bytes":16384}})
         },
     );
-    object.insert("dependencies".into(), json!([]));
+    object.insert("dependencies".into(), json!({}));
     object.insert("corrective_of".into(), Value::Null);
     object.insert("required".into(), json!(true));
     object.insert(
@@ -254,11 +254,7 @@ fn planning(snapshot: &Value, project: &Path, brief: &str) -> io::Result<Value> 
         None,
         true,
     )?;
-    set(
-        &mut compose,
-        "dependencies",
-        json!(["motion", "training", "render"]),
-    )?;
+    set(&mut compose, "dependencies", json!({}))?;
     set(
         &mut compose,
         "inputs",
@@ -293,11 +289,7 @@ fn composition(snapshot: &Value, project: &Path) -> io::Result<Value> {
         false,
     )?;
     set(&mut correction, "corrective_of", original_id.clone())?;
-    set(
-        &mut correction,
-        "dependencies",
-        json!([original_id, motion_id, training_id]),
-    )?;
+    set(&mut correction, "dependencies", json!({}))?;
     set(
         &mut correction,
         "inputs",
@@ -315,11 +307,7 @@ fn composition(snapshot: &Value, project: &Path) -> io::Result<Value> {
         None,
         false,
     )?;
-    set(
-        &mut final_task,
-        "dependencies",
-        json!([original_id, motion_id, training_id]),
-    )?;
+    set(&mut final_task, "dependencies", json!({}))?;
     set(
         &mut final_task,
         "inputs",
@@ -337,7 +325,11 @@ fn composition(snapshot: &Value, project: &Path) -> io::Result<Value> {
         None,
         true,
     )?;
-    set(&mut reviewer, "dependencies", json!(["correction"]))?;
+    set(
+        &mut reviewer,
+        "dependencies",
+        json!({"correction":"success"}),
+    )?;
     set(
         &mut reviewer,
         "inputs",
@@ -559,7 +551,7 @@ mod tests {
         .map_err(io::Error::other)?;
         assert_eq!(
             correction.pointer("/definition/dependencies"),
-            Some(&json!(["motion-id", "render-id", "training-id"]))
+            Some(&json!({}))
         );
         assert_eq!(
             correction.pointer("/definition/inputs"),

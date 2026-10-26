@@ -7,6 +7,8 @@ export class DaemonError extends Error {
     message: string,
     public readonly status: number,
     public readonly requestId?: string,
+    public readonly retryable = false,
+    public readonly details: unknown = null,
   ) {
     super(message);
     this.name = 'DaemonError';
@@ -113,13 +115,15 @@ export class DaemonClient {
     }
     if (!response.ok) {
       const error = await response.json().catch(() => null) as {
-        code?: string; message?: string; request_id?: string;
+        code?: string; message?: string; request_id?: string; retryable?: boolean; details?: unknown;
       } | null;
       throw new DaemonError(
         error?.code ?? 'transport_error',
         error?.message ?? `The daemon refused this request (HTTP ${response.status}).`,
         response.status,
         error?.request_id,
+        error?.retryable ?? false,
+        error?.details ?? null,
       );
     }
     return response;
@@ -131,6 +135,11 @@ export class DaemonClient {
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
     });
+    return decodeResponse<T>(await response.json());
+  }
+
+  async put<T>(path: string, body: unknown): Promise<T> {
+    const response = await this.#fetch(path, { method: 'PUT', body: JSON.stringify(body), signal: AbortSignal.timeout(30_000) });
     return decodeResponse<T>(await response.json());
   }
 
